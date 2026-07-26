@@ -1,6 +1,6 @@
 <div align="center">
 
-# Local Dream <img src="./assets/icon.png" width="32" alt="Local Dream">
+# Vision Dream <img src="./assets/icon.png" width="32" alt="Vision Dream">
 
 **Android Stable Diffusion with Snapdragon NPU acceleration**  
 _Also supports CPU/GPU inference_
@@ -33,7 +33,7 @@ For certain reasons, all guides and documentation have been moved to [Guide Site
 
 ## Credits & Acknowledgments
 
-Local Dream is built on top of many excellent open-source projects. Sincere thanks to all the authors and contributors whose work made this project possible.
+Vision Dream is built on top of many excellent open-source projects. Sincere thanks to all the authors and contributors whose work made this project possible.
 
 ### C++ Libraries
 
@@ -58,13 +58,11 @@ Local Dream is built on top of many excellent open-source projects. Sincere than
 - **[CompVis/stable-diffusion](https://github.com/CompVis/stable-diffusion)** and all other model creators
 - **[xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)** - Image upscaling
 - **[Kim2091/UltraSharpV2](https://huggingface.co/Kim2091/UltraSharpV2)** - Image upscaling
-- **[bhky/opennsfw2](https://github.com/bhky/opennsfw2)** - NSFW content filtering
-
 ---
 
 ## 💖 Support This Project
 
-If you find Local Dream useful, please consider supporting its development:
+If you find Vision Dream useful, please consider supporting its development:
 
 ### What Your Support Helps With:
 
@@ -79,4 +77,4 @@ If you find Local Dream useful, please consider supporting its development:
     <img height="36" style="border-radius:12px;height:36px;" src="https://pic1.afdiancdn.com/static/img/welcome/button-sponsorme.jpg" alt="在爱发电支持我" />
 </a>
 
-Your sponsorship helps maintain and improve Local Dream for everyone!
+Your sponsorship helps maintain and improve Vision Dream for everyone!

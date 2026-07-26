@@ -42,6 +42,12 @@ data class ImportedParams(
     }
 }
 
+/** A positive/negative prompt pair resolved from one text-field edit. */
+data class PromptPairInput(
+    val prompt: String,
+    val negativePrompt: String,
+)
+
 object ParamShare {
     private const val MARKER_PREFIX = "LDPARAMS:"
     private const val IDENTITY_KEY = "_localdream_params"
@@ -75,6 +81,55 @@ object ParamShare {
         val b64 = Base64.getEncoder()
             .encodeToString(jsonStr.toByteArray(Charsets.UTF_8))
         return "$MARKER_PREFIX$b64"
+    }
+
+    /**
+     * Builds the existing versioned share payload with both prompt fields present.
+     * Keeping an empty negative prompt explicit lets paste handling clear stale text.
+     */
+    fun buildPromptPairClipboardText(
+        prompt: String,
+        negativePrompt: String,
+        useBase64: Boolean = false,
+    ): String {
+        val json = JSONObject()
+        json.put(IDENTITY_KEY, true)
+        json.put("v", SCHEMA_VERSION)
+        json.put("prompt", prompt)
+        json.put("negative_prompt", negativePrompt)
+        return encodeForClipboard(json.toString(), useBase64)
+    }
+
+    /**
+     * Treats a complete ParamShare payload as one prompt-pair paste. Ordinary text
+     * returns null so callers can preserve their normal text-field behavior.
+     */
+    fun tryDecodePromptPairPaste(raw: String?): PromptPairInput? {
+        val imported = tryDecode(raw) ?: return null
+        val prompt = imported.prompt ?: return null
+        val negativePrompt = imported.negativePrompt ?: return null
+        return PromptPairInput(prompt = prompt, negativePrompt = negativePrompt)
+    }
+
+    /**
+     * Resolves a paste from the exact selection that existed before the edit.
+     * This avoids common-prefix/suffix ambiguity when the replaced text and the
+     * JSON payload share delimiters such as `{` and `}`.
+     */
+    fun tryDecodePromptPairEdit(
+        currentText: String,
+        selectionStart: Int,
+        selectionEnd: Int,
+        candidate: String,
+    ): PromptPairInput? {
+        val start = minOf(selectionStart, selectionEnd).coerceIn(0, currentText.length)
+        val end = maxOf(selectionStart, selectionEnd).coerceIn(start, currentText.length)
+        val prefix = currentText.substring(0, start)
+        val suffix = currentText.substring(end)
+        if (!candidate.startsWith(prefix) || !candidate.endsWith(suffix)) return null
+        if (candidate.length < prefix.length + suffix.length) return null
+        val inserted = candidate.substring(prefix.length, candidate.length - suffix.length)
+        return tryDecodePromptPairPaste(inserted)
     }
 
     fun tryDecode(raw: String?): ImportedParams? {

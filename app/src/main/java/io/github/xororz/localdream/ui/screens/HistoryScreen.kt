@@ -1,74 +1,105 @@
 package io.github.xororz.localdream.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.widget.Toast
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.automirrored.filled.ViewQuilt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.paging.compose.collectAsLazyPagingItems
 import io.github.xororz.localdream.R
+import io.github.xororz.localdream.data.AssetBrowserPreferences
+import io.github.xororz.localdream.data.AssetLayoutMode
 import io.github.xororz.localdream.data.GenerationPreferences
 import io.github.xororz.localdream.data.HistoryFilter
 import io.github.xororz.localdream.data.HistoryItem
 import io.github.xororz.localdream.data.HistoryManager
+import io.github.xororz.localdream.data.PromptRepository
 import io.github.xororz.localdream.navigation.popBackStackIfResumed
 import io.github.xororz.localdream.ui.components.GenerationParamsDialog
 import io.github.xororz.localdream.ui.components.OverlayIconButton
 import io.github.xororz.localdream.ui.components.ShareParamsFlow
 import io.github.xororz.localdream.ui.components.ZoomableImageOverlay
+import io.github.xororz.localdream.utils.ParamShare
 import io.github.xororz.localdream.utils.saveImage
 import io.github.xororz.localdream.utils.saveImageFromFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// Global history browser reachable from the model list. Shares the grid,
-// filter bar, and filter sheet with the model run screen but offers only
-// model-independent actions (view, params, favorite, save, delete) - the
-// generation-coupled flows (img2img, reproduce, upscale, ultrafix) need a
-// running model and stay on the run screen.
+// Global asset browser reachable from the model list. It reuses the run
+// screen's paged history and batch actions while adding persistent layout,
+// global reveal, prompt-copy, and model-independent detail actions.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(navController: NavController) {
+fun HistoryScreen(
+    navController: NavController,
+    isTopLevel: Boolean = false,
+    bottomBar: @Composable () -> Unit = {},
+) {
     val context = LocalContext.current
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val historyManager = remember { HistoryManager(context) }
+    val promptRepository = remember { PromptRepository(context) }
     val generationPreferences = remember { GenerationPreferences(context) }
+    val assetBrowserPreferences = remember { AssetBrowserPreferences(context) }
     val shareUseBase64 by remember { generationPreferences.observeShareUseBase64() }
         .collectAsState(initial = false)
 
@@ -77,31 +108,33 @@ fun HistoryScreen(navController: NavController) {
     val msgDeleteFailed = stringResource(R.string.delete_failed)
     val msgSavedCountWithFailed = stringResource(R.string.saved_count_with_failed)
     val msgDeletedCountWithFailed = stringResource(R.string.deleted_count_with_failed)
+    val msgPromptSaved = stringResource(R.string.asset_prompt_saved)
+    val msgPromptAlreadySaved = stringResource(R.string.asset_prompt_already_saved)
+    val msgPromptSaveFailed = stringResource(R.string.prompt_manager_save_failed)
+    val msgPromptsCopied = stringResource(R.string.asset_prompts_copied)
 
     var historyFilter by remember { mutableStateOf(HistoryFilter()) }
     val pagedItems = remember(historyFilter) { historyManager.pager(historyFilter) }
         .collectAsLazyPagingItems()
     val totalCount by remember(historyFilter) { historyManager.observeCount(historyFilter) }
         .collectAsState(initial = 0)
-    val knownModelIds by remember { historyManager.observeKnownModelIds() }
-        .collectAsState(initial = emptyList())
-    val knownSchedulers by remember { historyManager.observeKnownSchedulers() }
-        .collectAsState(initial = emptyList())
-    val knownSizes by remember { historyManager.observeKnownSizes() }
-        .collectAsState(initial = emptyList())
-
-    var showFilterSheet by remember { mutableStateOf(false) }
+    var layoutMode by remember { mutableStateOf(assetBrowserPreferences.layoutMode()) }
+    var showLayoutMenu by remember { mutableStateOf(false) }
+    var revealAll by remember { mutableStateOf(false) }
+    var revealRevision by remember { mutableIntStateOf(0) }
+    val itemRevealOverrides = remember { mutableStateMapOf<Long, Boolean>() }
 
     var isSelectionMode by remember { mutableStateOf(false) }
     val selectedIds = remember { mutableStateListOf<Long>() }
     var showBatchSaveDialog by remember { mutableStateOf(false) }
     var showBatchDeleteDialog by remember { mutableStateOf(false) }
     var isBatchSaving by remember { mutableStateOf(false) }
-    var batchSaveCurrent by remember { mutableStateOf(0) }
-    var batchSaveTotal by remember { mutableStateOf(0) }
-    var batchSaveFailed by remember { mutableStateOf(0) }
+    var batchSaveCurrent by remember { mutableIntStateOf(0) }
+    var batchSaveTotal by remember { mutableIntStateOf(0) }
+    var batchSaveFailed by remember { mutableIntStateOf(0) }
 
     var previewItem by remember { mutableStateOf<HistoryItem?>(null) }
+    var parameterItem by remember { mutableStateOf<HistoryItem?>(null) }
     var showParamsDialog by remember { mutableStateOf(false) }
     var showShareDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -111,39 +144,150 @@ fun HistoryScreen(navController: NavController) {
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.history_tab)) },
+            CenterAlignedTopAppBar(
+                title = {
+                    Text(
+                        text = stringResource(
+                            if (isTopLevel) {
+                                R.string.studio_nav_assets
+                            } else {
+                                R.string.asset_manager_title
+                            },
+                        ),
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStackIfResumed() }) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            stringResource(R.string.back),
-                        )
+                    if (!isTopLevel) {
+                        IconButton(onClick = { navController.popBackStackIfResumed() }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                stringResource(R.string.back),
+                            )
+                        }
                     }
                 },
                 actions = {
-                    val advanced = historyFilter.hasAdvancedFilters()
-                    IconButton(onClick = { showFilterSheet = true }) {
-                        Icon(
-                            imageVector = Icons.Default.FilterList,
-                            contentDescription = stringResource(R.string.history_view_filter),
-                            tint = if (advanced) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                LocalContentColor.current
-                            },
-                        )
+                    Box {
+                        IconButton(
+                            onClick = { showLayoutMenu = true },
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ViewModule,
+                                contentDescription = stringResource(R.string.asset_layout_action),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showLayoutMenu,
+                            onDismissRequest = { showLayoutMenu = false },
+                        ) {
+                            AssetLayoutMode.entries.forEach { mode ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            stringResource(
+                                                when (mode) {
+                                                    AssetLayoutMode.WATERFALL ->
+                                                        R.string.asset_layout_waterfall
+
+                                                    AssetLayoutMode.LIST ->
+                                                        R.string.asset_layout_list
+
+                                                    AssetLayoutMode.GRID ->
+                                                        R.string.asset_layout_grid
+                                                },
+                                            ),
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = when (mode) {
+                                                AssetLayoutMode.WATERFALL ->
+                                                    Icons.AutoMirrored.Filled.ViewQuilt
+
+                                                AssetLayoutMode.LIST ->
+                                                    Icons.AutoMirrored.Filled.ViewList
+
+                                                AssetLayoutMode.GRID ->
+                                                    Icons.Default.GridView
+                                            },
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    trailingIcon = if (layoutMode == mode) {
+                                        {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                            )
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                    onClick = {
+                                        layoutMode = mode
+                                        assetBrowserPreferences.setLayoutMode(mode)
+                                        showLayoutMenu = false
+                                    },
+                                )
+                            }
+                        }
                     }
                 },
                 scrollBehavior = scrollBehavior,
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                ),
             )
         },
+        bottomBar = bottomBar,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
     ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues),
         ) {
+            Surface(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .toggleable(
+                            value = revealAll,
+                            role = Role.Checkbox,
+                            onValueChange = {
+                                revealAll = it
+                                revealRevision++
+                                itemRevealOverrides.clear()
+                            },
+                        )
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = revealAll,
+                        onCheckedChange = null,
+                    )
+                    Text(
+                        text = stringResource(R.string.asset_show_all),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = stringResource(R.string.asset_count, totalCount),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             ModelRunHistoryPage(
                 historyFilter = historyFilter,
                 currentModelId = null,
@@ -153,7 +297,7 @@ fun HistoryScreen(navController: NavController) {
                 selectedIds = selectedIds.toSet(),
                 isBatchSaving = isBatchSaving,
                 onFilterChange = { historyFilter = it },
-                onShowFilterSheet = { showFilterSheet = true },
+                onShowFilterSheet = {},
                 onItemClick = { item ->
                     if (isSelectionMode) {
                         if (item.id in selectedIds) {
@@ -195,22 +339,26 @@ fun HistoryScreen(navController: NavController) {
                 },
                 onBatchSave = { showBatchSaveDialog = true },
                 onBatchDelete = { showBatchDeleteDialog = true },
+                layoutMode = layoutMode,
+                revealAll = revealAll,
+                revealRevision = revealRevision,
+                itemRevealOverrides = itemRevealOverrides,
+                onItemRevealChanged = { id, revealed ->
+                    if (revealed == revealAll) {
+                        itemRevealOverrides.remove(id)
+                    } else {
+                        itemRevealOverrides[id] = revealed
+                    }
+                },
+                onItemInfoClick = { item ->
+                    parameterItem = item
+                    showParamsDialog = true
+                },
+                onCopyPrompts = { item ->
+                    copyPromptPairToClipboard(context, item, msgPromptsCopied)
+                },
             )
         }
-    }
-
-    if (showFilterSheet) {
-        HistoryFilterSheet(
-            initialFilter = historyFilter,
-            knownModelIds = knownModelIds,
-            knownSchedulers = knownSchedulers,
-            knownSizes = knownSizes,
-            onApply = {
-                historyFilter = it
-                showFilterSheet = false
-            },
-            onDismiss = { showFilterSheet = false },
-        )
     }
 
     previewItem?.let { item ->
@@ -227,7 +375,10 @@ fun HistoryScreen(navController: NavController) {
                 OverlayIconButton(
                     icon = Icons.Default.Info,
                     contentDescription = "View parameters",
-                    onClick = { showParamsDialog = true },
+                    onClick = {
+                        parameterItem = item
+                        showParamsDialog = true
+                    },
                 )
                 OverlayIconButton(
                     icon = if (item.favorite) {
@@ -282,36 +433,6 @@ fun HistoryScreen(navController: NavController) {
             },
         )
 
-        if (showParamsDialog) {
-            GenerationParamsDialog(
-                title = stringResource(R.string.generation_params_title),
-                params = item.params,
-                modelId = item.modelId,
-                displayMode = item.mode,
-                showImg2imgButton = false,
-                showReproduceButton = false,
-                onShare = {
-                    showParamsDialog = false
-                    showShareDialog = true
-                },
-                onSendToImg2img = {},
-                onReproduce = {},
-                onDismiss = { showParamsDialog = false },
-            )
-        }
-
-        if (showShareDialog) {
-            ShareParamsFlow(
-                source = item.params,
-                modelId = item.modelId,
-                useBase64Initial = shareUseBase64,
-                onUseBase64Changed = { value ->
-                    scope.launch { generationPreferences.setShareUseBase64(value) }
-                },
-                onDismiss = { showShareDialog = false },
-            )
-        }
-
         if (showDeleteDialog) {
             ModelRunConfirmDialog(
                 title = stringResource(R.string.delete_image),
@@ -331,6 +452,81 @@ fun HistoryScreen(navController: NavController) {
                     }
                 },
                 onDismiss = { showDeleteDialog = false },
+            )
+        }
+    }
+
+    parameterItem?.let { item ->
+        if (showParamsDialog) {
+            GenerationParamsDialog(
+                title = stringResource(R.string.generation_params_title),
+                params = item.params,
+                modelId = item.modelId,
+                displayMode = item.mode,
+                showImg2imgButton = false,
+                showReproduceButton = false,
+                onSavePrompt = {
+                    scope.launch {
+                        runCatching {
+                            val existing = promptRepository.findExact(
+                                item.params.prompt,
+                                item.params.negativePrompt,
+                            )
+                            if (existing == null) {
+                                promptRepository.create(
+                                    title = "",
+                                    prompt = item.params.prompt,
+                                    negativePrompt = item.params.negativePrompt,
+                                )
+                            }
+                            existing
+                        }.onSuccess { existing ->
+                            Toast.makeText(
+                                context,
+                                if (existing == null) {
+                                    msgPromptSaved
+                                } else {
+                                    msgPromptAlreadySaved
+                                },
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }.onFailure {
+                            Toast.makeText(
+                                context,
+                                msgPromptSaveFailed,
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                },
+                onCopyPrompts = {
+                    copyPromptPairToClipboard(context, item, msgPromptsCopied)
+                },
+                onShare = {
+                    showParamsDialog = false
+                    showShareDialog = true
+                },
+                onSendToImg2img = {},
+                onReproduce = {},
+                onDismiss = {
+                    showParamsDialog = false
+                    parameterItem = null
+                },
+            )
+        }
+
+        if (showShareDialog) {
+            ShareParamsFlow(
+                source = item.params,
+                modelId = item.modelId,
+                useBase64Initial = shareUseBase64,
+                onUseBase64Changed = { value ->
+                    scope.launch { generationPreferences.setShareUseBase64(value) }
+                },
+                onDismiss = {
+                    showShareDialog = false
+                    parameterItem = null
+                },
             )
         }
     }
@@ -441,4 +637,20 @@ fun HistoryScreen(navController: NavController) {
             onDismiss = { showBatchDeleteDialog = false },
         )
     }
+}
+
+private fun copyPromptPairToClipboard(
+    context: Context,
+    item: HistoryItem,
+    confirmationMessage: String,
+) {
+    val payload = ParamShare.buildPromptPairClipboardText(
+        prompt = item.params.prompt,
+        negativePrompt = item.params.negativePrompt,
+    )
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    clipboard?.setPrimaryClip(
+        ClipData.newPlainText("Vision Dream prompts", payload),
+    )
+    Toast.makeText(context, confirmationMessage, Toast.LENGTH_SHORT).show()
 }

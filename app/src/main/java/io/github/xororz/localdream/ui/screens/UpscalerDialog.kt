@@ -115,6 +115,11 @@ fun UpscalerPickerFlow(
                     ).show()
                 }
 
+                is ModelDownloadService.DownloadState.Cancelled -> {
+                    downloadingUpscalerId = null
+                    downloadProgress = null
+                }
+
                 is ModelDownloadService.DownloadState.Error -> {
                     downloadingUpscalerId = null
                     downloadProgress = null
@@ -139,6 +144,10 @@ fun UpscalerPickerFlow(
                         downloadingUpscalerId = null
                     }
                 }
+
+                is ModelDownloadService.DownloadState.Installing,
+                is ModelDownloadService.DownloadState.AlreadyInstalled,
+                -> Unit
             }
         }
     }

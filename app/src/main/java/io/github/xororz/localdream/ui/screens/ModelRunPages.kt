@@ -13,12 +13,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,18 +25,14 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoFixHigh
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.Close
@@ -47,7 +41,6 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Report
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -76,10 +69,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -87,12 +78,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
-import androidx.paging.compose.itemKey
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import io.github.xororz.localdream.R
+import io.github.xororz.localdream.data.AssetLayoutMode
 import io.github.xororz.localdream.data.HistoryFilter
 import io.github.xororz.localdream.data.HistoryItem
+import io.github.xororz.localdream.ui.components.RevealableImage
 import io.github.xororz.localdream.ui.theme.Motion
 
 /** Result tab of the run screen: latest image, quick actions and recent thumbnails. */
@@ -103,7 +95,6 @@ internal fun ModelRunResultPage(
     generationParams: GenerationParameters?,
     // Newest few items only (bounded query); drives the thumbnail strip.
     recentHistory: List<HistoryItem>,
-    showReportButton: Boolean,
     showUpscaleButton: Boolean,
     upscaleEnabled: Boolean,
     showUltrafixButton: Boolean,
@@ -116,7 +107,6 @@ internal fun ModelRunResultPage(
     // favorite button).
     isFavorite: Boolean?,
     onFavoriteClick: () -> Unit,
-    onReportClick: () -> Unit,
     onUpscaleClick: () -> Unit,
     onUltrafixClick: () -> Unit,
     onSaveClick: (Bitmap) -> Unit,
@@ -225,17 +215,6 @@ internal fun ModelRunResultPage(
                                         }
                                     }
 
-                                    if (showReportButton) {
-                                        FilledTonalIconButton(
-                                            onClick = onReportClick,
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Report,
-                                                contentDescription = "report inappropriate content",
-                                            )
-                                        }
-                                    }
-
                                     if (showUpscaleButton) {
                                         LongPressableTonalIconButton(
                                             enabled = upscaleEnabled,
@@ -274,8 +253,6 @@ internal fun ModelRunResultPage(
                         // corners. Keeping it static lets only the image crossfade,
                         // clipped to the rounded shape.
                         Surface(
-                            onClick = onPreviewClick,
-                            enabled = currentBitmap != null,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .aspectRatio(1f),
@@ -292,17 +269,23 @@ internal fun ModelRunResultPage(
                                 label = "ImagePreviewCrossfade",
                             ) { (_, bitmap) ->
                                 bitmap?.let {
-                                    AsyncImage(
-                                        model = ImageRequest.Builder(
-                                            LocalContext.current,
-                                        )
-                                            .data(it)
-                                            .size(coil.size.Size.ORIGINAL)
-                                            .crossfade(true)
-                                            .build(),
-                                        contentDescription = "generated image",
+                                    RevealableImage(
+                                        revealKey = imageVersion,
                                         modifier = Modifier.fillMaxSize(),
-                                    )
+                                        onOpenPreview = onPreviewClick,
+                                    ) {
+                                        AsyncImage(
+                                            model = ImageRequest.Builder(
+                                                LocalContext.current,
+                                            )
+                                                .data(it)
+                                                .size(coil.size.Size.ORIGINAL)
+                                                .crossfade(true)
+                                                .build(),
+                                            contentDescription = "generated image",
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -345,16 +328,21 @@ internal fun ModelRunResultPage(
                                         modifier = Modifier.size(72.dp),
                                         shape = MaterialTheme.shapes.small,
                                     ) {
-                                        AsyncImage(
-                                            model = ImageRequest.Builder(
-                                                LocalContext.current,
-                                            )
-                                                .data(item.imageFile)
-                                                .crossfade(true)
-                                                .build(),
-                                            contentDescription = "thumb",
+                                        RevealableImage(
+                                            revealKey = item.id,
                                             modifier = Modifier.fillMaxSize(),
-                                        )
+                                        ) {
+                                            AsyncImage(
+                                                model = ImageRequest.Builder(
+                                                    LocalContext.current,
+                                                )
+                                                    .data(item.imageFile)
+                                                    .crossfade(true)
+                                                    .build(),
+                                                contentDescription = "thumb",
+                                                modifier = Modifier.fillMaxSize(),
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -444,11 +432,14 @@ internal fun ModelRunHistoryPage(
     onToggleSelectAll: () -> Unit,
     onBatchSave: () -> Unit,
     onBatchDelete: () -> Unit,
+    layoutMode: AssetLayoutMode = AssetLayoutMode.WATERFALL,
+    revealAll: Boolean = false,
+    revealRevision: Int = 0,
+    itemRevealOverrides: Map<Long, Boolean>? = null,
+    onItemRevealChanged: ((Long, Boolean) -> Unit)? = null,
+    onItemInfoClick: ((HistoryItem) -> Unit)? = null,
+    onCopyPrompts: ((HistoryItem) -> Unit)? = null,
 ) {
-    val locale = LocalConfiguration.current.locales[0]
-    val timestampFormat = remember(locale) {
-        java.text.SimpleDateFormat("MM/dd HH:mm", locale)
-    }
     // Handle back button in selection mode
     BackHandler(enabled = isSelectionMode && !isBatchSaving) {
         onExitSelection()
@@ -519,133 +510,20 @@ internal fun ModelRunHistoryPage(
                     }
                 }
             } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    contentPadding = PaddingValues(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(
-                        count = pagedItems.itemCount,
-                        key = pagedItems.itemKey { it.id },
-                    ) { index ->
-                        // With placeholders disabled, get() returns non-null for
-                        // every index below itemCount; guard anyway for safety.
-                        val item = pagedItems[index] ?: return@items
-                        val isSelected = item.id in selectedIds
-                        Card(
-                            modifier = Modifier.aspectRatio(1f),
-                            shape = MaterialTheme.shapes.medium,
-                            elevation = CardDefaults.cardElevation(
-                                defaultElevation = 2.dp,
-                            ),
-                        ) {
-                            // Clickable inside the card so its ripple is clipped
-                            // to the rounded shape (square corners otherwise).
-                            Box(
-                                modifier = Modifier.combinedClickable(
-                                    onClick = { onItemClick(item) },
-                                    onLongClick = { onItemLongClick(item) },
-                                ),
-                            ) {
-                                AsyncImage(
-                                    model = ImageRequest.Builder(LocalContext.current)
-                                        .data(item.imageFile)
-                                        .crossfade(true)
-                                        .build(),
-                                    contentDescription = "Generated image",
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-
-                                if (isSelected) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .background(
-                                                MaterialTheme.colorScheme.primary.copy(
-                                                    alpha = 0.2f,
-                                                ),
-                                            ),
-                                    )
-                                }
-
-                                if (item.favorite) {
-                                    Icon(
-                                        imageVector = Icons.Default.Favorite,
-                                        contentDescription = "favorited",
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier
-                                            .align(Alignment.TopStart)
-                                            .padding(6.dp)
-                                            .size(16.dp),
-                                    )
-                                }
-
-                                // Timestamp overlay
-                                Surface(
-                                    modifier = Modifier.align(Alignment.BottomStart),
-                                    shape = RoundedCornerShape(
-                                        topStart = 0.dp,
-                                        topEnd = 4.dp,
-                                        bottomStart = 12.dp,
-                                        bottomEnd = 0.dp,
-                                    ),
-                                    color = MaterialTheme.colorScheme.surfaceContainerHigh
-                                        .copy(alpha = 0.8f),
-                                ) {
-                                    Text(
-                                        text = remember(item.timestamp, locale) {
-                                            timestampFormat.format(java.util.Date(item.timestamp))
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.padding(
-                                            horizontal = 6.dp,
-                                            vertical = 3.dp,
-                                        ),
-                                    )
-                                }
-
-                                // Selection indicator
-                                if (isSelectionMode) {
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.TopEnd)
-                                            .padding(8.dp)
-                                            .size(24.dp)
-                                            .background(
-                                                color = if (isSelected) {
-                                                    MaterialTheme.colorScheme.primary
-                                                } else {
-                                                    MaterialTheme.colorScheme.scrim.copy(alpha = 0.4f)
-                                                },
-                                                shape = CircleShape,
-                                            )
-                                            .border(
-                                                width = 2.dp,
-                                                color = if (isSelected) {
-                                                    MaterialTheme.colorScheme.primary
-                                                } else {
-                                                    Color.White
-                                                },
-                                                shape = CircleShape,
-                                            ),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        if (isSelected) {
-                                            Icon(
-                                                imageVector = Icons.Default.Check,
-                                                contentDescription = "Selected",
-                                                tint = MaterialTheme.colorScheme.onPrimary,
-                                                modifier = Modifier.size(16.dp),
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                AssetHistoryCollection(
+                    pagedItems = pagedItems,
+                    layoutMode = layoutMode,
+                    revealAll = revealAll,
+                    revealRevision = revealRevision,
+                    itemRevealOverrides = itemRevealOverrides,
+                    onItemRevealChanged = onItemRevealChanged,
+                    isSelectionMode = isSelectionMode,
+                    selectedIds = selectedIds,
+                    onPreview = onItemClick,
+                    onShowInfo = onItemInfoClick,
+                    onCopyPrompts = onCopyPrompts,
+                    onLongClick = onItemLongClick,
+                )
             }
 
             // Floating selection mode bottom bar

@@ -11,6 +11,7 @@ import androidx.room.PrimaryKey
         Index(value = ["modelId", "timestamp"]),
         Index(value = ["timestamp"]),
         Index(value = ["mode"]),
+        Index(value = ["origin", "timestamp"]),
     ],
 )
 data class HistoryEntity(
@@ -40,4 +41,12 @@ data class HistoryEntity(
 
     @ColumnInfo(defaultValue = "0")
     val favorite: Boolean = false,
+
+    @ColumnInfo(defaultValue = "'local_app'")
+    val origin: String = "local_app",
+
+    @ColumnInfo(defaultValue = "'image/png'")
+    val mimeType: String = "image/png",
+
+    val requestId: String? = null,
 )

@@ -13,6 +13,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.graphics.createBitmap
 import io.github.xororz.localdream.R
+import io.github.xororz.localdream.data.GenerationDefaults
+import io.github.xororz.localdream.openai.InferenceArbiter
 import io.github.xororz.localdream.utils.Http
 import java.io.BufferedReader
 import java.io.File
@@ -42,6 +44,8 @@ class BackgroundGenerationService : Service() {
 
     @Volatile
     private var cancelRequested = false
+
+    private var inferenceLeaseAcquired = false
 
     companion object {
         private const val CHANNEL_ID = "image_generation_channel"
@@ -128,6 +132,17 @@ class BackgroundGenerationService : Service() {
             }
         }
 
+        if (!InferenceArbiter.process.tryAcquireForApp()) {
+            updateState(
+                GenerationState.Error(
+                    getString(R.string.openai_api_request_busy),
+                ),
+            )
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        inferenceLeaseAcquired = true
+
         val prompt = intent?.getStringExtra("prompt")
         Log.d("GenerationService", "prompt: $prompt")
 
@@ -137,7 +152,9 @@ class BackgroundGenerationService : Service() {
             return START_NOT_STICKY
         }
 
-        val negativePrompt = intent.getStringExtra("negative_prompt") ?: ""
+        val negativePrompt = GenerationDefaults.resolveNegativePrompt(
+            intent.getStringExtra("negative_prompt"),
+        )
         val steps = intent.getIntExtra("steps", 28)
         val cfg = intent.getFloatExtra("cfg", 7f)
         val seed = if (intent.hasExtra("seed")) intent.getLongExtra("seed", 0) else null
@@ -615,6 +632,10 @@ class BackgroundGenerationService : Service() {
         super.onDestroy()
         activeCall?.cancel()
         serviceScope.cancel()
+        if (inferenceLeaseAcquired) {
+            inferenceLeaseAcquired = false
+            InferenceArbiter.process.releaseFromApp()
+        }
 
         if (_generationState.value is GenerationState.Error) {
             resetState()

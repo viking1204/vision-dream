@@ -2,6 +2,7 @@ package io.github.xororz.localdream.ui.screens
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -32,6 +33,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -80,11 +82,18 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.documentfile.provider.DocumentFile
 import androidx.navigation.NavController
+import io.github.xororz.localdream.MainActivity
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.*
 import io.github.xororz.localdream.data.DarkModePreference
+import io.github.xororz.localdream.modelcatalog.BoundedModelZipExtractor
+import io.github.xororz.localdream.modelcatalog.PreparedModelValidator
+import io.github.xororz.localdream.modelcatalog.TransactionalModelInstaller
 import io.github.xororz.localdream.navigation.Screen
+import io.github.xororz.localdream.service.BackendService
+import io.github.xororz.localdream.service.BackgroundGenerationService
 import io.github.xororz.localdream.service.ModelDownloadService
+import io.github.xororz.localdream.service.OpenAiApiService
 import io.github.xororz.localdream.ui.components.BlockingProgressOverlay
 import io.github.xororz.localdream.ui.components.SmoothCircularWavyProgressIndicator
 import io.github.xororz.localdream.ui.components.SmoothLinearWavyProgressIndicator
@@ -94,16 +103,13 @@ import io.github.xororz.localdream.ui.theme.ThemePreset
 import io.github.xororz.localdream.ui.theme.scheme
 import io.github.xororz.localdream.utils.LogCapture
 import io.github.xororz.localdream.utils.TempCleaner
-import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
-import java.io.OutputStream
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
-import java.util.zip.ZipInputStream
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -240,13 +246,19 @@ private fun RenameModelDialog(
     ExperimentalFoundationApi::class,
 )
 @Composable
-fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier) {
+fun ModelListScreen(
+    navController: NavController,
+    modifier: Modifier = Modifier,
+    isTopLevel: Boolean = false,
+    bottomBar: @Composable () -> Unit = {},
+) {
     val context = LocalContext.current
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
 
     // String resources hoisted to composable scope (lint: LocalContextGetResourceValueCall).
     val msgDownloadDone = stringResource(R.string.download_done)
+    val msgModelAlreadyInstalled = stringResource(R.string.model_already_installed)
     val msgFileDeleted = stringResource(R.string.file_deleted)
     val msgEmbeddingDeleted = stringResource(R.string.embedding_deleted)
     val msgEmbeddingImported = stringResource(R.string.embedding_imported)
@@ -265,6 +277,8 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
     val msgRenameSuccess = stringResource(R.string.rename_success)
     val msgRenameFailed = stringResource(R.string.rename_failed)
     val msgRemoteOffline = stringResource(R.string.remote_banner_offline)
+    val msgApiRequestBusy = stringResource(R.string.openai_api_request_busy)
+    val msgModelUnloadBusy = stringResource(R.string.model_unload_busy)
 
     var downloadingModel by remember { mutableStateOf<Model?>(null) }
     var currentProgress by remember { mutableStateOf<DownloadProgress?>(null) }
@@ -279,11 +293,11 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
     // Ordered pinned ids; drives the pinned-first sort within each tab. Loaded
     // once and kept in sync as the user pins/unpins/renames.
     var pinnedIds by remember { mutableStateOf(PinnedModels.get(context)) }
+    var usageIds by remember { mutableStateOf(ModelUsageRanking.get(context)) }
     var renameTarget by remember { mutableStateOf<Model?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
-    val scrollBehavior =
-        TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showFileManagerDialog by remember { mutableStateOf(false) }
@@ -293,6 +307,7 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
     var showEmbeddingManagerDialog by remember { mutableStateOf(false) }
     var showCustomModelDialog by remember { mutableStateOf(false) }
     var showCustomNpuModelDialog by remember { mutableStateOf(false) }
+    var showModelSearchDialog by remember { mutableStateOf(false) }
     var isConverting by remember { mutableStateOf(false) }
     var conversionProgress by remember { mutableStateOf("") }
     var extractByteProgress by remember { mutableStateOf<ExtractByteProgress?>(null) }
@@ -308,6 +323,11 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
     // models; all local management actions (download/import/delete/rename)
     // are hidden because they would act on this device's storage.
     val remoteActive = remoteRepository.isActive
+    val backendState by BackendService.backendState.collectAsState()
+    val servingModelId by BackendService.servingModelId.collectAsState()
+    val apiStatus by OpenAiApiService.status.collectAsState()
+    val inAppGenerationRunning by BackgroundGenerationService.isServiceRunning.collectAsState()
+    val backendBusy = apiStatus.active || apiStatus.queued > 0 || inAppGenerationRunning
 
     var showHelpDialog by remember { mutableStateOf(false) }
 
@@ -342,13 +362,33 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                     }
                 }
 
+                is ModelDownloadService.DownloadState.Installing -> {
+                    currentProgress = null
+                }
+
                 is ModelDownloadService.DownloadState.Success -> {
-                    modelRepository.refreshModelState(state.modelId)
+                    // Catalog installs create a new custom model entry, so a
+                    // full scan is required rather than updating an existing
+                    // built-in row in place.
+                    modelRepository.refreshAllModels()
                     downloadingModel = null
                     currentProgress = null
                     // Fire-and-forget so the snackbar's display time does not
                     // block this collector from seeing further states.
                     scope.launch { snackbarHostState.showSnackbar(msgDownloadDone) }
+                }
+
+                is ModelDownloadService.DownloadState.AlreadyInstalled -> {
+                    downloadingModel = null
+                    currentProgress = null
+                    scope.launch {
+                        snackbarHostState.showSnackbar(msgModelAlreadyInstalled)
+                    }
+                }
+
+                is ModelDownloadService.DownloadState.Cancelled -> {
+                    downloadingModel = null
+                    currentProgress = null
                 }
 
                 is ModelDownloadService.DownloadState.Error -> {
@@ -389,11 +429,26 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
     }
 
     val listedModels = if (remoteActive) remoteRepository.models else modelRepository.models
-    val cpuModels = remember(listedModels, pinnedIds) {
-        PinnedModels.sort(listedModels.filter { it.runOnCpu }, pinnedIds)
+    LaunchedEffect(backendState, servingModelId) {
+        if (backendState is BackendService.BackendState.Running && servingModelId != null) {
+            usageIds = ModelUsageRanking.get(context)
+        }
     }
-    val npuModels = remember(listedModels, pinnedIds) {
-        PinnedModels.sort(listedModels.filter { !it.runOnCpu }, pinnedIds)
+    val cpuModels = remember(listedModels, pinnedIds, usageIds, remoteActive) {
+        val models = listedModels.filter { it.runOnCpu }
+        if (remoteActive) {
+            PinnedModels.sort(models, pinnedIds)
+        } else {
+            ModelUsageRanking.sort(models, usageIds, pinnedIds)
+        }
+    }
+    val npuModels = remember(listedModels, pinnedIds, usageIds, remoteActive) {
+        val models = listedModels.filter { !it.runOnCpu }
+        if (remoteActive) {
+            PinnedModels.sort(models, pinnedIds)
+        } else {
+            ModelUsageRanking.sort(models, usageIds, pinnedIds)
+        }
     }
 
     val lastViewedPage = remember {
@@ -598,7 +653,7 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                     put(MediaStore.Downloads.MIME_TYPE, "text/plain")
                                     put(
                                         MediaStore.Downloads.RELATIVE_PATH,
-                                        Environment.DIRECTORY_DOWNLOADS + "/LocalDream",
+                                        Environment.DIRECTORY_DOWNLOADS + "/VisionDream",
                                     )
                                 }
                                 val resolver = context.contentResolver
@@ -609,13 +664,13 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                 resolver.openOutputStream(uri)?.use { out ->
                                     out.write(capturedLogs.toByteArray(Charsets.UTF_8))
                                 } ?: throw java.io.IOException("openOutputStream failed")
-                                "Downloads/LocalDream/$filename"
+                                "Downloads/VisionDream/$filename"
                             } else {
                                 val dir = File(
                                     Environment.getExternalStoragePublicDirectory(
                                         Environment.DIRECTORY_DOWNLOADS,
                                     ),
-                                    "LocalDream",
+                                    "VisionDream",
                                 )
                                 if (!dir.exists()) dir.mkdirs()
                                 val file = File(dir, filename)
@@ -654,7 +709,7 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
         CustomModelDialog(
             context,
             onDismiss = { showCustomModelDialog = false },
-            onModelAdded = { modelName, fileUri, clipSkip, loraFiles ->
+            onModelAdded = { modelName, fileUri, clipSkip, loraFiles, isNsfw ->
                 showCustomModelDialog = false
                 scope.launch {
                     convertCustomModel(
@@ -663,6 +718,7 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                         fileUri = fileUri,
                         clipSkip = clipSkip,
                         loraFiles = loraFiles,
+                        isNsfw = isNsfw,
                         onProgress = { progress ->
                             conversionProgress = progress
                         },
@@ -694,13 +750,14 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
         CustomNpuModelDialog(
             context,
             onDismiss = { showCustomNpuModelDialog = false },
-            onModelAdded = { modelName, zipUri ->
+            onModelAdded = { modelName, zipUri, isNsfw ->
                 showCustomNpuModelDialog = false
                 scope.launch {
                     extractNpuModel(
                         context = context,
                         modelName = modelName,
                         zipUri = zipUri,
+                        isNsfw = isNsfw,
                         onProgress = { progress ->
                             conversionProgress = progress
                         },
@@ -734,6 +791,17 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
         )
     }
 
+    if (showModelSearchDialog) {
+        ModelSearchDialog(
+            onDismiss = { showModelSearchDialog = false },
+            onInstalled = {
+                scope.launch {
+                    modelRepository.refreshAllModels()
+                }
+            },
+        )
+    }
+
     if (showDeleteConfirm && selectedModels.isNotEmpty()) {
         DeleteConfirmDialog(
             selectedCount = selectedModels.size,
@@ -750,6 +818,7 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                     }
 
                     modelRepository.refreshAllModels()
+                    usageIds = ModelUsageRanking.get(context)
 
                     snackbarHostState.showSnackbar(
                         if (successCount == selectedModels.size) {
@@ -781,6 +850,7 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                     if (result is RenameResult.Success) {
                         modelRepository.refreshAllModels()
                         pinnedIds = PinnedModels.get(context)
+                        usageIds = ModelUsageRanking.get(context)
                         snackbarHostState.showSnackbar(msgRenameSuccess)
                     } else {
                         snackbarHostState.showSnackbar(msgRenameFailed)
@@ -859,12 +929,20 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
     }
 
     Scaffold(
+        bottomBar = bottomBar,
         topBar = {
-            LargeTopAppBar(
+            TopAppBar(
                 title = {
                     Column {
                         Text(
-                            text = "Local Dream✨",
+                            text = stringResource(
+                                if (isTopLevel) {
+                                    R.string.studio_nav_models
+                                } else {
+                                    R.string.app_name
+                                },
+                            ),
+                            style = MaterialTheme.typography.titleLarge,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -874,6 +952,11 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                     R.plurals.selected_items,
                                     selectedModels.size,
                                     selectedModels.size,
+                                )
+                            } else if (isTopLevel) {
+                                stringResource(
+                                    R.string.studio_installed_models,
+                                    listedModels.count { it.isDownloaded },
                                 )
                             } else {
                                 stringResource(R.string.available_models)
@@ -943,7 +1026,10 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                         // bar's title from being squeezed by multiple action
                         // icons competing for width.
                         var menuExpanded by remember { mutableStateOf(false) }
-                        IconButton(onClick = { menuExpanded = true }) {
+                        IconButton(
+                            onClick = { menuExpanded = true },
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(),
+                        ) {
                             Icon(
                                 Icons.Default.MoreVert,
                                 contentDescription = stringResource(R.string.more_options),
@@ -964,47 +1050,6 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text(stringResource(R.string.history_tab)) },
-                                leadingIcon = {
-                                    Icon(Icons.Default.History, contentDescription = null)
-                                },
-                                onClick = {
-                                    menuExpanded = false
-                                    navController.navigate(Screen.History.route)
-                                },
-                            )
-                            // In connected-device mode the standalone upscale
-                            // page runs on the host's NPU, so it is offered
-                            // when the host has an upscaler installed; locally
-                            // it needs this device's Qualcomm NPU.
-                            val showUpscaleEntry = if (remoteActive) {
-                                remoteRepository.upscalerPaths.isNotEmpty()
-                            } else {
-                                Model.isQualcommDevice()
-                            }
-                            if (showUpscaleEntry) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.image_upscale)) },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.AutoFixHigh, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        menuExpanded = false
-                                        navController.navigate(Screen.Upscale.route)
-                                    },
-                                )
-                            }
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.remote_link)) },
-                                leadingIcon = {
-                                    Icon(Icons.Default.Devices, contentDescription = null)
-                                },
-                                onClick = {
-                                    menuExpanded = false
-                                    navController.navigate(Screen.RemoteLink.route)
-                                },
-                            )
-                            DropdownMenuItem(
                                 text = { Text(stringResource(R.string.settings)) },
                                 leadingIcon = {
                                     Icon(Icons.Default.Settings, contentDescription = null)
@@ -1018,9 +1063,13 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                     }
                 },
                 scrollBehavior = scrollBehavior,
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                ),
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
     ) { paddingValues ->
         Column(
             modifier = modifier
@@ -1037,6 +1086,69 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                     onDisconnect = { remoteRepository.disconnect() },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                 )
+            }
+            val loadedModel = listedModels.firstOrNull { it.id == servingModelId }
+            if (!remoteActive && loadedModel != null) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Memory,
+                                contentDescription = null,
+                                modifier = Modifier.padding(10.dp),
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.model_loaded),
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            Text(
+                                text = loadedModel.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                if (backendBusy) {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(msgModelUnloadBusy)
+                                    }
+                                } else {
+                                    context.startForegroundService(
+                                        Intent(context, BackendService::class.java)
+                                            .setAction(BackendService.ACTION_STOP)
+                                            .putExtra(
+                                                BackendService.EXTRA_EXPECTED_MODEL_ID,
+                                                loadedModel.id,
+                                            ),
+                                    )
+                                }
+                            },
+                            enabled = !backendBusy,
+                        ) {
+                            Text("Unload")
+                        }
+                    }
+                }
             }
             PrimaryTabRow(
                 selectedTabIndex = pagerState.currentPage,
@@ -1071,6 +1183,19 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                     contentPadding = PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    if (!remoteActive) {
+                        item {
+                            FilledTonalButton(
+                                onClick = { showModelSearchDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Default.Search, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.search_models))
+                            }
+                        }
+                    }
+
                     if (page == 0 && !remoteActive) {
                         item {
                             AddCustomModelButton(
@@ -1103,6 +1228,10 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                             isSelected = selectedModels.contains(model),
                             isSelectionMode = isSelectionMode,
                             isPinned = model.id in pinnedIds,
+                            isLoaded = !remoteActive &&
+                                backendState is BackendService.BackendState.Running &&
+                                servingModelId == model.id,
+                            unloadEnabled = !backendBusy,
                             onClick = {
                                 if (remoteActive) {
                                     // The model runs on the host device, so this
@@ -1140,6 +1269,10 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                 } else {
                                     if (!model.isDownloaded) {
                                         showDownloadConfirm = model
+                                    } else if (apiStatus.active || apiStatus.queued > 0) {
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar(msgApiRequestBusy)
+                                        }
                                     } else {
                                         navController.navigate(Screen.ModelRun.createRoute(model.id))
                                     }
@@ -1156,6 +1289,22 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                             },
                             onUpdateClick = {
                                 showUpgradeConfirm = model
+                            },
+                            onUnloadClick = {
+                                if (backendBusy) {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(msgModelUnloadBusy)
+                                    }
+                                } else {
+                                    context.startForegroundService(
+                                        Intent(context, BackendService::class.java)
+                                            .setAction(BackendService.ACTION_STOP)
+                                            .putExtra(
+                                                BackendService.EXTRA_EXPECTED_MODEL_ID,
+                                                model.id,
+                                            ),
+                                    )
+                                }
                             },
                         )
                     }
@@ -1316,7 +1465,11 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .menuAnchor(
-                                            ExposedDropdownMenuAnchorType.PrimaryEditable,
+                                            if (selectedSource == "custom") {
+                                                ExposedDropdownMenuAnchorType.PrimaryEditable
+                                            } else {
+                                                ExposedDropdownMenuAnchorType.PrimaryNotEditable
+                                            },
                                             enabled = true,
                                         )
                                         .focusRequester(focusRequester)
@@ -1335,11 +1488,9 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                             }
                                         },
                                     trailingIcon = {
-                                        IconButton(onClick = {}) {
-                                            ExposedDropdownMenuDefaults.TrailingIcon(
-                                                expanded = expanded,
-                                            )
-                                        }
+                                        ExposedDropdownMenuDefaults.TrailingIcon(
+                                            expanded = expanded,
+                                        )
                                     },
                                     singleLine = true,
                                 )
@@ -1460,6 +1611,9 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                         preferences.getBoolean("enable_log_capture", false),
                                     )
                                 }
+                                val mainActivity = context as? MainActivity
+                                val biometricLockEnabled =
+                                    mainActivity?.biometricLockEnabled ?: false
                                 var listenOnAllAddresses by remember {
                                     mutableStateOf(
                                         preferences.getBoolean("listen_on_all_addresses", false),
@@ -1635,6 +1789,17 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                                         preferences.edit {
                                             putBoolean("enable_log_capture", it)
                                         }
+                                    },
+                                )
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                )
+                                SwitchSettingRow(
+                                    title = stringResource(R.string.biometric_lock),
+                                    description = stringResource(R.string.biometric_lock_hint),
+                                    checked = biometricLockEnabled,
+                                    onCheckedChange = { enabled ->
+                                        mainActivity?.setBiometricLockEnabled(enabled)
                                     },
                                 )
                                 HorizontalDivider(
@@ -2087,6 +2252,9 @@ fun ModelCard(
     modifier: Modifier = Modifier,
     onUpdateClick: () -> Unit = {},
     isPinned: Boolean = false,
+    isLoaded: Boolean = false,
+    unloadEnabled: Boolean = true,
+    onUnloadClick: () -> Unit = {},
 ) {
     val isDisabledInSelection = !model.isDownloaded && isSelectionMode
 
@@ -2189,6 +2357,17 @@ fun ModelCard(
                         color = primaryContent,
                         modifier = Modifier.weight(1f, fill = false),
                     )
+                    if (model.isNsfw) {
+                        Badge(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        ) {
+                            Text(
+                                text = "NSFW",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
@@ -2285,6 +2464,41 @@ fun ModelCard(
                                 label = stringResource(R.string.download),
                                 color = secondaryContent,
                             )
+                        }
+                    }
+                }
+                if (isLoaded && !isSelectionMode) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Memory,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                text = stringResource(R.string.model_loaded),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = onUnloadClick,
+                            enabled = unloadEnabled,
+                            contentPadding = PaddingValues(
+                                horizontal = 12.dp,
+                                vertical = 4.dp,
+                            ),
+                        ) {
+                            Text(stringResource(R.string.unload_model))
                         }
                     }
                 }
@@ -2742,9 +2956,48 @@ private fun AddModelOutlinedCard(label: String, onClick: () -> Unit, accent: Boo
 }
 
 @Composable
-fun CustomNpuModelDialog(context: Context, onDismiss: () -> Unit, onModelAdded: (String, Uri) -> Unit) {
+private fun ManualImportNsfwToggle(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                role = Role.Checkbox,
+                onValueChange = onCheckedChange,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = null,
+        )
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(
+                text = stringResource(R.string.manual_import_nsfw),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = stringResource(R.string.manual_import_nsfw_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+fun CustomNpuModelDialog(
+    context: Context,
+    onDismiss: () -> Unit,
+    onModelAdded: (String, Uri, Boolean) -> Unit,
+) {
     var modelName by remember { mutableStateOf("") }
     var selectedZipUri by remember { mutableStateOf<Uri?>(null) }
+    var isNsfw by remember { mutableStateOf(false) }
     val isIdReserved = modelName.isNotBlank() &&
         ModelRepository.isReservedModelId(modelName.replace(" ", ""))
 
@@ -2839,13 +3092,18 @@ fun CustomNpuModelDialog(context: Context, onDismiss: () -> Unit, onModelAdded: 
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+
+                ManualImportNsfwToggle(
+                    checked = isNsfw,
+                    onCheckedChange = { isNsfw = it },
+                )
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     if (modelName.isNotBlank() && selectedZipUri != null && !isIdReserved) {
-                        onModelAdded(modelName, selectedZipUri!!)
+                        onModelAdded(modelName, selectedZipUri!!, isNsfw)
                     }
                 },
                 enabled = modelName.isNotBlank() && selectedZipUri != null && !isIdReserved,
@@ -2866,12 +3124,13 @@ fun CustomNpuModelDialog(context: Context, onDismiss: () -> Unit, onModelAdded: 
 fun CustomModelDialog(
     context: Context,
     onDismiss: () -> Unit,
-    onModelAdded: (String, Uri, Int, List<LoRAFile>) -> Unit,
+    onModelAdded: (String, Uri, Int, List<LoRAFile>, Boolean) -> Unit,
 ) {
     var modelName by remember { mutableStateOf("") }
     var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
     var clipSkip by remember { mutableIntStateOf(1) }
     var selectedLoraFiles by remember { mutableStateOf<List<LoRAFile>>(emptyList()) }
+    var isNsfw by remember { mutableStateOf(false) }
     val isIdReserved = modelName.isNotBlank() &&
         ModelRepository.isReservedModelId(modelName.replace(" ", ""))
 
@@ -3091,13 +3350,24 @@ fun CustomModelDialog(
                         }
                     }
                 }
+
+                ManualImportNsfwToggle(
+                    checked = isNsfw,
+                    onCheckedChange = { isNsfw = it },
+                )
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     if (modelName.isNotBlank() && selectedFileUri != null && !isIdReserved) {
-                        onModelAdded(modelName, selectedFileUri!!, clipSkip, selectedLoraFiles)
+                        onModelAdded(
+                            modelName,
+                            selectedFileUri!!,
+                            clipSkip,
+                            selectedLoraFiles,
+                            isNsfw,
+                        )
                     }
                 },
                 enabled = modelName.isNotBlank() && selectedFileUri != null && !isIdReserved,
@@ -3138,6 +3408,7 @@ suspend fun extractNpuModel(
     context: Context,
     modelName: String,
     zipUri: Uri,
+    isNsfw: Boolean,
     onProgress: (String) -> Unit,
     onByteProgress: (extractedBytes: Long, totalCompressedBytes: Long, fraction: Float) -> Unit,
     onStart: () -> Unit,
@@ -3150,106 +3421,83 @@ suspend fun extractNpuModel(
             onProgress(context.getString(R.string.preparing_npu_model))
         }
 
-        val modelId = modelName.replace(" ", "")
-
-        val modelsDir = File(context.filesDir, "models")
-        if (!modelsDir.exists()) {
-            modelsDir.mkdirs()
-        }
-
-        val modelDir = File(modelsDir, modelId)
-        if (modelDir.exists()) {
-            modelDir.deleteRecursively()
-        }
-        modelDir.mkdirs()
-
-        val totalCompressedBytes: Long = try {
-            context.contentResolver.openAssetFileDescriptor(zipUri, "r")?.use { it.length }
-                ?: -1L
-        } catch (_: Exception) {
-            -1L
-        }
-
-        withContext(Dispatchers.Main) {
-            onProgress(context.getString(R.string.extracting_zip_file))
-        }
-
-        val rawInputStream = context.contentResolver.openInputStream(zipUri)
-            ?: throw Exception(context.getString(R.string.cannot_open_file))
-
-        val countingStream = CountingInputStream(rawInputStream)
-        val extractedBytesAtomic = AtomicLong(0L)
-
-        coroutineScope {
-            val progressJob = launch {
-                while (isActive) {
-                    delay(120L)
-                    val fraction = if (totalCompressedBytes > 0) {
-                        (countingStream.bytesRead.toFloat() / totalCompressedBytes)
-                            .coerceIn(0f, 1f)
-                    } else {
-                        0f
-                    }
-                    onByteProgress(extractedBytesAtomic.get(), totalCompressedBytes, fraction)
-                }
+        val result = TransactionalModelInstaller(context).installPrepared(modelName) { staging ->
+            val totalCompressedBytes: Long = try {
+                context.contentResolver.openAssetFileDescriptor(zipUri, "r")?.use { it.length }
+                    ?: -1L
+            } catch (_: Exception) {
+                -1L
             }
 
-            try {
-                ZipInputStream(countingStream.buffered()).use { zipInputStream ->
-                    var zipEntry = zipInputStream.nextEntry
+            withContext(Dispatchers.Main) {
+                onProgress(context.getString(R.string.extracting_zip_file))
+            }
 
-                    while (zipEntry != null) {
-                        if (!zipEntry.isDirectory) {
-                            val fileName = zipEntry.name.substringAfterLast('/')
+            val rawInputStream = context.contentResolver.openInputStream(zipUri)
+                ?: throw Exception(context.getString(R.string.cannot_open_file))
+            val countingStream = CountingInputStream(rawInputStream)
+            val extractedBytesAtomic = AtomicLong(0L)
 
-                            if (fileName.isNotEmpty() &&
-                                !fileName.startsWith(".") &&
-                                !fileName.startsWith("__MACOSX")
-                            ) {
-                                val outputFile = File(modelDir, fileName)
-
-                                BufferedOutputStream(outputFile.outputStream()).use { outputStream ->
-                                    val tracking = object : OutputStream() {
-                                        override fun write(b: Int) {
-                                            outputStream.write(b)
-                                            extractedBytesAtomic.incrementAndGet()
-                                        }
-                                        override fun write(b: ByteArray, off: Int, len: Int) {
-                                            outputStream.write(b, off, len)
-                                            extractedBytesAtomic.addAndGet(len.toLong())
-                                        }
-                                    }
-                                    zipInputStream.copyTo(tracking)
-                                }
-                            }
+            coroutineScope {
+                val progressJob = launch {
+                    while (isActive) {
+                        delay(120L)
+                        val fraction = if (totalCompressedBytes > 0) {
+                            (countingStream.bytesRead.toFloat() / totalCompressedBytes)
+                                .coerceIn(0f, 1f)
+                        } else {
+                            0f
                         }
-                        zipEntry = zipInputStream.nextEntry
+                        onByteProgress(extractedBytesAtomic.get(), totalCompressedBytes, fraction)
                     }
                 }
-            } finally {
-                progressJob.cancel()
+
+                try {
+                    BoundedModelZipExtractor.extractFlat(
+                        zipStream = countingStream,
+                        destination = staging,
+                        onExtractedBytes = extractedBytesAtomic::set,
+                    )
+                } finally {
+                    progressJob.cancel()
+                }
             }
-        }
 
-        onByteProgress(extractedBytesAtomic.get(), totalCompressedBytes, 1f)
+            onByteProgress(extractedBytesAtomic.get(), totalCompressedBytes, 1f)
 
-        if (modelId != "upscaler_anime" && modelId != "upscaler_realistic") {
-            val npuCustomFile = File(modelDir, "npucustom")
-            npuCustomFile.createNewFile()
+            val layout = PreparedModelValidator.detectCompleteLayout(staging)
+                ?.takeIf { it.requiresHardwareTarget }
+                ?: return@installPrepared TransactionalModelInstaller.Result.Incompatible(
+                    "The archive does not contain a complete supported NPU model",
+                )
+            File(staging, layout.completionMarker).createNewFile()
+            ModelMetadataStore.write(
+                staging,
+                ModelMetadata(
+                    contentRating = if (isNsfw) ModelContentRating.NSFW else ModelContentRating.SFW,
+                    ratingSource = ModelRatingSource.USER,
+                ),
+            )
+            TransactionalModelInstaller.Result.Installed(staging.name, layout.backendType)
         }
 
         withContext(Dispatchers.Main) {
-            onSuccess()
+            when (result) {
+                is TransactionalModelInstaller.Result.Installed -> onSuccess()
+
+                is TransactionalModelInstaller.Result.AlreadyInstalled -> {
+                    onError(context.getString(R.string.model_already_installed))
+                }
+
+                is TransactionalModelInstaller.Result.Incompatible -> onError(result.reason)
+
+                is TransactionalModelInstaller.Result.Failed -> onError(result.reason)
+            }
         }
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
         Log.e("NpuModelExtract", "Extraction failed", e)
-
-        val modelId = modelName.replace(" ", "")
-        val modelDir = File(File(context.filesDir, "models"), modelId)
-        if (modelDir.exists()) {
-            modelDir.deleteRecursively()
-        }
-
         withContext(Dispatchers.Main) {
             onError(e.message ?: context.getString(R.string.unknown_error))
         }
@@ -3524,6 +3772,7 @@ suspend fun convertCustomModel(
     fileUri: Uri,
     clipSkip: Int,
     loraFiles: List<LoRAFile>,
+    isNsfw: Boolean,
     onProgress: (String) -> Unit,
     onStart: () -> Unit,
     onSuccess: () -> Unit,
@@ -3535,203 +3784,214 @@ suspend fun convertCustomModel(
             onProgress(context.getString(R.string.preparing_model))
         }
 
-        val modelId = modelName.replace(" ", "")
-
-        val modelsDir = File(context.filesDir, "models")
-        if (!modelsDir.exists()) {
-            modelsDir.mkdirs()
-        }
-
-        val modelDir = File(modelsDir, modelId)
-        if (modelDir.exists()) {
-            modelDir.deleteRecursively()
-        }
-        modelDir.mkdirs()
-
-        withContext(Dispatchers.Main) {
-            onProgress(context.getString(R.string.copying_model_file))
-        }
-
-        val inputStream = context.contentResolver.openInputStream(fileUri)
-            ?: throw Exception(context.getString(R.string.cannot_open_file))
-        val modelFile = File(modelDir, "model.safetensors")
-
-        inputStream.use { input ->
-            modelFile.outputStream().use { output ->
-                input.copyTo(output)
+        val result = TransactionalModelInstaller(context).installPrepared(modelName) { modelDir ->
+            withContext(Dispatchers.Main) {
+                onProgress(context.getString(R.string.copying_model_file))
             }
-        }
 
-        withContext(Dispatchers.Main) {
-            onProgress(context.getString(R.string.copying_lora_files))
-        }
+            val inputStream = context.contentResolver.openInputStream(fileUri)
+                ?: throw Exception(context.getString(R.string.cannot_open_file))
+            val modelFile = File(modelDir, "model.safetensors")
 
-        loraFiles.forEachIndexed { index, loraFile ->
-            val loraInputStream = context.contentResolver.openInputStream(loraFile.uri)
-                ?: throw Exception("Cannot open LoRA file ${index + 1}")
-            val loraFileTarget = File(modelDir, "lora.${index + 1}.safetensors")
-            val loraWeightFile = File(modelDir, "lora.${index + 1}.weight")
-
-            loraInputStream.use { input ->
-                loraFileTarget.outputStream().use { output ->
+            inputStream.use { input ->
+                modelFile.outputStream().use { output ->
                     input.copyTo(output)
                 }
             }
 
-            loraWeightFile.writeText(loraFile.weight.toString())
-        }
-
-        withContext(Dispatchers.Main) {
-            onProgress(context.getString(R.string.copying_base_files))
-        }
-
-        fun copyAssetsRecursively(assetPath: String, targetDir: File) {
-            val assetManager = context.assets
-            val assets = assetManager.list(assetPath) ?: emptyArray()
-
-            if (assets.isEmpty()) {
-                try {
-                    val assetInputStream = assetManager.open(assetPath)
-                    val fileName = assetPath.substringAfterLast("/")
-                    val targetFile = File(targetDir, fileName)
-
-                    assetInputStream.use { input ->
-                        targetFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("ModelConvert", "Could not copy asset: $assetPath", e)
-                }
-            } else {
-                for (asset in assets) {
-                    val subAssetPath = "$assetPath/$asset"
-                    val subAssets = assetManager.list(subAssetPath) ?: emptyArray()
-
-                    if (subAssets.isEmpty()) {
-                        try {
-                            val assetInputStream = assetManager.open(subAssetPath)
-                            val targetFile = File(targetDir, asset)
-
-                            assetInputStream.use { input ->
-                                targetFile.outputStream().use { output ->
-                                    input.copyTo(output)
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.w(
-                                "ModelConvert",
-                                "Could not copy file: $subAssetPath",
-                                e,
-                            )
-                        }
-                    } else {
-                        val subTargetDir = File(targetDir, asset)
-                        subTargetDir.mkdirs()
-                        copyAssetsRecursively(subAssetPath, subTargetDir)
-                    }
-                }
-            }
-        }
-
-        copyAssetsRecursively("cvtbase", modelDir)
-
-        withContext(Dispatchers.Main) {
-            onProgress(context.getString(R.string.converting_model))
-        }
-
-        val nativeDir = context.applicationInfo.nativeLibraryDir
-        val executableFile = File(nativeDir, "libstable_diffusion_core.so")
-
-        if (!executableFile.exists()) {
-            throw Exception("Executable not found: ${executableFile.absolutePath}")
-        }
-
-        var command = listOf(
-            executableFile.absolutePath,
-            "--convert",
-            modelDir.absolutePath,
-        )
-        val clipSourceFile =
-            File(modelDir, if (clipSkip == 2) "clip_skip_2.mnn" else "clip_skip_1.mnn")
-        val clipTargetFile = File(modelDir, "clip_v2.mnn")
-        clipSourceFile.copyTo(clipTargetFile, overwrite = true)
-        if (clipSkip == 2) {
-            command += listOf("--clip_skip_2")
-        }
-        val env = mutableMapOf<String, String>()
-        val systemLibPaths = listOf(
-            nativeDir,
-            "/system/lib64",
-            "/vendor/lib64",
-            "/vendor/lib64/egl",
-        ).joinToString(":")
-
-        env["LD_LIBRARY_PATH"] = systemLibPaths
-        env["DSP_LIBRARY_PATH"] = nativeDir
-
-        val processBuilder = ProcessBuilder(command).apply {
-            directory(File(nativeDir))
-            redirectErrorStream(true)
-            environment().putAll(env)
-        }
-
-        val process = processBuilder.start()
-
-        process.inputStream.bufferedReader().use { reader ->
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                Log.i("ModelConvert", "Convert: $line")
-                withContext(Dispatchers.Main) {
-                    onProgress(context.getString(R.string.converting_with_line, line.orEmpty()))
-                }
-            }
-        }
-
-        val exitCode = process.waitFor()
-        Log.i("ModelConvert", "Conversion process exited with code: $exitCode")
-
-        val finishedFile = File(modelDir, "finished")
-        if (finishedFile.exists()) {
-            modelFile.delete()
-            val clipSkip1File = File(modelDir, "clip_skip_1.mnn")
-            if (clipSkip1File.exists()) {
-                clipSkip1File.delete()
-            }
-            val clipSkip2File = File(modelDir, "clip_skip_2.mnn")
-            if (clipSkip2File.exists()) {
-                clipSkip2File.delete()
+            withContext(Dispatchers.Main) {
+                onProgress(context.getString(R.string.copying_lora_files))
             }
 
-            loraFiles.forEachIndexed { index, _ ->
-                val loraFile = File(modelDir, "lora.${index + 1}.safetensors")
+            loraFiles.forEachIndexed { index, loraFile ->
+                val loraInputStream = context.contentResolver.openInputStream(loraFile.uri)
+                    ?: throw Exception("Cannot open LoRA file ${index + 1}")
+                val loraFileTarget = File(modelDir, "lora.${index + 1}.safetensors")
                 val loraWeightFile = File(modelDir, "lora.${index + 1}.weight")
-                if (loraFile.exists()) {
-                    loraFile.delete()
+
+                loraInputStream.use { input ->
+                    loraFileTarget.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
                 }
-                if (loraWeightFile.exists()) {
-                    loraWeightFile.delete()
-                }
+
+                loraWeightFile.writeText(loraFile.weight.toString())
             }
 
             withContext(Dispatchers.Main) {
-                onSuccess()
+                onProgress(context.getString(R.string.copying_base_files))
             }
-        } else {
-            modelDir.deleteRecursively()
+
+            fun copyAssetsRecursively(assetPath: String, targetDir: File) {
+                val assetManager = context.assets
+                val assets = assetManager.list(assetPath) ?: emptyArray()
+
+                if (assets.isEmpty()) {
+                    try {
+                        val assetInputStream = assetManager.open(assetPath)
+                        val fileName = assetPath.substringAfterLast("/")
+                        val targetFile = File(targetDir, fileName)
+
+                        assetInputStream.use { input ->
+                            targetFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ModelConvert", "Could not copy asset: $assetPath", e)
+                    }
+                } else {
+                    for (asset in assets) {
+                        val subAssetPath = "$assetPath/$asset"
+                        val subAssets = assetManager.list(subAssetPath) ?: emptyArray()
+
+                        if (subAssets.isEmpty()) {
+                            try {
+                                val assetInputStream = assetManager.open(subAssetPath)
+                                val targetFile = File(targetDir, asset)
+
+                                assetInputStream.use { input ->
+                                    targetFile.outputStream().use { output ->
+                                        input.copyTo(output)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w(
+                                    "ModelConvert",
+                                    "Could not copy file: $subAssetPath",
+                                    e,
+                                )
+                            }
+                        } else {
+                            val subTargetDir = File(targetDir, asset)
+                            subTargetDir.mkdirs()
+                            copyAssetsRecursively(subAssetPath, subTargetDir)
+                        }
+                    }
+                }
+            }
+
+            copyAssetsRecursively("cvtbase", modelDir)
+
             withContext(Dispatchers.Main) {
-                onError(context.getString(R.string.conversion_need_sd15))
+                onProgress(context.getString(R.string.converting_model))
+            }
+
+            val nativeDir = context.applicationInfo.nativeLibraryDir
+            val executableFile = File(nativeDir, "libstable_diffusion_core.so")
+
+            if (!executableFile.exists()) {
+                throw Exception("Executable not found: ${executableFile.absolutePath}")
+            }
+
+            var command = listOf(
+                executableFile.absolutePath,
+                "--convert",
+                modelDir.absolutePath,
+            )
+            val clipSourceFile =
+                File(modelDir, if (clipSkip == 2) "clip_skip_2.mnn" else "clip_skip_1.mnn")
+            val clipTargetFile = File(modelDir, "clip_v2.mnn")
+            clipSourceFile.copyTo(clipTargetFile, overwrite = true)
+            if (clipSkip == 2) {
+                command += listOf("--clip_skip_2")
+            }
+            val env = mutableMapOf<String, String>()
+            val systemLibPaths = listOf(
+                nativeDir,
+                "/system/lib64",
+                "/vendor/lib64",
+                "/vendor/lib64/egl",
+            ).joinToString(":")
+
+            env["LD_LIBRARY_PATH"] = systemLibPaths
+            env["DSP_LIBRARY_PATH"] = nativeDir
+
+            val processBuilder = ProcessBuilder(command).apply {
+                directory(File(nativeDir))
+                redirectErrorStream(true)
+                environment().putAll(env)
+            }
+
+            val process = processBuilder.start()
+
+            process.inputStream.bufferedReader().use { reader ->
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    Log.i("ModelConvert", "Convert: $line")
+                    withContext(Dispatchers.Main) {
+                        onProgress(context.getString(R.string.converting_with_line, line.orEmpty()))
+                    }
+                }
+            }
+
+            val exitCode = process.waitFor()
+            Log.i("ModelConvert", "Conversion process exited with code: $exitCode")
+
+            val finishedFile = File(modelDir, "finished")
+            if (exitCode == 0 && finishedFile.exists()) {
+                modelFile.delete()
+                val clipSkip1File = File(modelDir, "clip_skip_1.mnn")
+                if (clipSkip1File.exists()) {
+                    clipSkip1File.delete()
+                }
+                val clipSkip2File = File(modelDir, "clip_skip_2.mnn")
+                if (clipSkip2File.exists()) {
+                    clipSkip2File.delete()
+                }
+
+                loraFiles.forEachIndexed { index, _ ->
+                    val loraFile = File(modelDir, "lora.${index + 1}.safetensors")
+                    val loraWeightFile = File(modelDir, "lora.${index + 1}.weight")
+                    if (loraFile.exists()) {
+                        loraFile.delete()
+                    }
+                    if (loraWeightFile.exists()) {
+                        loraWeightFile.delete()
+                    }
+                }
+
+                ModelMetadataStore.write(
+                    modelDir,
+                    ModelMetadata(
+                        contentRating = if (isNsfw) ModelContentRating.NSFW else ModelContentRating.SFW,
+                        ratingSource = ModelRatingSource.USER,
+                    ),
+                )
+                val convertedFiles = modelDir.listFiles()
+                    ?.filter(File::isFile)
+                    ?.mapTo(mutableSetOf(), File::getName)
+                    .orEmpty()
+                val layout = ModelFileLayouts.detect(convertedFiles)
+                    ?.takeIf { it.backendType == "sd15cpu" }
+                    ?: return@installPrepared TransactionalModelInstaller.Result.Incompatible(
+                        "Converted model is incomplete",
+                    )
+                TransactionalModelInstaller.Result.Installed(modelDir.name, layout.backendType)
+            } else {
+                TransactionalModelInstaller.Result.Incompatible(
+                    context.getString(R.string.conversion_need_sd15),
+                )
             }
         }
+
+        withContext(Dispatchers.Main) {
+            when (result) {
+                is TransactionalModelInstaller.Result.Installed -> onSuccess()
+
+                is TransactionalModelInstaller.Result.AlreadyInstalled -> {
+                    onError(context.getString(R.string.model_already_installed))
+                }
+
+                is TransactionalModelInstaller.Result.Incompatible -> onError(result.reason)
+
+                is TransactionalModelInstaller.Result.Failed -> onError(result.reason)
+            }
+        }
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
         Log.e("ModelConvert", "Conversion failed", e)
-
-        val modelId = modelName.replace(" ", "")
-        val modelDir = File(File(context.filesDir, "models"), modelId)
-        if (modelDir.exists()) {
-            modelDir.deleteRecursively()
-        }
-
         withContext(Dispatchers.Main) {
             onError(e.message ?: context.getString(R.string.unknown_error))
         }
@@ -3977,6 +4237,7 @@ private fun ThemeSwatch(
     val alpha = if (enabled) 1f else 0.45f
     val description = stringResource(preset.nameRes)
     val polygon = when (preset) {
+        ThemePreset.VISION -> MaterialShapes.SoftBurst
         ThemePreset.TANGERINE -> MaterialShapes.Cookie9Sided
         ThemePreset.FOREST -> MaterialShapes.Clover4Leaf
         ThemePreset.OCEAN -> MaterialShapes.Sunny

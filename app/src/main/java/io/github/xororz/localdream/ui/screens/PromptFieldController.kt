@@ -248,12 +248,15 @@ internal fun ControlledPromptTagTextField(
     autocompleteAvailable: Boolean,
     label: @Composable (() -> Unit),
     modifier: Modifier = Modifier,
+    onValueChange: ((TextFieldValue) -> Unit)? = null,
 ) {
     val popupVisible =
         autocompleteAvailable && controller.isFocused && !controller.popupDismissed
     PromptTagTextField(
         value = controller.fieldValue,
-        onValueChange = { controller.update(it) },
+        onValueChange = { value ->
+            onValueChange?.invoke(value) ?: controller.update(value)
+        },
         modifier = modifier,
         label = label,
         suggestions = controller.suggestions,

@@ -501,6 +501,10 @@ static void registerUpscaleEndpoint(httplib::Server &svr) {
     std::unique_ptr<QnnModel> tempUpscalerApp = nullptr;
 
     try {
+      // Upscale and diffusion both use process-global QNN/MNN resources.
+      // Keep them in the same serialization domain even when a caller bypasses
+      // the Kotlin gateway (for example, the in-app upscale screen).
+      std::lock_guard<std::mutex> generation_lock(g_generation_mutex);
       if (!req.has_header("X-Image-Width")) {
         throw std::invalid_argument("Missing 'X-Image-Width' header");
       }

@@ -13,7 +13,7 @@ import androidx.compose.runtime.Immutable
 @Immutable
 data class GenerationDefaults(
     val prompt: String = "",
-    val negativePrompt: String = "",
+    val negativePrompt: String = DEFAULT_NEGATIVE_PROMPT,
     val steps: Float = 20f,
     val cfg: Float = 7f,
     val scheduler: String = "dpm",
@@ -34,7 +34,20 @@ data class GenerationDefaults(
     val ultrafixQualityDenoise: Boolean = true,
 ) {
     companion object {
+        /**
+         * Style-neutral quality and anatomy guardrails shared by every
+         * generation entry point when neither a model nor the caller supplies
+         * a more specific negative prompt.
+         */
+        const val DEFAULT_NEGATIVE_PROMPT =
+            "worst quality, low quality, low resolution, blurry, out of focus, " +
+                "jpeg artifacts, watermark, signature, text, bad anatomy, bad proportions, " +
+                "deformed, disfigured, extra limbs, missing limbs, extra fingers, " +
+                "missing fingers, fused fingers, poorly drawn hands, poorly drawn face"
+
         val GLOBAL = GenerationDefaults()
+
+        fun resolveNegativePrompt(value: String?): String = value ?: DEFAULT_NEGATIVE_PROMPT
 
         // UltraFix slider bounds (kept here so the persistence layer and the
         // dialog agree on the clamp range). Denoise steps are additionally

@@ -233,7 +233,22 @@ bool safety_check(const std::vector<uint8_t> &image_data, int width, int height,
 void decode_image(const std::vector<uint8_t> &image_binary,
                   std::vector<uint8_t> &output_pixels, int output_width,
                   int output_height) {
+  constexpr int kMaxUploadedImageEdge = 8192;
+  constexpr size_t kMaxUploadedImagePixels = 16 * 1024 * 1024;
   int width, height, channels;
+  if (image_binary.empty() ||
+      !stbi_info_from_memory(image_binary.data(),
+                             static_cast<int>(image_binary.size()), &width,
+                             &height, &channels)) {
+    throw std::invalid_argument("Failed to read uploaded image dimensions");
+  }
+  const size_t pixel_count =
+      static_cast<size_t>(width) * static_cast<size_t>(height);
+  if (width <= 0 || height <= 0 || width > kMaxUploadedImageEdge ||
+      height > kMaxUploadedImageEdge ||
+      pixel_count > kMaxUploadedImagePixels) {
+    throw std::invalid_argument("Uploaded image dimensions exceed safety limits");
+  }
   uint8_t *decoded_data =
       stbi_load_from_memory(image_binary.data(), image_binary.size(), &width,
                             &height, &channels, 3);  // Force 3 channels (RGB)

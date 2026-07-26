@@ -92,6 +92,8 @@ internal suspend fun checkBackendHealth(
     backendState: StateFlow<BackendService.BackendState>,
     servingModelId: StateFlow<String?>,
     expectedModelId: String,
+    commandResult: StateFlow<BackendService.BackendCommandResult>? = null,
+    initialCommandVersion: Long = 0L,
     onHealthy: () -> Unit,
     onUnhealthy: () -> Unit,
 ) = withContext(Dispatchers.IO) {
@@ -105,6 +107,15 @@ internal suspend fun checkBackendHealth(
         var ownErrorStreak = 0
 
         while (currentCoroutineContext().isActive) {
+            val rejection = commandResult?.value
+            if (rejection != null &&
+                rejection.version > initialCommandVersion &&
+                rejection.modelId == expectedModelId &&
+                rejection.error != null
+            ) {
+                withContext(Dispatchers.Main) { onUnhealthy() }
+                break
+            }
             val state = backendState.value
             // Only an error for this model (or a model-agnostic one) is ours; an
             // error left over from a different model's process still alive in the

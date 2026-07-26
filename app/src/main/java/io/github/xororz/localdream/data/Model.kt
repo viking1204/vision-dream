@@ -124,6 +124,7 @@ data class Model(
     val isCustom: Boolean = false,
     val isSdxl: Boolean = false,
     val isAnima: Boolean = false,
+    val contentRating: ModelContentRating = ModelContentRating.UNKNOWN,
 
 ) {
     // Per-field priority: code defaults > config.json > global defaults.
@@ -136,6 +137,9 @@ data class Model(
     // SDXL-only). SD1.5 NPU/CPU use their own sizes / resolution patches.
     val usesFixedCanvas: Boolean
         get() = isSdxl || isAnima
+
+    val isNsfw: Boolean
+        get() = contentRating == ModelContentRating.NSFW
 
     // Backend --type value; each type implies the full model file layout.
     val backendType: String
@@ -157,6 +161,10 @@ data class Model(
             putExtra(ModelDownloadService.EXTRA_IS_ZIP, fileUri.endsWith(".zip"))
             putExtra(ModelDownloadService.EXTRA_IS_NPU, !runOnCpu)
             putExtra(ModelDownloadService.EXTRA_MODEL_TYPE, "sd")
+            putExtra(
+                ModelDownloadService.EXTRA_MODEL_METADATA_JSON,
+                ModelMetadata(contentRating = contentRating).toJsonString(),
+            )
         }
 
         context.startForegroundService(intent)
@@ -172,6 +180,7 @@ data class Model(
             }
             generationPreferences.clearPreferencesForModel(id)
             PinnedModels.unpin(context, listOf(id))
+            ModelUsageRanking.remove(context, id)
 
             if (modelDir.exists() && modelDir.isDirectory) {
                 val deleted = modelDir.deleteRecursively()
@@ -221,6 +230,7 @@ data class Model(
             HistoryManager(context).renameModel(id, newId)
             GenerationPreferences(context).migratePreferencesForModel(id, newId)
             PinnedModels.rename(context, id, newId)
+            ModelUsageRanking.rename(context, id, newId)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -230,8 +240,6 @@ data class Model(
     }
 
     companion object {
-        private const val MODELS_DIR = "models"
-
         fun isDeviceSupported(): Boolean {
             val soc = getDeviceSoc()
             return getChipsetSuffix(soc) != null
@@ -256,9 +264,7 @@ data class Model(
             return null
         }
 
-        fun getModelsDir(context: Context): File = File(context.filesDir, MODELS_DIR).apply {
-            if (!exists()) mkdirs()
-        }
+        fun getModelsDir(context: Context): File = ModelStorage.requireModelsDir(context)
 
         fun isModelDownloaded(context: Context, modelId: String, isCustom: Boolean = false): Boolean {
             if (isCustom) {
@@ -492,6 +498,7 @@ class ModelRepository private constructor(private val context: Context) {
             negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
         )
         val config = ModelConfig.read(modelDir) ?: ModelConfig()
+        val metadata = ModelMetadataStore.read(modelDir)
 
         return Model(
             id = modelId,
@@ -506,6 +513,7 @@ class ModelRepository private constructor(private val context: Context) {
             isCustom = true,
             isSdxl = isSdxl,
             isAnima = isAnima,
+            contentRating = resolveModelContentRating(metadata, modelId),
         )
     }
 
@@ -538,8 +546,13 @@ class ModelRepository private constructor(private val context: Context) {
     // any values already merged into configDefaults (e.g. the custom model
     // placeholders) as fallback.
     private fun applyConfigDefaults(model: Model): Model {
-        val config = ModelConfig.read(File(Model.getModelsDir(context), model.id)) ?: return model
-        return model.copy(configDefaults = config.withFallback(model.configDefaults))
+        val modelDirectory = File(Model.getModelsDir(context), model.id)
+        val config = ModelConfig.read(modelDirectory)
+        val metadata = ModelMetadataStore.read(modelDirectory)
+        return model.copy(
+            configDefaults = config?.withFallback(model.configDefaults) ?: model.configDefaults,
+            contentRating = metadata?.contentRating ?: model.contentRating,
+        )
     }
 
     private fun isSdxlCapableSoc(soc: String): Boolean = soc in setOf("SM8750", "SM8750P", "SM8850", "SM8850P", "SM8845", "SM8650")
@@ -921,9 +934,13 @@ class ModelRepository private constructor(private val context: Context) {
             // SD 1.5 CPU
             "anythingv5cpu", "qteamixcpu", "cuteyukimixcpu",
             "absoluterealitycpu", "chilloutmixcpu",
+            // Upscalers
+            "upscaler_anime", "upscaler_realistic",
         )
 
         fun isReservedModelId(id: String): Boolean = id in RESERVED_MODEL_IDS
+
+        fun reservedModelIds(): Set<String> = RESERVED_MODEL_IDS
 
         @SuppressLint("StaticFieldLeak")
         @Volatile

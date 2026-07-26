@@ -60,6 +60,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
@@ -82,7 +83,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -91,8 +91,8 @@ import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -105,6 +105,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -128,8 +129,8 @@ import androidx.navigation.NavController
 import androidx.paging.compose.collectAsLazyPagingItems
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import io.github.xororz.localdream.BuildConfig
 import io.github.xororz.localdream.R
+import io.github.xororz.localdream.data.AssetOrigin
 import io.github.xororz.localdream.data.GenerationDefaults
 import io.github.xororz.localdream.data.GenerationMode
 import io.github.xororz.localdream.data.GenerationPreferences
@@ -150,8 +151,11 @@ import io.github.xororz.localdream.service.BackgroundGenerationService.Generatio
 import io.github.xororz.localdream.ui.components.BlockingProgressOverlay
 import io.github.xororz.localdream.ui.components.GenerationParamsDialog
 import io.github.xororz.localdream.ui.components.ImportParametersDialog
+import io.github.xororz.localdream.ui.components.NegativePromptToggle
 import io.github.xororz.localdream.ui.components.OverlayIconButton
+import io.github.xororz.localdream.ui.components.PromptPickerDialog
 import io.github.xororz.localdream.ui.components.ReproduceParametersDialog
+import io.github.xororz.localdream.ui.components.RevealableImage
 import io.github.xororz.localdream.ui.components.ShareParamsFlow
 import io.github.xororz.localdream.ui.components.SmoothLinearWavyProgressIndicator
 import io.github.xororz.localdream.ui.components.ZoomableImageOverlay
@@ -161,7 +165,6 @@ import io.github.xororz.localdream.utils.LogCapture
 import io.github.xororz.localdream.utils.ParamShare
 import io.github.xororz.localdream.utils.ParamShareField
 import io.github.xororz.localdream.utils.performUpscale
-import io.github.xororz.localdream.utils.reportImage
 import io.github.xororz.localdream.utils.saveImage
 import io.github.xororz.localdream.utils.saveImageFromFile
 import java.io.File
@@ -187,6 +190,9 @@ fun ModelRunScreen(
 ) {
     val serviceState by BackgroundGenerationService.generationState.collectAsState()
     val backendState by BackendService.backendState.collectAsState()
+    val initialBackendCommandVersion = remember(modelId) {
+        BackendService.commandResult.value.version
+    }
     val context = LocalContext.current
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
@@ -219,8 +225,6 @@ fun ModelRunScreen(
     val msgSaveFailed = stringResource(R.string.save_failed_detail)
     val msgImg2imgFailed = stringResource(R.string.img2img_failed_detail)
     val msgPleaseCropFirst = stringResource(R.string.please_crop_first)
-    val msgReportSuccess = stringResource(R.string.report_success)
-    val msgReportFailed = stringResource(R.string.report_failed)
     val msgNoImageAvailable = stringResource(R.string.no_image_available)
     val msgImageLoadFailed = stringResource(R.string.image_load_failed)
     val msgGenerationInterrupted = stringResource(R.string.generation_interrupted)
@@ -238,8 +242,7 @@ fun ModelRunScreen(
         }
     }
     val historyManager = remember { HistoryManager(context) }
-    val scrollBehavior =
-        TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val focusManager = LocalFocusManager.current
     val interactionSource = remember { MutableInteractionSource() }
 
@@ -363,8 +366,6 @@ fun ModelRunScreen(
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { 3 })
     var generationStartTime by remember { mutableStateOf<Long?>(null) }
     var hasInitialized by remember { mutableStateOf(false) }
-    var showReportDialog by remember { mutableStateOf(false) }
-
     // The prompt fields live on page 0. When the user swipes to the result or
     // history page the suggestion popup is anchored absolutely and would linger,
     // so drop focus (which clears the suggestions) as soon as we leave page 0.
@@ -453,6 +454,8 @@ fun ModelRunScreen(
         suggestionCount = tagSuggestionCount,
         embeddingSuggestionsFor = { embeddingSuggestionsFor(it) },
     )
+    var negativePromptExpanded by rememberSaveable(modelId) { mutableStateOf(false) }
+    var showSavedPromptPicker by remember { mutableStateOf(false) }
     promptField.autocompleteAvailable = tagAutocompleteAvailable
     negativePromptField.autocompleteAvailable = tagAutocompleteAvailable
 
@@ -1146,6 +1149,7 @@ fun ModelRunScreen(
                 // the pending start, mirroring BackgroundGenerationService.stop().
                 val backendServiceIntent = Intent(context, BackendService::class.java)
                     .setAction(BackendService.ACTION_STOP)
+                    .putExtra(BackendService.EXTRA_EXPECTED_MODEL_ID, modelId)
                 context.startForegroundService(backendServiceIntent)
             }
             isRunning = false
@@ -1410,26 +1414,32 @@ fun ModelRunScreen(
                         mode = currentGenerationMode,
                     )
 
-                    // Save to disk and update history list. The saved item's id is
-                    // forwarded to both the snapshot and the currently-displayed marker
-                    // so handleSaveImage can later confirm the user is still looking at
-                    // this generation (and not a different history thumbnail).
-                    coroutineScope.launch(Dispatchers.IO) {
-                        val savedItem = historyManager.saveGeneratedImage(
-                            modelId = modelId,
-                            bitmap = state.bitmap,
-                            params = newParams,
-                            mode = currentGenerationMode,
-                        )
+                    // Start persistence outside the page's Compose scope. Once
+                    // Complete is visible, leaving this destination must not
+                    // cancel the asset write and silently omit the image from
+                    // the unified asset manager.
+                    val pendingAsset = historyManager.enqueueGeneratedImageSave(
+                        modelId = modelId,
+                        bitmap = state.bitmap,
+                        params = newParams,
+                        mode = currentGenerationMode,
+                        origin = if (isRemote) {
+                            AssetOrigin.REMOTE_LINK
+                        } else {
+                            AssetOrigin.LOCAL_APP
+                        },
+                    )
+                    // The UI-only marker remains lifecycle-bound. Cancelling
+                    // this awaiter on navigation does not cancel pendingAsset.
+                    coroutineScope.launch {
+                        val savedItem = pendingAsset.await()
                         if (savedItem != null) {
-                            withContext(Dispatchers.Main) {
-                                // An ultrafix result is a standalone image, not a
-                                // stitchable inpaint patch.
-                                if (!wasUltrafix) {
-                                    stitchableHistoryIds = setOf(savedItem.id)
-                                }
-                                currentDisplayedHistoryId = savedItem.id
+                            // An ultrafix result is a standalone image, not a
+                            // stitchable inpaint patch.
+                            if (!wasUltrafix) {
+                                stitchableHistoryIds = setOf(savedItem.id)
                             }
+                            currentDisplayedHistoryId = savedItem.id
                         }
                     }
 
@@ -1655,6 +1665,18 @@ fun ModelRunScreen(
         )
     }
 
+    if (showSavedPromptPicker) {
+        PromptPickerDialog(
+            onDismissRequest = { showSavedPromptPicker = false },
+            onTemplateSelected = { template ->
+                promptField.replaceText(template.prompt)
+                negativePromptField.replaceText(template.negativePrompt)
+                saveAllFields()
+                showSavedPromptPicker = false
+            },
+        )
+    }
+
     // Local mode reads the shared BackendService state; remote mode polls the
     // host's /status endpoint plus its generation port's /health. Remote Ready
     // additionally requires the host's (model, width, height) to match this
@@ -1687,6 +1709,8 @@ fun ModelRunScreen(
                 backendState = BackendService.backendState,
                 servingModelId = BackendService.servingModelId,
                 expectedModelId = modelId,
+                commandResult = BackendService.commandResult,
+                initialCommandVersion = initialBackendCommandVersion,
                 onHealthy = {
                     isCheckingBackend = false
                     backendReady = true
@@ -1755,6 +1779,14 @@ fun ModelRunScreen(
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                IconButton(onClick = { showSavedPromptPicker = true }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Bookmarks,
+                                        contentDescription = stringResource(
+                                            R.string.prompt_picker_title,
+                                        ),
+                                    )
+                                }
                                 if (useImg2img) {
                                     TextButton(
                                         onClick = { onSelectImageClick() },
@@ -1909,6 +1941,21 @@ fun ModelRunScreen(
                             controller = promptField,
                             autocompleteAvailable = tagAutocompleteAvailable,
                             modifier = Modifier.fillMaxWidth(),
+                            onValueChange = { value ->
+                                val pasted = ParamShare.tryDecodePromptPairEdit(
+                                    currentText = promptField.text,
+                                    selectionStart = promptField.fieldValue.selection.start,
+                                    selectionEnd = promptField.fieldValue.selection.end,
+                                    candidate = value.text,
+                                )
+                                if (pasted == null) {
+                                    promptField.update(value)
+                                } else {
+                                    promptField.replaceText(pasted.prompt)
+                                    negativePromptField.replaceText(pasted.negativePrompt)
+                                    saveAllFields()
+                                }
+                            },
                             label = {
                                 PromptCountLabel(
                                     label = stringResource(R.string.image_prompt),
@@ -1919,19 +1966,44 @@ fun ModelRunScreen(
                             },
                         )
 
-                        ControlledPromptTagTextField(
-                            controller = negativePromptField,
-                            autocompleteAvailable = tagAutocompleteAvailable,
+                        NegativePromptToggle(
+                            expanded = negativePromptExpanded,
+                            hasValue = negativePromptField.text.isNotBlank(),
+                            onExpandedChange = { negativePromptExpanded = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = {
-                                PromptCountLabel(
-                                    label = stringResource(R.string.negative_prompt),
-                                    count = negativePromptField.tokenCount,
-                                    max = negativePromptField.tokenMax,
-                                    showCount = negativePromptField.text.isNotEmpty(),
-                                )
-                            },
                         )
+                        if (negativePromptExpanded) {
+                            ControlledPromptTagTextField(
+                                controller = negativePromptField,
+                                autocompleteAvailable = tagAutocompleteAvailable,
+                                modifier = Modifier.fillMaxWidth(),
+                                onValueChange = { value ->
+                                    val pasted = ParamShare.tryDecodePromptPairEdit(
+                                        currentText = negativePromptField.text,
+                                        selectionStart =
+                                            negativePromptField.fieldValue.selection.start,
+                                        selectionEnd =
+                                            negativePromptField.fieldValue.selection.end,
+                                        candidate = value.text,
+                                    )
+                                    if (pasted == null) {
+                                        negativePromptField.update(value)
+                                    } else {
+                                        promptField.replaceText(pasted.prompt)
+                                        negativePromptField.replaceText(pasted.negativePrompt)
+                                        saveAllFields()
+                                    }
+                                },
+                                label = {
+                                    PromptCountLabel(
+                                        label = stringResource(R.string.negative_prompt),
+                                        count = negativePromptField.tokenCount,
+                                        max = negativePromptField.tokenMax,
+                                        showCount = negativePromptField.text.isNotEmpty(),
+                                    )
+                                },
+                            )
+                        }
 
                         Button(
                             onClick = {
@@ -2195,12 +2267,17 @@ fun ModelRunScreen(
                                     .fillMaxWidth()
                                     .aspectRatio(1f),
                             ) {
-                                Image(
-                                    bitmap = bitmap.asImageBitmap(),
-                                    contentDescription = "Generation Preview",
+                                RevealableImage(
+                                    revealKey = bitmap,
                                     modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Fit,
-                                )
+                                ) {
+                                    Image(
+                                        bitmap = bitmap.asImageBitmap(),
+                                        contentDescription = "Generation Preview",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Fit,
+                                    )
+                                }
                             }
                         }
                     }
@@ -2382,27 +2459,24 @@ fun ModelRunScreen(
         Scaffold(
             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
             topBar = {
-                LargeTopAppBar(
+                TopAppBar(
                     title = {
-                        // Hide title when collapsed
-                        if (scrollBehavior.state.collapsedFraction < 0.5f) {
-                            Column {
-                                Text(
-                                    text = model?.name ?: "Running Model",
-                                    fontWeight = FontWeight.Normal,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                )
-                                Text(
-                                    text = model?.description ?: "",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                )
-                            }
+                        Column {
+                            Text(
+                                text = model?.name ?: "Running Model",
+                                fontWeight = FontWeight.Normal,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            )
+                            Text(
+                                text = model?.description ?: "",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            )
                         }
                     },
                     navigationIcon = {
@@ -2494,7 +2568,6 @@ fun ModelRunScreen(
                             imageVersion = imageVersion,
                             generationParams = generationParams,
                             recentHistory = recentHistory,
-                            showReportButton = BuildConfig.FLAVOR == "filter",
                             // Upscaling is only offered for the NPU runtime and resolutions <= 1024.
                             // A CPU diffusion backend never initializes the QNN
                             // runtime, so its /upscale cannot load the .bin
@@ -2544,7 +2617,6 @@ fun ModelRunScreen(
                                     }
                                 }
                             },
-                            onReportClick = { showReportDialog = true },
                             onUpscaleClick = { showUpscalerDialog = true },
                             onUltrafixClick = { showUltrafixConfirmDialog = true },
                             onSaveClick = { bitmap ->
@@ -2682,43 +2754,6 @@ fun ModelRunScreen(
             )
         }
     }
-    if (showReportDialog && currentBitmap != null && generationParams != null) {
-        ModelRunConfirmDialog(
-            title = stringResource(R.string.report),
-            text = stringResource(R.string.report_image_confirm),
-            confirmText = stringResource(R.string.report),
-            dismissText = stringResource(R.string.cancel),
-            destructiveConfirm = true,
-            onConfirm = {
-                showReportDialog = false
-                coroutineScope.launch {
-                    currentBitmap?.let { bitmap ->
-                        reportImage(
-                            bitmap = bitmap,
-                            modelName = model?.name ?: "",
-                            params = generationParams!!,
-                            onSuccess = {
-                                Toast.makeText(
-                                    context,
-                                    msgReportSuccess,
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            },
-                            onError = {
-                                Toast.makeText(
-                                    context,
-                                    msgReportFailed,
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            },
-                        )
-                    }
-                }
-            },
-            onDismiss = { showReportDialog = false },
-        )
-    }
-
     if (showParametersDialog && generationParams != null) {
         GenerationParamsDialog(
             title = stringResource(R.string.params_detail),
@@ -2990,43 +3025,39 @@ fun ModelRunScreen(
 
                             // Save upscaled image via HistoryManager (DB + JPG file)
                             generationParams?.let { params ->
-                                scope.launch(Dispatchers.IO) {
-                                    try {
-                                        val updatedParams = params.copy(
-                                            width = upscaledBitmap.width,
-                                            height = upscaledBitmap.height,
-                                        )
-                                        // The displayed image's params carry its
-                                        // generation mode (set on completion and
-                                        // by every history-load path), so the
-                                        // upscaled copy inherits the right one.
-                                        val sourceMode = params.mode
-                                        val saved = historyManager.saveGeneratedImage(
-                                            modelId = modelId,
-                                            bitmap = upscaledBitmap,
-                                            params = updatedParams,
-                                            mode = sourceMode,
-                                            upscalerId = selectedUpscaler.id,
-                                        )
-                                        if (saved != null) {
-                                            withContext(Dispatchers.Main) {
-                                                currentBitmap = upscaledBitmap
-                                                generationParams = updatedParams
-                                                generationParamsModelId = modelId
-                                                currentDisplayedHistoryId = saved.id
-                                                if (sourceIsStitchable) {
-                                                    stitchableHistoryIds =
-                                                        stitchableHistoryIds + saved.id
-                                                }
-                                                imageVersion++
-                                            }
+                                val updatedParams = params.copy(
+                                    width = upscaledBitmap.width,
+                                    height = upscaledBitmap.height,
+                                )
+                                // The displayed image's params carry its
+                                // generation mode (set on completion and by
+                                // every history-load path), so the upscaled
+                                // copy inherits the right one.
+                                val sourceMode = params.mode
+                                val pendingAsset = historyManager.enqueueGeneratedImageSave(
+                                    modelId = modelId,
+                                    bitmap = upscaledBitmap,
+                                    params = updatedParams,
+                                    mode = sourceMode,
+                                    upscalerId = selectedUpscaler.id,
+                                    origin = if (isRemote) {
+                                        AssetOrigin.REMOTE_LINK
+                                    } else {
+                                        AssetOrigin.LOCAL_APP
+                                    },
+                                )
+                                scope.launch {
+                                    val saved = pendingAsset.await()
+                                    if (saved != null) {
+                                        currentBitmap = upscaledBitmap
+                                        generationParams = updatedParams
+                                        generationParamsModelId = modelId
+                                        currentDisplayedHistoryId = saved.id
+                                        if (sourceIsStitchable) {
+                                            stitchableHistoryIds =
+                                                stitchableHistoryIds + saved.id
                                         }
-                                    } catch (e: Exception) {
-                                        Log.e(
-                                            "ModelRunScreen",
-                                            "Failed to save upscaled image",
-                                            e,
-                                        )
+                                        imageVersion++
                                     }
                                 }
                             }
