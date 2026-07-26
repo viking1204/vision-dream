@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -66,7 +67,23 @@ class RemoteHostService : Service() {
             return START_NOT_STICKY
         }
 
-        startForeground(NOTIFICATION_ID, createNotification())
+        val notification = createNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+
+        if (OpenAiApiService.isRunning.value) {
+            Log.w(TAG, "OpenAI API service already owns the backend")
+            updateState(running = false)
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         if (server == null) {
             val newServer = RemoteHostServer(
@@ -357,6 +374,7 @@ class RemoteHostService : Service() {
         }
 
         fun start(context: Context) {
+            if (OpenAiApiService.isRunning.value) return
             context.startForegroundService(
                 Intent(context, RemoteHostService::class.java),
             )

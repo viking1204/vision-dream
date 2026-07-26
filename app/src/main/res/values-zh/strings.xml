@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">Local Dream</string>
+    <string name="app_name">Vision Dream</string>
 
     <!-- Models -->
     <string name="anythingv5_description">动漫图像生成模型</string>
@@ -60,6 +60,7 @@
     <string name="dark_mode_system">跟随系统</string>
     <string name="dark_mode_light">浅色</string>
     <string name="dark_mode_dark">深色</string>
+    <string name="theme_vision">Vision</string>
     <string name="theme_tangerine">暖橙</string>
     <string name="theme_forest">森林</string>
     <string name="theme_ocean">海洋</string>
@@ -75,7 +76,7 @@
     <string name="got_it">知道了!</string>
     <string name="yes">是</string>
     <string name="about_app">须知</string>
-    <string name="must_read">此APP支持在CPU/GPU和部分高通NPU上运行stable diffusion图像生成。\n\n支持在 Hexagon V68 架构及以上的骁龙 NPU 上运行 SD1.5 模型。\n\n支持在骁龙 8 Gen 3 及更新的设备上运行 SDXL 模型。\n\n若您的芯片不在上述范围内，则只能使用 CPU/GPU 运行。\n\n本项目在 https://github.com/xororz/local-dream 开源，可以在github上查看源代码或提交问题\n\n文档：https://ld.chino.icu</string>
+    <string name="must_read">Vision Dream 支持在 CPU/GPU 和部分高通 NPU 上运行 Stable Diffusion 图像生成。\n\n支持在 Hexagon V68 架构及以上的骁龙 NPU 上运行 SD1.5 模型。\n\n支持在骁龙 8 Gen 3 及更新的设备上运行 SDXL 模型。\n\n若芯片不在上述范围内，则使用 CPU/GPU 运行。\n\n源代码与问题反馈：https://github.com/viking1204/vision-dream</string>
     <string name="help">帮助</string>
     <string name="more_options">更多</string>
 
@@ -135,6 +136,10 @@
     <string name="prompt_tab">提示词</string>
     <string name="result_tab">生成结果</string>
     <string name="history_tab">历史</string>
+    <string name="asset_manager_title">资产管理器</string>
+    <string name="asset_save_prompt_action">收藏提示词</string>
+    <string name="asset_prompt_saved">提示词已收藏。</string>
+    <string name="asset_prompt_already_saved">该提示词已收藏。</string>
     <string name="no_history">暂无生成历史</string>
     <string name="no_history_hint">开始生成图片后会自动保存</string>
     <plurals name="selected_items_count">
@@ -272,6 +277,8 @@
     <string name="add_model">添加模型</string>
     <string name="custom_model_hint">仅支持SD1.5架构的safetensors模型文件</string>
     <string name="custom_npu_model_hint">选择包含NPU模型文件的ZIP压缩包。仅支持高通芯片设备。你可以在 https://huggingface.co/xororz/sd-qnn 、https://huggingface.co/xororz/sdxl-qnn 或 Hugging Face 其他地方找到一些模型。</string>
+    <string name="manual_import_nsfw">NSFW 模型</string>
+    <string name="manual_import_nsfw_hint">若模型包含成人或敏感内容，请勾选此项。</string>
     <string name="converting">转换中…</string>
     <string name="model_conversion_success">模型转换成功！</string>
     <string name="model_conversion_failed">转换失败: %s</string>
@@ -333,7 +340,6 @@
     <string name="selected_image">选中的图像</string>
     <string name="upscaled_image">超分辨率后的图像</string>
     <string name="click_to_add_image">点击添加需要超分辨率的图像</string>
-    <string name="image_resolution_too_large">图像分辨率过大 (%1$d×%2$d)，请选择小于 2048x2048 的图像</string>
     <string name="failed_to_load_image">加载图像失败: %s</string>
     <string name="model_download_channel">模型下载</string>
     <string name="model_download_channel_desc">模型下载进度通知</string>
@@ -381,7 +387,7 @@
     <string name="backup_import_done">已导入 %1$d 条,跳过重复 %2$d 条,失败 %3$d 条</string>
     <string name="backup_import_orphan_note">备份中有 %1$d 个模型未安装,这些记录已导入,可在历史筛选中选择全部模型查看。</string>
     <string name="backup_failed">操作失败: %1$s</string>
-    <string name="backup_invalid_file">不是有效的 Local Dream 备份文件</string>
+    <string name="backup_invalid_file">不是有效的 Vision Dream 备份文件</string>
     <string name="delete_keep_history">保留生成历史</string>
     <string name="delete_keep_history_hint">删除模型后历史记录仍可在历史页查看</string>
 
@@ -418,10 +424,6 @@
     <string name="image_load_failed">加载图像失败</string>
 
     <!-- Report -->
-    <string name="report">举报</string>
-    <string name="report_image_confirm">如果你认为此图像不当，可以举报。参数和图像将发送到服务器进行审核。</string>
-    <string name="report_success">感谢你的举报。</string>
-    <string name="report_failed">举报失败</string>
 
     <!-- Error messages extras -->
     <string name="error_title">错误</string>
@@ -445,7 +447,7 @@
     <!-- Device link (remote control between two devices) -->
     <string name="remote_link">设备互联</string>
     <string name="remote_host_section">受控模式（本机运行模型）</string>
-    <string name="remote_host_hint">允许同一网络中另一台安装 Local Dream 的设备浏览本机模型并用其生成图片。受控模式开启期间，控制端口（8808）和生成端口（8081）会对局域网开放。</string>
+    <string name="remote_host_hint">允许同一网络中另一台安装 Vision Dream 的设备浏览本机模型并用其生成图片。受控模式开启期间，控制端口（8808）和生成端口（8081）会对局域网开放。</string>
     <string name="remote_host_start">进入受控模式</string>
     <string name="remote_host_stop">退出受控模式</string>
     <string name="remote_host_addresses">本机地址</string>
@@ -466,13 +468,178 @@
     <string name="remote_select_failed">在主机上启动模型失败</string>
     <string name="remote_port_hint">默认控制端口：%1$d。可用 地址:端口 形式指定其他端口。</string>
     <string name="remote_host_notify_title">受控模式运行中</string>
-    <string name="remote_host_notify">Local Dream 可被局域网内设备控制</string>
+    <string name="remote_host_notify">Vision Dream 可被局域网内设备控制</string>
     <string name="remote_screen_shield">纯黑屏幕（保持运行）</string>
     <string name="remote_screen_shield_exit">轻触退出</string>
+
+    <!-- Model repository search and download -->
+    <string name="model_already_installed">此模型已安装。</string>
+    <string name="search_models">搜索模型仓库</string>
+    <string name="search_models_hint">仅显示本应用可安全导入的模型。</string>
+    <string name="search_models_keyword">模型关键词</string>
+    <string name="search">搜索</string>
+    <string name="search_no_compatible_models">未找到兼容模型。</string>
+    <string name="search_model_source">来源：%1$s</string>
+    <string name="search_model_install_confirm">下载并导入 %1$s？</string>
+    <string name="search_model_installed_title">模型已安装</string>
+    <string name="search_model_installed_hint">%1$s 已安装，不会覆盖现有模型。</string>
+    <string name="search_model_failed">模型搜索失败：%1$s</string>
+    <string name="search_model_compatible_sd15">SD 1.5 检查点 · 转换为 CPU/GPU 模型</string>
+    <string name="search_model_compatible_package">Vision Dream 模型包 · 自动导入</string>
+    <string name="download_cancelled">下载已取消</string>
+    <string name="download_service_start_failed">无法启动模型下载：%1$s</string>
+    <string name="download_service_timeout">模型下载超出系统前台服务时限。</string>
+
+    <!-- OpenAI-compatible image API -->
+    <string name="openai_api_section">OpenAI 兼容图像 API</string>
+    <string name="openai_api_hint">向可信的局域网客户端开放已安装模型。生图、图生图和超分串行执行；超出队列容量的请求将收到 HTTP 429。</string>
+    <string name="openai_api_http_warning">安全警告：请求和 Bearer 密钥通过未加密 HTTP 传输。仅可在私有且可信的局域网中开启；跨越任何不可信网络前必须接入 TLS 反向代理。</string>
+    <string name="openai_api_start">启动 API 服务</string>
+    <string name="openai_api_starting">正在启动 API 服务…</string>
+    <string name="openai_api_stop">停止 API 服务</string>
+    <string name="openai_api_address">基础 URL</string>
+    <string name="openai_api_same_device_address">本机其他 App</string>
+    <string name="openai_api_lan_address">局域网其他设备</string>
+    <string name="openai_api_key">Bearer API 密钥</string>
+    <string name="openai_api_copy_key">复制 API 密钥</string>
+    <string name="openai_api_key_copied">API 密钥已复制</string>
+    <string name="openai_api_regenerate_key">重新生成密钥</string>
+    <string name="openai_api_regenerate_key_confirm">现有客户端将无法继续使用。是否重新生成 API 密钥？</string>
+    <string name="openai_api_queue_capacity">等待队列容量</string>
+    <string name="openai_api_queue_hint">0–10 个等待请求，另加 1 个正在执行的请求。更改将在下次启动服务时生效。</string>
+    <string name="openai_api_queue_invalid">请输入 0 到 10 之间的数字。</string>
+    <string name="openai_api_queue_status">执行中：%1$d · 等待：%2$d/%3$d</string>
+    <string name="openai_api_notify_title">图像 API 运行中</string>
+    <string name="openai_api_notify">正在端口 %1$d 上处理已认证请求</string>
+    <string name="openai_api_host_conflict">启动 API 服务前，请先停止设备互联的主机模式。</string>
+    <string name="openai_api_generation_conflict">请等待当前应用内生成完成或停止生成，然后再启动 API 服务。</string>
+    <string name="openai_api_request_busy">已有 API 生图请求正在执行或排队，请等待完成后重试。</string>
+    <string name="openai_api_upscale_conflict">使用应用内超分前，请先停止 OpenAI API 服务。</string>
+    <string name="openai_api_error">API 服务错误：%1$s</string>
+    <string name="openai_api_battery_warning">电池优化会在切换 App 后冻结 API。请允许后台无限制运行，确保本机和局域网请求可用。</string>
+    <string name="openai_api_vendor_battery_warning">OnePlus、OPPO、realme 设备请打开应用详情，再进入「耗电管理」选择「完全允许后台行为」；否则切换 App 后系统会冻结 API。</string>
+    <string name="openai_api_battery_action">打开后台运行设置</string>
+    <string name="model_loaded">已加载</string>
+    <string name="unload_model">unload</string>
+    <string name="model_unload_busy">模型正在使用中，请等待生图完成后再卸载。</string>
+
     <string name="ultrafix_import_action">导入本机图片</string>
     <string name="ultrafix_import_title">导入图片进行 UltraFix</string>
     <string name="ultrafix_import_requirement">长边最大 %1$d。UltraFix 需要长边大于 1024 且短边不小于 %2$d；较小的图片导入后可先超分。</string>
     <string name="ultrafix_import_output">输出尺寸：%1$d×%2$d</string>
     <string name="ultrafix_import_scale">缩放：%1$d%%</string>
     <string name="ultrafix_longpress_hint">提示：长按超分或 UltraFix 按钮可导入本机图片。</string>
+    <string name="model_storage_permission_title">授予模型仓库访问权限</string>
+    <string name="model_storage_permission_message">Vision Dream 会把已安装模型保存在固定公有目录中，使模型在应用更新或重装后仍可使用。请授予所有文件访问权限后继续。</string>
+    <string name="model_storage_preparing_title">正在准备模型仓库</string>
+    <string name="model_storage_preparing_message">正在创建公有目录，并安全复制 Vision Dream 以前安装的模型。</string>
+    <string name="model_storage_open_settings">打开存储权限设置</string>
+    <string name="model_storage_prepare_failed">无法准备公有模型仓库。</string>
+    <string name="model_storage_settings_unavailable">此设备无法打开存储权限设置。</string>
+    <string name="model_storage_migration_partial">有 %1$d 个私有模型未能复制，源文件已保留。</string>
+    <string name="biometric_lock">指纹验证</string>
+    <string name="biometric_lock_hint">打开应用时要求强生物识别或设备锁屏凭据；后台生图服务不会中断。</string>
+    <string name="biometric_unavailable">设备尚未配置可用的强生物识别或锁屏凭据。</string>
+    <string name="biometric_lock_recovered">认证方式已被移除或不可用，应用锁已自动关闭。</string>
+    <string name="biometric_not_recognized">未能识别，请重试。</string>
+    <string name="biometric_unlock_title">解锁 Vision Dream</string>
+    <string name="biometric_unlock_subtitle">验证后查看生成图片和模型</string>
+    <string name="biometric_locked_message">Vision Dream 已锁定</string>
+    <string name="biometric_unlock_action">解锁</string>
+    <string name="reveal_image">点击显示图片</string>
+    <string name="conceal_image">隐藏图片</string>
+    <string name="image_concealed">图片已隐藏</string>
+    <string name="image_revealed">图片已显示</string>
+    <string name="prompt_manager_title">提示词管理器</string>
+    <string name="prompt_manager_search_hint">搜索已保存的提示词</string>
+    <string name="prompt_manager_clear_search">清除提示词搜索</string>
+    <string name="prompt_manager_empty">还没有保存的提示词</string>
+    <string name="prompt_manager_no_results">没有匹配的提示词</string>
+    <string name="prompt_manager_add_action">添加提示词</string>
+    <string name="prompt_manager_edit_action">编辑提示词</string>
+    <string name="prompt_manager_delete_action">删除提示词</string>
+    <string name="prompt_manager_add_title">添加提示词</string>
+    <string name="prompt_manager_edit_title">编辑提示词</string>
+    <string name="prompt_manager_name_label">名称（可选）</string>
+    <string name="prompt_manager_prompt_label">提示词</string>
+    <string name="prompt_manager_negative_prompt_label">负向提示词（可选）</string>
+    <string name="prompt_manager_prompt_required">请输入提示词。</string>
+    <string name="prompt_manager_save_failed">提示词保存失败。</string>
+    <string name="prompt_manager_delete_title">删除提示词？</string>
+    <string name="prompt_manager_delete_message">确定删除“%1$s”吗？此操作无法撤销。</string>
+    <string name="prompt_manager_delete_failed">提示词删除失败。</string>
+    <string name="prompt_manager_negative_summary">负向：%1$s</string>
+    <plurals name="prompt_manager_usage_count">
+        <item quantity="other">已使用 %1$d 次</item>
+    </plurals>
+    <string name="prompt_picker_title">选择已保存的提示词</string>
+    <string name="prompt_picker_search_hint">搜索提示词</string>
+    <string name="prompt_picker_clear_search">清除提示词搜索</string>
+    <string name="prompt_picker_empty">还没有保存的提示词</string>
+    <string name="prompt_picker_no_results">没有匹配的提示词</string>
+    <string name="prompt_picker_negative_prefix">负向：</string>
+    <string name="chat_generation_title">聊天生图</string>
+    <string name="studio_nav_workbench">工作台</string>
+    <string name="studio_nav_create">创作</string>
+    <string name="studio_nav_assets">资产</string>
+    <string name="studio_nav_models">模型</string>
+    <string name="studio_nav_services">服务</string>
+    <string name="studio_brand">VISION / DREAM</string>
+    <string name="studio_home_title">准备创造什么？</string>
+    <string name="studio_start_title">让想象开始显影</string>
+    <string name="studio_start_description">选择模型、组织提示词，只在需要时调整高级参数。</string>
+    <string name="studio_start_action">开始创作</string>
+    <string name="studio_no_model">尚未加载模型</string>
+    <string name="studio_loaded_model">%1$s · 已加载</string>
+    <string name="studio_service_title">后台服务</string>
+    <string name="studio_service_running">运行中</string>
+    <string name="studio_service_stopped">未启动</string>
+    <string name="studio_service_queue">队列 %1$d / %2$d</string>
+    <string name="studio_quick_tools">快捷工具</string>
+    <string name="studio_prompt_library">提示词灵感库</string>
+    <string name="studio_upscale">超分辨率放大</string>
+    <string name="studio_api_service">API 服务</string>
+    <string name="studio_recent_assets">最近创作</string>
+    <string name="studio_view_assets">查看资产</string>
+    <string name="studio_empty_assets">生成的图片会出现在这里，并默认保持隐藏。</string>
+    <string name="studio_installed_models">已安装 %1$d 个模型</string>
+    <string name="chat_generation_empty">选择已下载的模型，输入提示词后开始创作。</string>
+    <string name="chat_generation_loading_models">正在加载已下载模型…</string>
+    <string name="chat_generation_load_models_failed">模型加载失败：%1$s</string>
+    <string name="chat_generation_no_models">没有可用的已下载生图模型。</string>
+    <string name="chat_generation_select_model">选择模型</string>
+    <string name="chat_generation_prompt">提示词</string>
+    <string name="chat_generation_negative_prompt">负面提示词</string>
+    <string name="negative_prompt_applied">负面提示词 · 已应用</string>
+    <string name="negative_prompt_show">添加负面提示词</string>
+    <string name="negative_prompt_hide">收起负面提示词</string>
+    <string name="chat_generation_prompt_library">从提示词管理器加载</string>
+    <string name="chat_generation_advanced">高级设置</string>
+    <string name="chat_generation_send">发送</string>
+    <string name="chat_generation_generating">正在生成图片…</string>
+    <string name="chat_generation_busy">API 或应用内已有生图任务正在运行或排队，请稍后重试。</string>
+    <string name="chat_generation_error">图片生成失败。</string>
+    <string name="chat_generation_invalid_settings">请检查宽高、步数、CFG、种子和调度器设置。</string>
+    <string name="chat_generation_generated_image">生成的图片</string>
+    <string name="chat_generation_image_metadata">%1$s · 种子 %2$s</string>
+    <string name="chat_generation_random_seed">随机</string>
+    <string name="chat_generation_width">宽度</string>
+    <string name="chat_generation_height">高度</string>
+    <string name="chat_generation_steps">步数</string>
+    <string name="chat_generation_cfg">CFG</string>
+    <string name="chat_generation_seed">种子（留空为随机）</string>
+    <string name="chat_generation_scheduler_value">调度器：%1$s</string>
+    <string name="chat_generation_done">完成</string>
+    <string name="asset_layout_action">切换资产布局</string>
+    <string name="asset_layout_waterfall">瀑布流</string>
+    <string name="asset_layout_list">列表</string>
+    <string name="asset_layout_grid">九宫格</string>
+    <string name="asset_show_all">显示全部图片</string>
+    <string name="asset_count">%1$d 项资产</string>
+    <string name="asset_open_fullscreen">查看大图</string>
+    <string name="asset_generated_image">生成的图片</string>
+    <string name="asset_favorited">已收藏</string>
+    <string name="asset_copy_prompts">复制正向和负向提示词</string>
+    <string name="asset_prompts_copied">已复制正向和负向提示词</string>
+    <string name="asset_selected">已选中</string>
 </resources>

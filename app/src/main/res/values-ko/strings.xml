@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">Local Dream</string>
+    <string name="app_name">Vision Dream</string>
 
     <!-- Models -->
     <string name="anythingv5_description">애니풍 이미지 생성</string>
@@ -60,6 +60,7 @@
     <string name="dark_mode_system">시스템</string>
     <string name="dark_mode_light">라이트</string>
     <string name="dark_mode_dark">다크</string>
+    <string name="theme_vision">Vision</string>
     <string name="theme_tangerine">탠저린</string>
     <string name="theme_forest">포레스트</string>
     <string name="theme_ocean">오션</string>
@@ -75,7 +76,7 @@
     <string name="got_it">알겠습니다!</string>
     <string name="yes">예</string>
     <string name="about_app">참고</string>
-    <string name="must_read">이 앱은 CPU/GPU와 일부 Qualcomm NPU에서 Stable Diffusion 이미지 생성을 실행할 수 있습니다.\n\nSD1.5 모델은 Hexagon V68 아키텍처 이상의 Snapdragon NPU에서 지원됩니다.\n\nSDXL 모델은 Snapdragon 8 Gen 3 이상 기기에서 지원됩니다.\n\n사용 중인 칩이 위 범위에 해당하지 않으면 CPU/GPU에서만 실행할 수 있습니다.\n\n이 프로젝트는 https://github.com/xororz/local-dream 에서 오픈소스로 공개되어 있으며, 소스 코드를 확인하거나 이슈를 제출할 수 있습니다.\n\n문서: https://ld.chino.icu</string>
+    <string name="must_read">Vision Dream은 CPU/GPU와 일부 Qualcomm NPU에서 Stable Diffusion 이미지 생성을 실행할 수 있습니다.\n\nSD1.5 모델은 Hexagon V68 아키텍처 이상의 Snapdragon NPU에서 지원됩니다.\n\nSDXL 모델은 Snapdragon 8 Gen 3 이상 기기에서 지원됩니다.\n\n사용 중인 칩이 위 범위에 해당하지 않으면 CPU/GPU에서 실행합니다.\n\n소스 코드 및 이슈: https://github.com/viking1204/vision-dream</string>
     <string name="help">도움말</string>
     <string name="more_options">더보기</string>
 
@@ -135,6 +136,10 @@
     <string name="prompt_tab">프롬프트</string>
     <string name="result_tab">결과</string>
     <string name="history_tab">기록</string>
+    <string name="asset_manager_title">에셋 관리자</string>
+    <string name="asset_save_prompt_action">프롬프트 저장</string>
+    <string name="asset_prompt_saved">프롬프트를 저장했습니다.</string>
+    <string name="asset_prompt_already_saved">이미 저장된 프롬프트입니다.</string>
     <string name="no_history">생성 기록이 없습니다</string>
     <string name="no_history_hint">생성 후 기록이 저장됩니다</string>
     <plurals name="selected_items_count">
@@ -272,6 +277,8 @@
     <string name="add_model">모델 추가</string>
     <string name="custom_model_hint">SD1.5 아키텍처의 .safetensors 모델 파일만 지원합니다</string>
     <string name="custom_npu_model_hint">NPU 모델 파일이 포함된 ZIP 파일을 선택하세요. Qualcomm 기기에서만 사용할 수 있습니다. https://huggingface.co/xororz/sd-qnn, https://huggingface.co/xororz/sdxl-qnn 또는 Hugging Face의 다른 곳에서 모델을 찾을 수 있습니다.</string>
+    <string name="manual_import_nsfw">NSFW 모델</string>
+    <string name="manual_import_nsfw_hint">성인용 또는 민감한 콘텐츠가 포함된 모델이면 선택하세요.</string>
     <string name="converting">변환 중…</string>
     <string name="model_conversion_success">모델 변환에 성공했습니다!</string>
     <string name="model_conversion_failed">변환 실패: %s</string>
@@ -333,7 +340,6 @@
     <string name="selected_image">선택한 이미지</string>
     <string name="upscaled_image">업스케일된 이미지</string>
     <string name="click_to_add_image">업스케일할 이미지를 추가하려면 탭하세요</string>
-    <string name="image_resolution_too_large">이미지 해상도가 너무 큽니다(%1$d×%2$d). 2048x2048보다 작은 이미지를 선택하세요</string>
     <string name="failed_to_load_image">이미지를 로드하지 못했습니다: %s</string>
     <string name="model_download_channel">모델 다운로드</string>
     <string name="model_download_channel_desc">모델 다운로드 진행률 알림</string>
@@ -381,7 +387,7 @@
     <string name="backup_import_done">%1$d개 가져옴, 중복 %2$d개 건너뜀, %3$d개 실패</string>
     <string name="backup_import_orphan_note">백업에 설치되지 않은 모델 %1$d개가 있습니다. 해당 기록은 가져왔으며 기록 필터의 \'모든 모델\'에서 볼 수 있습니다.</string>
     <string name="backup_failed">작업 실패: %1$s</string>
-    <string name="backup_invalid_file">유효한 Local Dream 백업 파일이 아닙니다</string>
+    <string name="backup_invalid_file">유효한 Vision Dream 백업 파일이 아닙니다</string>
     <string name="delete_keep_history">생성 기록 유지</string>
     <string name="delete_keep_history_hint">모델 삭제 후에도 기록 페이지에서 볼 수 있습니다</string>
 
@@ -418,10 +424,6 @@
     <string name="image_load_failed">이미지를 로드하지 못했습니다</string>
 
     <!-- Report -->
-    <string name="report">신고</string>
-    <string name="report_image_confirm">이 이미지가 부적절하다고 생각되면 신고하세요. 매개변수와 이미지가 검토를 위해 서버로 전송됩니다.</string>
-    <string name="report_success">신고해 주셔서 감사합니다.</string>
-    <string name="report_failed">신고 실패</string>
 
     <!-- Error messages extras -->
     <string name="error_title">오류</string>
@@ -445,7 +447,7 @@
     <!-- Device link (remote control between two devices) -->
     <string name="remote_link">기기 연결</string>
     <string name="remote_host_section">호스트 모드(이 기기에서 모델 실행)</string>
-    <string name="remote_host_hint">같은 네트워크의 다른 Local Dream 기기가 이 기기의 모델을 탐색하고 이미지를 생성할 수 있게 합니다. 호스트 모드 동안 제어 포트(8808)와 생성 포트(8081)가 로컬 네트워크에 개방됩니다.</string>
+    <string name="remote_host_hint">같은 네트워크의 다른 Vision Dream 기기가 이 기기의 모델을 탐색하고 이미지를 생성할 수 있게 합니다. 호스트 모드 동안 제어 포트(8808)와 생성 포트(8081)가 로컬 네트워크에 개방됩니다.</string>
     <string name="remote_host_start">호스트 모드 시작</string>
     <string name="remote_host_stop">호스트 모드 종료</string>
     <string name="remote_host_addresses">이 기기의 주소</string>
@@ -466,13 +468,178 @@
     <string name="remote_select_failed">호스트에서 모델을 시작하지 못했습니다</string>
     <string name="remote_port_hint">기본 제어 포트: %1$d. 주소:포트 형식으로 변경할 수 있습니다.</string>
     <string name="remote_host_notify_title">호스트 모드 실행 중</string>
-    <string name="remote_host_notify">Local Dream을 로컬 네트워크에서 제어할 수 있습니다</string>
+    <string name="remote_host_notify">Vision Dream을 로컬 네트워크에서 제어할 수 있습니다</string>
     <string name="remote_screen_shield">검은 화면(계속 실행)</string>
     <string name="remote_screen_shield_exit">탭하여 종료</string>
+
+    <!-- Model repository search and download -->
+    <string name="model_already_installed">이 모델은 이미 설치되어 있습니다.</string>
+    <string name="search_models">모델 저장소 검색</string>
+    <string name="search_models_hint">이 앱에서 안전하게 가져올 수 있는 모델만 표시됩니다.</string>
+    <string name="search_models_keyword">모델 키워드</string>
+    <string name="search">검색</string>
+    <string name="search_no_compatible_models">호환되는 모델을 찾지 못했습니다.</string>
+    <string name="search_model_source">출처: %1$s</string>
+    <string name="search_model_install_confirm">%1$s을(를) 다운로드하고 가져올까요?</string>
+    <string name="search_model_installed_title">모델이 이미 설치됨</string>
+    <string name="search_model_installed_hint">%1$s이(가) 이미 설치되어 있습니다. 기존 모델은 덮어쓰지 않습니다.</string>
+    <string name="search_model_failed">모델 검색 실패: %1$s</string>
+    <string name="search_model_compatible_sd15">SD 1.5 체크포인트 · CPU/GPU 변환</string>
+    <string name="search_model_compatible_package">Vision Dream 패키지 · 자동 가져오기</string>
+    <string name="download_cancelled">다운로드 취소됨</string>
+    <string name="download_service_start_failed">모델 다운로드를 시작할 수 없습니다: %1$s</string>
+    <string name="download_service_timeout">모델 다운로드가 시스템의 포그라운드 서비스 제한 시간을 초과했습니다.</string>
+
+    <!-- OpenAI-compatible image API -->
+    <string name="openai_api_section">OpenAI 호환 이미지 API</string>
+    <string name="openai_api_hint">신뢰할 수 있는 로컬 네트워크 클라이언트에 설치된 모델을 제공합니다. 이미지 생성, 이미지 편집 및 업스케일은 한 번에 하나씩 실행되며, 대기열 용량을 초과한 요청에는 HTTP 429가 반환됩니다.</string>
+    <string name="openai_api_http_warning">보안 경고: 요청과 Bearer 키는 암호화되지 않은 HTTP로 전송됩니다. 비공개로 신뢰할 수 있는 LAN에서만 활성화하고, 신뢰할 수 없는 네트워크를 통과하기 전에는 TLS 리버스 프록시를 사용하세요.</string>
+    <string name="openai_api_start">API 서비스 시작</string>
+    <string name="openai_api_starting">API 서비스 시작 중…</string>
+    <string name="openai_api_stop">API 서비스 중지</string>
+    <string name="openai_api_address">기본 URL</string>
+    <string name="openai_api_same_device_address">이 기기의 다른 앱</string>
+    <string name="openai_api_lan_address">로컬 네트워크의 다른 기기</string>
+    <string name="openai_api_key">Bearer API 키</string>
+    <string name="openai_api_copy_key">API 키 복사</string>
+    <string name="openai_api_key_copied">API 키를 복사했습니다</string>
+    <string name="openai_api_regenerate_key">키 다시 생성</string>
+    <string name="openai_api_regenerate_key_confirm">기존 클라이언트가 더 이상 작동하지 않습니다. API 키를 다시 생성할까요?</string>
+    <string name="openai_api_queue_capacity">대기열 용량</string>
+    <string name="openai_api_queue_hint">대기 요청 0~10개와 실행 중인 요청 1개를 허용합니다. 변경 사항은 다음 서비스 시작 시 적용됩니다.</string>
+    <string name="openai_api_queue_invalid">0에서 10 사이의 숫자를 입력하세요.</string>
+    <string name="openai_api_queue_status">실행 중: %1$d건 · 대기: %2$d/%3$d</string>
+    <string name="openai_api_notify_title">이미지 API 실행 중</string>
+    <string name="openai_api_notify">포트 %1$d에서 인증된 요청 처리 중</string>
+    <string name="openai_api_host_conflict">API 서비스를 시작하기 전에 기기 연결 호스트 모드를 중지하세요.</string>
+    <string name="openai_api_generation_conflict">현재 앱 내 생성이 끝날 때까지 기다리거나 중지한 후 API 서비스를 시작하세요.</string>
+    <string name="openai_api_request_busy">API 이미지 요청이 실행 중이거나 대기 중입니다. 완료 후 다시 시도하세요.</string>
+    <string name="openai_api_upscale_conflict">앱 내 업스케일을 사용하기 전에 OpenAI API 서비스를 중지하세요.</string>
+    <string name="openai_api_error">API 서비스 오류: %1$s</string>
+    <string name="openai_api_battery_warning">배터리 최적화로 인해 앱을 전환한 뒤 API가 중지될 수 있습니다. 같은 기기와 LAN 요청을 안정적으로 처리하려면 백그라운드 실행을 허용하세요.</string>
+    <string name="openai_api_vendor_battery_warning">OnePlus, OPPO, realme 기기에서는 앱 정보에서 배터리 사용량 → 모든 백그라운드 활동 허용을 선택하세요. 설정하지 않으면 앱 전환 후 API가 중지될 수 있습니다.</string>
+    <string name="openai_api_battery_action">백그라운드 설정 열기</string>
+    <string name="model_loaded">로드됨</string>
+    <string name="unload_model">unload</string>
+    <string name="model_unload_busy">모델을 사용 중입니다. 이미지 생성이 끝난 후 언로드하세요.</string>
+
     <string name="ultrafix_import_action">로컬 이미지 가져오기</string>
     <string name="ultrafix_import_title">UltraFix용 이미지 가져오기</string>
     <string name="ultrafix_import_requirement">긴 변 최대 %1$d. UltraFix에는 긴 변 1024 초과, 짧은 변 %2$d 이상이 필요합니다. 작은 이미지는 가져온 후 업스케일할 수 있습니다.</string>
     <string name="ultrafix_import_output">출력 크기: %1$d×%2$d</string>
     <string name="ultrafix_import_scale">배율: %1$d%%</string>
     <string name="ultrafix_longpress_hint">팁: 업스케일 또는 UltraFix 버튼을 길게 누르면 로컬 이미지를 가져올 수 있습니다.</string>
+    <string name="model_storage_permission_title">모델 저장소 접근 허용</string>
+    <string name="model_storage_permission_message">Vision Dream은 업데이트나 재설치 후에도 사용할 수 있도록 모델을 고정 공용 폴더에 저장합니다. 계속하려면 모든 파일 접근 권한을 허용하세요.</string>
+    <string name="model_storage_preparing_title">모델 저장소 준비 중</string>
+    <string name="model_storage_preparing_message">공용 폴더를 만들고 Vision Dream에 이전에 설치된 모델을 안전하게 복사하고 있습니다.</string>
+    <string name="model_storage_open_settings">저장소 설정 열기</string>
+    <string name="model_storage_prepare_failed">공용 모델 저장소를 준비할 수 없습니다.</string>
+    <string name="model_storage_settings_unavailable">이 기기에서는 저장소 설정을 열 수 없습니다.</string>
+    <string name="model_storage_migration_partial">비공개 모델 %1$d개를 복사하지 못했습니다. 원본 파일은 유지됩니다.</string>
+    <string name="biometric_lock">생체 인증 잠금</string>
+    <string name="biometric_lock_hint">앱을 열 때 강력한 생체 인증 또는 기기 화면 잠금 인증을 요구합니다. 백그라운드 생성 서비스는 계속 실행됩니다.</string>
+    <string name="biometric_unavailable">사용 가능한 강력한 생체 인증 또는 화면 잠금 인증이 설정되지 않았습니다.</string>
+    <string name="biometric_lock_recovered">설정된 인증 수단이 삭제되었거나 사용할 수 없어 앱 잠금을 해제했습니다.</string>
+    <string name="biometric_not_recognized">인증하지 못했습니다. 다시 시도하세요.</string>
+    <string name="biometric_unlock_title">Vision Dream 잠금 해제</string>
+    <string name="biometric_unlock_subtitle">생성 이미지와 모델을 보려면 인증하세요</string>
+    <string name="biometric_locked_message">Vision Dream이 잠겨 있습니다</string>
+    <string name="biometric_unlock_action">잠금 해제</string>
+    <string name="reveal_image">탭하여 이미지 표시</string>
+    <string name="conceal_image">이미지 숨기기</string>
+    <string name="image_concealed">이미지가 숨겨짐</string>
+    <string name="image_revealed">이미지가 표시됨</string>
+    <string name="prompt_manager_title">프롬프트 관리자</string>
+    <string name="prompt_manager_search_hint">저장된 프롬프트 검색</string>
+    <string name="prompt_manager_clear_search">프롬프트 검색 지우기</string>
+    <string name="prompt_manager_empty">저장된 프롬프트가 없습니다</string>
+    <string name="prompt_manager_no_results">일치하는 프롬프트가 없습니다</string>
+    <string name="prompt_manager_add_action">프롬프트 추가</string>
+    <string name="prompt_manager_edit_action">프롬프트 편집</string>
+    <string name="prompt_manager_delete_action">프롬프트 삭제</string>
+    <string name="prompt_manager_add_title">프롬프트 추가</string>
+    <string name="prompt_manager_edit_title">프롬프트 편집</string>
+    <string name="prompt_manager_name_label">이름(선택 사항)</string>
+    <string name="prompt_manager_prompt_label">프롬프트</string>
+    <string name="prompt_manager_negative_prompt_label">네거티브 프롬프트(선택 사항)</string>
+    <string name="prompt_manager_prompt_required">프롬프트를 입력하세요.</string>
+    <string name="prompt_manager_save_failed">프롬프트를 저장할 수 없습니다.</string>
+    <string name="prompt_manager_delete_title">프롬프트를 삭제할까요?</string>
+    <string name="prompt_manager_delete_message">“%1$s”을(를) 삭제할까요? 이 작업은 취소할 수 없습니다.</string>
+    <string name="prompt_manager_delete_failed">프롬프트를 삭제할 수 없습니다.</string>
+    <string name="prompt_manager_negative_summary">네거티브: %1$s</string>
+    <plurals name="prompt_manager_usage_count">
+        <item quantity="other">%1$d회 사용</item>
+    </plurals>
+    <string name="prompt_picker_title">저장된 프롬프트 선택</string>
+    <string name="prompt_picker_search_hint">프롬프트 검색</string>
+    <string name="prompt_picker_clear_search">프롬프트 검색 지우기</string>
+    <string name="prompt_picker_empty">저장된 프롬프트가 없습니다</string>
+    <string name="prompt_picker_no_results">일치하는 프롬프트가 없습니다</string>
+    <string name="prompt_picker_negative_prefix">네거티브:</string>
+    <string name="chat_generation_title">채팅 이미지 생성</string>
+    <string name="studio_nav_workbench">워크벤치</string>
+    <string name="studio_nav_create">생성</string>
+    <string name="studio_nav_assets">자산</string>
+    <string name="studio_nav_models">모델</string>
+    <string name="studio_nav_services">서비스</string>
+    <string name="studio_brand">VISION / DREAM</string>
+    <string name="studio_home_title">무엇을 만들까요?</string>
+    <string name="studio_start_title">상상을 이미지로</string>
+    <string name="studio_start_description">모델과 프롬프트를 선택하고 필요한 설정만 조정하세요.</string>
+    <string name="studio_start_action">생성 시작</string>
+    <string name="studio_no_model">로드된 모델 없음</string>
+    <string name="studio_loaded_model">%1$s · 로드됨</string>
+    <string name="studio_service_title">백그라운드 서비스</string>
+    <string name="studio_service_running">실행 중</string>
+    <string name="studio_service_stopped">중지됨</string>
+    <string name="studio_service_queue">대기열 %1$d / %2$d</string>
+    <string name="studio_quick_tools">빠른 도구</string>
+    <string name="studio_prompt_library">프롬프트 라이브러리</string>
+    <string name="studio_upscale">업스케일</string>
+    <string name="studio_api_service">API 서비스</string>
+    <string name="studio_recent_assets">최근 생성</string>
+    <string name="studio_view_assets">자산 보기</string>
+    <string name="studio_empty_assets">생성한 이미지는 여기에 표시되며 기본적으로 숨겨집니다.</string>
+    <string name="studio_installed_models">설치된 모델 %1$d개</string>
+    <string name="chat_generation_empty">다운로드한 모델을 선택하고 프롬프트를 입력해 생성을 시작하세요.</string>
+    <string name="chat_generation_loading_models">다운로드한 모델을 불러오는 중…</string>
+    <string name="chat_generation_load_models_failed">모델을 불러오지 못했습니다: %1$s</string>
+    <string name="chat_generation_no_models">사용 가능한 다운로드 완료 이미지 생성 모델이 없습니다.</string>
+    <string name="chat_generation_select_model">모델 선택</string>
+    <string name="chat_generation_prompt">프롬프트</string>
+    <string name="chat_generation_negative_prompt">네거티브 프롬프트</string>
+    <string name="negative_prompt_applied">네거티브 프롬프트 · 적용됨</string>
+    <string name="negative_prompt_show">네거티브 프롬프트 추가</string>
+    <string name="negative_prompt_hide">네거티브 프롬프트 접기</string>
+    <string name="chat_generation_prompt_library">저장된 프롬프트 불러오기</string>
+    <string name="chat_generation_advanced">고급 설정</string>
+    <string name="chat_generation_send">보내기</string>
+    <string name="chat_generation_generating">이미지 생성 중…</string>
+    <string name="chat_generation_busy">API 또는 앱 생성 작업이 실행 중이거나 대기 중입니다. 완료 후 다시 시도하세요.</string>
+    <string name="chat_generation_error">이미지 생성에 실패했습니다.</string>
+    <string name="chat_generation_invalid_settings">너비, 높이, 스텝, CFG, 시드 및 스케줄러 설정을 확인하세요.</string>
+    <string name="chat_generation_generated_image">생성된 이미지</string>
+    <string name="chat_generation_image_metadata">%1$s · 시드 %2$s</string>
+    <string name="chat_generation_random_seed">랜덤</string>
+    <string name="chat_generation_width">너비</string>
+    <string name="chat_generation_height">높이</string>
+    <string name="chat_generation_steps">스텝</string>
+    <string name="chat_generation_cfg">CFG</string>
+    <string name="chat_generation_seed">시드(비우면 랜덤)</string>
+    <string name="chat_generation_scheduler_value">스케줄러: %1$s</string>
+    <string name="chat_generation_done">완료</string>
+    <string name="asset_layout_action">에셋 레이아웃 변경</string>
+    <string name="asset_layout_waterfall">워터폴</string>
+    <string name="asset_layout_list">목록</string>
+    <string name="asset_layout_grid">3열 그리드</string>
+    <string name="asset_show_all">모든 이미지 표시</string>
+    <string name="asset_count">에셋 %1$d개</string>
+    <string name="asset_open_fullscreen">전체 화면으로 보기</string>
+    <string name="asset_generated_image">생성된 이미지</string>
+    <string name="asset_favorited">즐겨찾기</string>
+    <string name="asset_copy_prompts">긍정 및 부정 프롬프트 복사</string>
+    <string name="asset_prompts_copied">긍정 및 부정 프롬프트를 복사했습니다</string>
+    <string name="asset_selected">선택됨</string>
 </resources>

@@ -1,6 +1,7 @@
 package io.github.xororz.localdream.ui.screens
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -43,16 +44,21 @@ import androidx.core.content.edit
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import io.github.xororz.localdream.BuildConfig
 import io.github.xororz.localdream.R
+import io.github.xororz.localdream.data.AssetOrigin
 import io.github.xororz.localdream.data.DownloadProgress
+import io.github.xororz.localdream.data.GenerationMode
+import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.data.RemoteRepository
 import io.github.xororz.localdream.data.UpscalerRepository
 import io.github.xororz.localdream.navigation.popBackStackIfResumed
 import io.github.xororz.localdream.remote.RemoteProtocol
+import io.github.xororz.localdream.service.BackendService
 import io.github.xororz.localdream.service.BackgroundGenerationService
 import io.github.xororz.localdream.service.ModelDownloadService
+import io.github.xororz.localdream.service.OpenAiApiService
 import io.github.xororz.localdream.ui.components.BlockingProgressOverlay
+import io.github.xororz.localdream.ui.components.RevealableImage
 import io.github.xororz.localdream.ui.components.SmoothCircularWavyProgressIndicator
 import io.github.xororz.localdream.ui.theme.Motion
 import io.github.xororz.localdream.utils.UPSCALER_NATIVE_SCALE
@@ -60,9 +66,6 @@ import io.github.xororz.localdream.utils.performUpscale
 import io.github.xororz.localdream.utils.saveImage
 import java.io.File
 import java.io.FileOutputStream
-import java.io.IOException
-import java.io.InterruptedIOException
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -74,18 +77,16 @@ fun UpscaleScreen(navController: NavController, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val modelId = "upscaler_standalone"
+    val historyManager = remember { HistoryManager(context) }
 
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var selectedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var upscaledImageUri by remember { mutableStateOf<Uri?>(null) }
     var upscaledBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isUpscaling by remember { mutableStateOf(false) }
-    var backendProcess by remember { mutableStateOf<Process?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var backendLogs by remember { mutableStateOf<List<String>>(emptyList()) }
-    var currentLog by remember { mutableStateOf("") }
-    var tileProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    val tileRegex = remember { Regex("""Processed tile (\d+)/(\d+)""") }
+    val currentLog by BackendService.currentLog.collectAsState()
+    val tileProgress by BackendService.tileProgress.collectAsState()
 
     var sharedScale by remember { mutableFloatStateOf(1f) }
     var sharedOffsetX by remember { mutableFloatStateOf(0f) }
@@ -114,16 +115,15 @@ fun UpscaleScreen(navController: NavController, modifier: Modifier = Modifier) {
         remember { context.getSharedPreferences("upscaler_prefs", Context.MODE_PRIVATE) }
 
     // String resources hoisted to composable scope (lint: LocalContextGetResourceValueCall).
-    val msgImageResolutionTooLarge = stringResource(R.string.image_resolution_too_large)
     val msgFailedToLoadImage = stringResource(R.string.failed_to_load_image)
     val msgImageSaved = stringResource(R.string.image_saved)
     val msgDownloadDone = stringResource(R.string.download_done)
     val msgErrorDownloadFailed = stringResource(R.string.error_download_failed)
     val msgUpscaleFailed = stringResource(R.string.upscale_failed)
     val msgDownloadModelFirst = stringResource(R.string.download_model_first)
-    val msgExecutableNotFound = stringResource(R.string.executable_not_found)
     val msgFailedToStartBackend = stringResource(R.string.failed_to_start_backend)
     val msgUnknownError = stringResource(R.string.unknown_error)
+    val msgOpenAiApiUpscaleConflict = stringResource(R.string.openai_api_upscale_conflict)
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -136,25 +136,12 @@ fun UpscaleScreen(navController: NavController, modifier: Modifier = Modifier) {
                     }
 
                     if (bitmap != null) {
-                        val totalPixels = bitmap.width.toLong() * bitmap.height.toLong()
-                        val maxPixels = 2048L * 2048L
-                        val enforceMaxPixels = BuildConfig.FLAVOR == "filter"
-
-                        if (enforceMaxPixels && totalPixels > maxPixels) {
-                            withContext(Dispatchers.Main) {
-                                errorMessage = msgImageResolutionTooLarge.format(
-                                    bitmap.width,
-                                    bitmap.height,
-                                )
-                            }
-                        } else {
-                            selectedImageUri = it
-                            selectedBitmap = bitmap
-                            withContext(Dispatchers.Main) {
-                                sharedScale = 1f
-                                sharedOffsetX = 0f
-                                sharedOffsetY = 0f
-                            }
+                        selectedImageUri = it
+                        selectedBitmap = bitmap
+                        withContext(Dispatchers.Main) {
+                            sharedScale = 1f
+                            sharedOffsetX = 0f
+                            sharedOffsetY = 0f
                         }
                     }
                 } catch (e: Exception) {
@@ -168,142 +155,32 @@ fun UpscaleScreen(navController: NavController, modifier: Modifier = Modifier) {
     }
 
     fun startUpscalerBackend() {
-        if (backendProcess?.isAlive == true) {
-            Log.d("UpscaleScreen", "Backend already running")
+        if (OpenAiApiService.isRunning.value) {
+            errorMessage = msgOpenAiApiUpscaleConflict
             return
         }
-
-        scope.launch(Dispatchers.IO) {
-            try {
-                val runtimeDir = prepareRuntimeDir(context)
-                val nativeDir = context.applicationInfo.nativeLibraryDir
-                val executableFile = File(nativeDir, "libstable_diffusion_core.so")
-
-                if (!executableFile.exists()) {
-                    withContext(Dispatchers.Main) {
-                        errorMessage = msgExecutableNotFound.format(executableFile.absolutePath)
-                    }
-                    return@launch
-                }
-
-                val listenOnAll = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-                    .getBoolean("listen_on_all_addresses", false)
-                var command = listOf(
-                    executableFile.absolutePath,
-                    "--upscaler_mode",
-                    "--lib_dir",
-                    runtimeDir.absolutePath,
-                    "--port",
-                    "8081",
-                )
-                if (listenOnAll) {
-                    command = command + "--listen_all"
-                }
-
-                val env = mutableMapOf<String, String>()
-                val systemLibPaths = mutableListOf(
-                    runtimeDir.absolutePath,
-                    "/system/lib64",
-                    "/vendor/lib64",
-                    "/vendor/lib64/egl",
-                )
-
-                try {
-                    val maliSymlink = File("/system/vendor/lib64/egl/libGLES_mali.so")
-                    if (maliSymlink.exists()) {
-                        val realPath = maliSymlink.canonicalPath
-                        val soc = realPath.split("/").getOrNull(realPath.split("/").size - 2)
-                        if (soc != null) {
-                            val socPaths = listOf(
-                                "/vendor/lib64/$soc",
-                                "/vendor/lib64/egl/$soc",
-                            )
-                            socPaths.forEach { path ->
-                                if (!systemLibPaths.contains(path)) {
-                                    systemLibPaths.add(path)
-                                }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("UpscaleScreen", "Failed to resolve Mali paths: ${e.message}")
-                }
-
-                env["LD_LIBRARY_PATH"] = systemLibPaths.joinToString(":")
-                env["DSP_LIBRARY_PATH"] = runtimeDir.absolutePath
-
-                Log.d("UpscaleScreen", "COMMAND: ${command.joinToString(" ")}")
-                Log.d("UpscaleScreen", "LD_LIBRARY_PATH=${env["LD_LIBRARY_PATH"]}")
-
-                val processBuilder = ProcessBuilder(command).apply {
-                    directory(File(nativeDir))
-                    redirectErrorStream(true)
-                    environment().putAll(env)
-                }
-
-                val proc = processBuilder.start()
-                backendProcess = proc
-
-                Thread {
-                    try {
-                        proc.inputStream.bufferedReader().use { reader ->
-                            var line: String?
-                            while (reader.readLine().also { line = it } != null) {
-                                val logLine = line!!
-                                Log.i("UpscaleBackend", "Backend: $logLine")
-                                scope.launch(Dispatchers.Main) {
-                                    backendLogs = (backendLogs + logLine).takeLast(50)
-                                    if (isUpscaling && logLine.startsWith("Process")) {
-                                        currentLog = logLine
-                                        tileRegex.find(logLine)?.let { match ->
-                                            val current = match.groupValues[1].toIntOrNull()
-                                            val total = match.groupValues[2].toIntOrNull()
-                                            if (current != null && total != null && total > 0) {
-                                                tileProgress = current to total
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        val exitCode = proc.waitFor()
-                        Log.i("UpscaleBackend", "Backend process exited with code: $exitCode")
-                    } catch (e: InterruptedIOException) {
-                        // Expected when stopUpscalerBackend() destroys the process.
-                        Log.i("UpscaleBackend", "Monitor stopped: ${e.message}")
-                    } catch (e: Exception) {
-                        Log.e("UpscaleBackend", "Monitor error", e)
-                    }
-                }.apply {
-                    isDaemon = true
-                    start()
-                }
-            } catch (e: Exception) {
-                Log.e("UpscaleScreen", "Failed to start backend", e)
-                withContext(Dispatchers.Main) {
-                    errorMessage = msgFailedToStartBackend.format(e.message ?: msgUnknownError)
-                }
-            }
+        try {
+            context.startForegroundService(
+                Intent(context, BackendService::class.java)
+                    .putExtra("modelId", modelId)
+                    .putExtra("backendType", BackendService.BACKEND_TYPE_UPSCALER)
+                    .putExtra("width", 512)
+                    .putExtra("height", 512),
+            )
+        } catch (e: Exception) {
+            Log.e("UpscaleScreen", "Failed to start backend", e)
+            errorMessage = msgFailedToStartBackend.format(e.message ?: msgUnknownError)
         }
     }
 
     fun stopUpscalerBackend() {
-        val proc = backendProcess ?: return
-        backendProcess = null
-        // Called from onDispose on the main thread; waitFor must not block it.
-        Thread {
-            try {
-                proc.destroy()
-                if (!proc.waitFor(5, TimeUnit.SECONDS)) {
-                    proc.destroyForcibly()
-                }
-                Log.i("UpscaleScreen", "Backend stopped")
-            } catch (e: Exception) {
-                Log.e("UpscaleScreen", "Failed to stop backend", e)
-            }
-        }.apply {
-            isDaemon = true
-            start()
+        try {
+            context.startService(
+                Intent(context, BackendService::class.java)
+                    .setAction(BackendService.ACTION_STOP),
+            )
+        } catch (e: Exception) {
+            Log.e("UpscaleScreen", "Failed to stop backend", e)
         }
     }
 
@@ -533,22 +410,27 @@ fun UpscaleScreen(navController: NavController, modifier: Modifier = Modifier) {
                         shape = MaterialTheme.shapes.large,
                     ) {
                         Box(modifier = Modifier.fillMaxSize()) {
-                            ZoomableImage(
-                                imageUri = upscaledImageUri,
-                                contentDescription = stringResource(R.string.upscaled_image),
+                            RevealableImage(
+                                revealKey = upscaledImageUri,
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(8.dp),
-                                scale = sharedScale,
-                                offsetX = sharedOffsetX,
-                                offsetY = sharedOffsetY,
-                                onTransform = { newScale, newOffsetX, newOffsetY ->
-                                    sharedScale = newScale
-                                    sharedOffsetX = newOffsetX
-                                    sharedOffsetY = newOffsetY
-                                },
-                                useOriginalSize = true,
-                            )
+                            ) {
+                                ZoomableImage(
+                                    imageUri = upscaledImageUri,
+                                    contentDescription = stringResource(R.string.upscaled_image),
+                                    modifier = Modifier.fillMaxSize(),
+                                    scale = sharedScale,
+                                    offsetX = sharedOffsetX,
+                                    offsetY = sharedOffsetY,
+                                    onTransform = { newScale, newOffsetX, newOffsetY ->
+                                        sharedScale = newScale
+                                        sharedOffsetX = newOffsetX
+                                        sharedOffsetY = newOffsetY
+                                    },
+                                    useOriginalSize = true,
+                                )
+                            }
 
                             FilledTonalIconButton(
                                 onClick = {
@@ -711,6 +593,11 @@ fun UpscaleScreen(navController: NavController, modifier: Modifier = Modifier) {
                         ).show()
                     }
 
+                    is ModelDownloadService.DownloadState.Cancelled -> {
+                        downloadingUpscalerId = null
+                        downloadProgress = null
+                    }
+
                     is ModelDownloadService.DownloadState.Error -> {
                         downloadingUpscalerId = null
                         downloadProgress = null
@@ -735,6 +622,10 @@ fun UpscaleScreen(navController: NavController, modifier: Modifier = Modifier) {
                             downloadingUpscalerId = null
                         }
                     }
+
+                    is ModelDownloadService.DownloadState.Installing,
+                    is ModelDownloadService.DownloadState.AlreadyInstalled,
+                    -> Unit
                 }
             }
         }
@@ -764,11 +655,26 @@ fun UpscaleScreen(navController: NavController, modifier: Modifier = Modifier) {
 
                     val targetScale = tempSelectedScale
                     selectedBitmap?.let { bitmap ->
-                        tileProgress = null
-                        currentLog = ""
+                        BackendService.clearProgress()
                         isUpscaling = true
                         scope.launch {
+                            val startedAt = System.currentTimeMillis()
                             try {
+                                if (!isRemote) {
+                                    var backendReady = false
+                                    checkBackendHealth(
+                                        backendState = BackendService.backendState,
+                                        servingModelId = BackendService.servingModelId,
+                                        expectedModelId = modelId,
+                                        onHealthy = { backendReady = true },
+                                        onUnhealthy = {},
+                                    )
+                                    if (!backendReady) {
+                                        throw IllegalStateException(
+                                            msgFailedToStartBackend.format(msgUnknownError),
+                                        )
+                                    }
+                                }
                                 val resultBitmap = performUpscale(
                                     context = context,
                                     bitmap = bitmap,
@@ -782,6 +688,31 @@ fun UpscaleScreen(navController: NavController, modifier: Modifier = Modifier) {
                                     },
                                 )
                                 upscaledBitmap = resultBitmap
+                                historyManager.enqueueGeneratedImageSave(
+                                    modelId = selectedUpscaler.id,
+                                    bitmap = resultBitmap,
+                                    params = GenerationParameters(
+                                        steps = 0,
+                                        cfg = 0f,
+                                        seed = null,
+                                        prompt = "",
+                                        negativePrompt = "",
+                                        generationTime =
+                                            "${System.currentTimeMillis() - startedAt}ms",
+                                        width = resultBitmap.width,
+                                        height = resultBitmap.height,
+                                        runOnCpu = false,
+                                        scheduler = "upscale",
+                                        mode = GenerationMode.UNKNOWN,
+                                    ),
+                                    mode = GenerationMode.UNKNOWN,
+                                    upscalerId = selectedUpscaler.id,
+                                    origin = if (isRemote) {
+                                        AssetOrigin.REMOTE_LINK
+                                    } else {
+                                        AssetOrigin.LOCAL_APP
+                                    },
+                                ).await()
 
                                 resultBitmap.let { bmp ->
                                     withContext(Dispatchers.IO) {
@@ -825,56 +756,6 @@ fun UpscaleScreen(navController: NavController, modifier: Modifier = Modifier) {
             },
         )
     }
-}
-
-sealed class BackendState {
-    object Idle : BackendState()
-    object Starting : BackendState()
-    object Running : BackendState()
-    data class Error(val message: String) : BackendState()
-}
-
-fun prepareRuntimeDir(context: Context): File {
-    val runtimeDir = File(context.filesDir, "runtime_libs").apply {
-        if (!exists()) {
-            mkdirs()
-        }
-    }
-
-    try {
-        val qnnlibsAssets = context.assets.list("qnnlibs")
-        qnnlibsAssets?.forEach { fileName ->
-            val targetLib = File(runtimeDir, fileName)
-
-            val needsCopy = !targetLib.exists() ||
-                run {
-                    val assetInputStream = context.assets.open("qnnlibs/$fileName")
-                    val assetSize = assetInputStream.use { it.available().toLong() }
-                    targetLib.length() != assetSize
-                }
-
-            if (needsCopy) {
-                val assetInputStream = context.assets.open("qnnlibs/$fileName")
-                assetInputStream.use { input ->
-                    targetLib.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                Log.d("UpscaleScreen", "Copied $fileName from assets to runtime directory")
-            }
-
-            targetLib.setReadable(true, true)
-            targetLib.setExecutable(true, true)
-        }
-    } catch (e: IOException) {
-        Log.e("UpscaleScreen", "Failed to prepare QNN libraries from assets", e)
-        throw RuntimeException("Failed to prepare QNN libraries from assets", e)
-    }
-
-    runtimeDir.setReadable(true, true)
-    runtimeDir.setExecutable(true, true)
-
-    return runtimeDir
 }
 
 // Longest-side cap for previewing high-res images. 4096 is the universal max GPU texture

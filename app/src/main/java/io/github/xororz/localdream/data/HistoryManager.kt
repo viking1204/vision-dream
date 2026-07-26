@@ -13,8 +13,14 @@ import io.github.xororz.localdream.data.db.AppDatabase
 import io.github.xororz.localdream.data.db.HistoryEntity
 import io.github.xororz.localdream.ui.screens.GenerationParameters
 import java.io.File
-import java.io.FileOutputStream
+import java.io.OutputStream
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -29,6 +35,9 @@ data class HistoryItem(
     val mode: GenerationMode,
     val upscalerId: String?,
     val favorite: Boolean = false,
+    val origin: AssetOrigin = AssetOrigin.LOCAL_APP,
+    val mimeType: String = "image/png",
+    val requestId: String? = null,
 ) {
     companion object {
         fun fromEntity(filesDir: File, e: HistoryEntity): HistoryItem {
@@ -42,6 +51,9 @@ data class HistoryItem(
                 mode = mode,
                 upscalerId = e.upscalerId,
                 favorite = e.favorite,
+                origin = AssetOrigin.fromPersistedValue(e.origin),
+                mimeType = e.mimeType,
+                requestId = e.requestId,
                 params = GenerationParameters(
                     steps = e.steps,
                     cfg = e.cfg,
@@ -65,6 +77,20 @@ data class HistoryItem(
 // Keep id batches under SQLite's host-parameter limit (999 on older API levels).
 private const val SQLITE_IN_CHUNK = 900
 
+internal class AssetPersistenceQueue(
+    dispatcher: CoroutineDispatcher = Dispatchers.IO,
+) {
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
+
+    fun <T> submit(block: suspend () -> T): Deferred<T> = scope.async {
+        block()
+    }
+
+    internal fun cancel() {
+        scope.cancel()
+    }
+}
+
 class HistoryManager(private val context: Context) {
 
     private val db = AppDatabase.get(context)
@@ -73,8 +99,8 @@ class HistoryManager(private val context: Context) {
 
     private fun getHistoryDir(modelId: String): File {
         val dir = File(filesDir, "history/$modelId")
-        if (!dir.exists()) {
-            dir.mkdirs()
+        if (!dir.exists() && !dir.mkdirs()) {
+            throw IllegalStateException("Could not create history directory for $modelId")
         }
         return dir
     }
@@ -85,29 +111,150 @@ class HistoryManager(private val context: Context) {
         params: GenerationParameters,
         mode: GenerationMode,
         upscalerId: String? = null,
-    ): HistoryItem? = withContext(Dispatchers.IO) {
-        try {
-            val timestamp = System.currentTimeMillis()
-            val historyDir = getHistoryDir(modelId)
-
-            // Upscaled and ultrafixed images are 4x-class resolutions; store
-            // them as JPEG (PNG would be tens of MB and seconds to encode).
-            val isUpscaled = upscalerId != null || mode == GenerationMode.ULTRAFIX
-            val ext = if (isUpscaled) "jpg" else "png"
-            val imageFile = File(historyDir, "$timestamp.$ext")
-            FileOutputStream(imageFile).use { out ->
-                if (isUpscaled) {
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+        origin: AssetOrigin = AssetOrigin.LOCAL_APP,
+        requestId: String? = null,
+    ): HistoryItem? {
+        // Upscaled and ultrafixed images are 4x-class resolutions; store
+        // them as JPEG (PNG would be tens of MB and seconds to encode).
+        val format = if (upscalerId != null || mode == GenerationMode.ULTRAFIX) {
+            EncodedImageFormat.JPEG
+        } else {
+            EncodedImageFormat.PNG
+        }
+        return saveImageAsset(
+            modelId = modelId,
+            params = params,
+            mode = mode,
+            upscalerId = upscalerId,
+            origin = origin,
+            requestId = requestId,
+            format = format,
+        ) { output ->
+            bitmap.compress(
+                if (format == EncodedImageFormat.JPEG) {
+                    Bitmap.CompressFormat.JPEG
                 } else {
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-                }
+                    Bitmap.CompressFormat.PNG
+                },
+                if (format == EncodedImageFormat.JPEG) 95 else 100,
+                output,
+            )
+        }
+    }
+
+    /**
+     * Starts an asset write in the process-wide persistence scope.
+     *
+     * The returned deferred is not a child of a screen's Compose scope, so
+     * leaving the generation page cannot cancel an image that was already
+     * published as complete. A visible screen may await it to update selection
+     * state; cancellation of that awaiter does not cancel the write.
+     */
+    fun enqueueGeneratedImageSave(
+        modelId: String,
+        bitmap: Bitmap,
+        params: GenerationParameters,
+        mode: GenerationMode,
+        upscalerId: String? = null,
+        origin: AssetOrigin = AssetOrigin.LOCAL_APP,
+        requestId: String? = null,
+    ): Deferred<HistoryItem?> = assetPersistenceQueue.submit {
+        saveGeneratedImage(
+            modelId = modelId,
+            bitmap = bitmap,
+            params = params,
+            mode = mode,
+            upscalerId = upscalerId,
+            origin = origin,
+            requestId = requestId,
+        )
+    }
+
+    /**
+     * Saves an image that is already encoded, without decoding and recompressing it.
+     *
+     * This is the persistence entry point for the OpenAI-compatible gateway and
+     * any other caller that already owns PNG/JPEG response bytes.
+     */
+    suspend fun saveEncodedImage(
+        modelId: String,
+        encodedImage: ByteArray,
+        mimeType: String,
+        params: GenerationParameters,
+        mode: GenerationMode,
+        upscalerId: String? = null,
+        origin: AssetOrigin = AssetOrigin.LOCAL_APP,
+        requestId: String? = null,
+    ): HistoryItem? {
+        val declaredFormat = EncodedImageFormat.fromMimeType(mimeType)
+        val detectedFormat = EncodedImageFormat.detect(encodedImage)
+        if (declaredFormat == null || detectedFormat == null || declaredFormat != detectedFormat) {
+            Log.e(
+                TAG,
+                "Refusing asset with unsupported or mismatched image type: $mimeType",
+            )
+            return null
+        }
+        return saveImageAsset(
+            modelId = modelId,
+            params = params,
+            mode = mode,
+            upscalerId = upscalerId,
+            origin = origin,
+            requestId = requestId,
+            format = detectedFormat,
+        ) { output ->
+            output.write(encodedImage)
+            true
+        }
+    }
+
+    fun enqueueEncodedImageSave(
+        modelId: String,
+        encodedImage: ByteArray,
+        mimeType: String,
+        params: GenerationParameters,
+        mode: GenerationMode,
+        upscalerId: String? = null,
+        origin: AssetOrigin = AssetOrigin.LOCAL_APP,
+        requestId: String? = null,
+    ): Deferred<HistoryItem?> = assetPersistenceQueue.submit {
+        saveEncodedImage(
+            modelId = modelId,
+            encodedImage = encodedImage,
+            mimeType = mimeType,
+            params = params,
+            mode = mode,
+            upscalerId = upscalerId,
+            origin = origin,
+            requestId = requestId,
+        )
+    }
+
+    private suspend fun saveImageAsset(
+        modelId: String,
+        params: GenerationParameters,
+        mode: GenerationMode,
+        upscalerId: String?,
+        origin: AssetOrigin,
+        requestId: String?,
+        format: EncodedImageFormat,
+        writer: (OutputStream) -> Boolean,
+    ): HistoryItem? = withContext(Dispatchers.IO) {
+        var imageFile: File? = null
+        try {
+            val timestamp = nextAvailableTimestamp(modelId, format.extension)
+            val historyDir = getHistoryDir(modelId)
+            imageFile = File(historyDir, "$timestamp.${format.extension}")
+            if (!AssetFileOperations.writeAtomically(imageFile, writer)) {
+                Log.e(TAG, "Failed to write image asset ${imageFile.absolutePath}")
+                return@withContext null
             }
 
-            val relativePath = "history/$modelId/$timestamp.$ext"
             val entity = HistoryEntity(
                 modelId = modelId,
                 timestamp = timestamp,
-                imagePath = relativePath,
+                imagePath = "history/$modelId/${imageFile.name}",
                 width = params.width,
                 height = params.height,
                 mode = mode.name,
@@ -129,13 +276,36 @@ class HistoryManager(private val context: Context) {
                 scheduler = params.scheduler,
                 runOnCpu = params.runOnCpu,
                 useOpenCL = params.useOpenCL,
+                origin = origin.persistedValue,
+                mimeType = format.mimeType,
+                requestId = requestId?.trim()?.takeIf { it.isNotEmpty() },
             )
-            val id = dao.insert(entity)
+            val id = try {
+                dao.insert(entity)
+            } catch (e: Exception) {
+                imageFile.delete()
+                throw e
+            }
             HistoryItem.fromEntity(filesDir, entity.copy(id = id))
         } catch (e: Exception) {
-            Log.e("HistoryManager", "Failed to save image", e)
+            Log.e(TAG, "Failed to save image asset", e)
             null
         }
+    }
+
+    private suspend fun nextAvailableTimestamp(
+        modelId: String,
+        extension: String,
+    ): Long {
+        val historyDir = getHistoryDir(modelId)
+        var timestamp = System.currentTimeMillis()
+        while (
+            File(historyDir, "$timestamp.$extension").exists() ||
+            dao.countByKey(modelId, timestamp) > 0
+        ) {
+            timestamp++
+        }
+        return timestamp
     }
 
     suspend fun setFavorite(id: Long, favorite: Boolean): Boolean = withContext(Dispatchers.IO) {
@@ -212,35 +382,45 @@ class HistoryManager(private val context: Context) {
 
     suspend fun deleteHistoryItem(item: HistoryItem): Boolean = withContext(Dispatchers.IO) {
         try {
-            dao.deleteById(item.id)
-            if (item.imageFile.exists()) item.imageFile.delete()
-            true
+            if (!AssetFileOperations.deleteIfPresent(item.imageFile)) {
+                Log.w(TAG, "Could not delete image file ${item.imageFile.absolutePath}")
+                return@withContext false
+            }
+            dao.deleteById(item.id) > 0
         } catch (e: Exception) {
-            Log.e("HistoryManager", "Failed to delete history item", e)
+            Log.e(TAG, "Failed to delete history item", e)
             false
         }
     }
 
-    // Batch delete. All DB rows are removed inside a single transaction so the
-    // paging source is invalidated exactly once, on commit - deleting row by row
-    // races the Paging refresh and leaves just-deleted thumbnails rendered until
-    // some later, unrelated change refreshes the grid. Image files are removed
-    // best-effort afterwards; a file that won't delete doesn't fail the row.
-    // Returns the number of rows successfully deleted.
+    // Delete files first, and only remove rows whose file is now absent. This
+    // makes every item counted as successful satisfy both halves of "delete the
+    // asset". If the Room transaction itself fails, a retry removes the rows
+    // whose files are already gone.
     suspend fun deleteHistoryItems(items: List<HistoryItem>): Int = withContext(Dispatchers.IO) {
         if (items.isEmpty()) return@withContext 0
         try {
+            val deletableIds = items
+                .distinctBy { it.id }
+                .filter { item ->
+                    AssetFileOperations.deleteIfPresent(item.imageFile).also { deleted ->
+                        if (!deleted) {
+                            Log.w(TAG, "Could not delete image file ${item.imageFile.absolutePath}")
+                        }
+                    }
+                }
+                .map { it.id }
+            if (deletableIds.isEmpty()) return@withContext 0
+
             db.withTransaction {
-                items.map { it.id }
-                    .chunked(SQLITE_IN_CHUNK)
-                    .forEach { dao.deleteByIds(it) }
+                var deletedRows = 0
+                deletableIds.chunked(SQLITE_IN_CHUNK).forEach { ids ->
+                    deletedRows += dao.deleteByIds(ids)
+                }
+                deletedRows
             }
-            items.forEach { item ->
-                if (item.imageFile.exists()) item.imageFile.delete()
-            }
-            items.size
         } catch (e: Exception) {
-            Log.e("HistoryManager", "Failed to delete history items", e)
+            Log.e(TAG, "Failed to delete history items", e)
             0
         }
     }
@@ -279,5 +459,10 @@ class HistoryManager(private val context: Context) {
             Log.e("HistoryManager", "Failed to clear history", e)
             false
         }
+    }
+
+    companion object {
+        private const val TAG = "HistoryManager"
+        private val assetPersistenceQueue = AssetPersistenceQueue()
     }
 }

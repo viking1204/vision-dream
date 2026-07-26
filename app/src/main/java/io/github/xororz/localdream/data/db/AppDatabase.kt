@@ -8,12 +8,13 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [HistoryEntity::class],
-    version = 3,
+    entities = [HistoryEntity::class, PromptTemplateEntity::class],
+    version = 4,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
+    abstract fun promptTemplateDao(): PromptTemplateDao
 
     companion object {
         @Volatile
@@ -80,13 +81,59 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE generation_history " +
+                        "ADD COLUMN origin TEXT NOT NULL DEFAULT 'local_app'",
+                )
+                db.execSQL(
+                    "ALTER TABLE generation_history " +
+                        "ADD COLUMN mimeType TEXT NOT NULL DEFAULT 'image/png'",
+                )
+                db.execSQL(
+                    "ALTER TABLE generation_history ADD COLUMN requestId TEXT",
+                )
+                db.execSQL(
+                    "UPDATE generation_history SET mimeType = 'image/jpeg' " +
+                        "WHERE LOWER(imagePath) LIKE '%.jpg' OR LOWER(imagePath) LIKE '%.jpeg'",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_generation_history_origin_timestamp " +
+                        "ON generation_history (origin, timestamp)",
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS prompt_templates (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        title TEXT NOT NULL,
+                        prompt TEXT NOT NULL,
+                        negativePrompt TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        lastUsedAt INTEGER,
+                        useCount INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_prompt_templates_updatedAt " +
+                        "ON prompt_templates (updatedAt)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_prompt_templates_lastUsedAt " +
+                        "ON prompt_templates (lastUsedAt)",
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 "local_dream.db",
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 // No destructive fallback: a future schema bump without a
                 // matching migration should fail loudly at open time rather
                 // than silently dropping the user's whole generation history.

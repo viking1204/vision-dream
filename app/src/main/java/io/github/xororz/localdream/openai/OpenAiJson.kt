@@ -1,0 +1,160 @@
+package io.github.xororz.localdream.openai
+
+data class OpenAiError(
+    val message: String,
+    val type: String = "invalid_request_error",
+    val param: String? = null,
+    val code: String? = null,
+) {
+    init {
+        require(message.isNotBlank()) { "message must not be blank" }
+        require(type.isNotBlank()) { "type must not be blank" }
+    }
+}
+
+data class OpenAiModel(
+    val id: String,
+    val created: Long,
+    val ownedBy: String = "vision-dream",
+) {
+    init {
+        require(id.isNotBlank()) { "id must not be blank" }
+        require(created >= 0L) { "created must not be negative" }
+        require(ownedBy.isNotBlank()) { "ownedBy must not be blank" }
+    }
+}
+
+data class OpenAiImage(
+    val b64Json: String? = null,
+    val url: String? = null,
+    val revisedPrompt: String? = null,
+) {
+    init {
+        require((b64Json == null) xor (url == null)) {
+            "exactly one image payload must be present"
+        }
+        require(b64Json == null || b64Json.isNotBlank()) { "b64Json must not be blank" }
+        require(url == null || url.isNotBlank()) { "url must not be blank" }
+    }
+}
+
+/**
+ * Dependency-free serializers for the OpenAI response envelopes emitted by the gateway.
+ */
+object OpenAiJson {
+    fun error(error: OpenAiError): String = buildString {
+        append("""{"error":{""")
+        appendNameAndString("message", error.message)
+        append(',')
+        appendNameAndString("type", error.type)
+        append(',')
+        appendNameAndNullableString("param", error.param)
+        append(',')
+        appendNameAndNullableString("code", error.code)
+        append("}}")
+    }
+
+    fun models(models: List<OpenAiModel>): String = buildString {
+        append("""{"object":"list","data":[""")
+        models.forEachIndexed { index, model ->
+            if (index > 0) append(',')
+            append('{')
+            appendNameAndString("id", model.id)
+            append(""","object":"model","created":""")
+            append(model.created)
+            append(',')
+            appendNameAndString("owned_by", model.ownedBy)
+            append('}')
+        }
+        append("]}")
+    }
+
+    fun images(
+        created: Long,
+        images: List<OpenAiImage>,
+    ): String {
+        require(created >= 0L) { "created must not be negative" }
+        return buildString {
+            append("""{"created":""")
+            append(created)
+            append(""","data":[""")
+            images.forEachIndexed { index, image ->
+                if (index > 0) append(',')
+                append('{')
+                image.b64Json?.let {
+                    appendNameAndString("b64_json", it)
+                } ?: appendNameAndString("url", requireNotNull(image.url))
+                image.revisedPrompt?.let { prompt ->
+                    append(',')
+                    appendNameAndString("revised_prompt", prompt)
+                }
+                append('}')
+            }
+            append("]}")
+        }
+    }
+
+    private fun StringBuilder.appendNameAndString(
+        name: String,
+        value: String,
+    ) {
+        appendJsonString(name)
+        append(':')
+        appendJsonString(value)
+    }
+
+    private fun StringBuilder.appendNameAndNullableString(
+        name: String,
+        value: String?,
+    ) {
+        appendJsonString(name)
+        append(':')
+        if (value == null) {
+            append("null")
+        } else {
+            appendJsonString(value)
+        }
+    }
+
+    private fun StringBuilder.appendJsonString(value: String) {
+        append('"')
+        value.forEach { character ->
+            when (character) {
+                '"' -> append("\\\"")
+
+                '\\' -> append("\\\\")
+
+                '\b' -> append("\\b")
+
+                '\u000C' -> append("\\f")
+
+                '\n' -> append("\\n")
+
+                '\r' -> append("\\r")
+
+                '\t' -> append("\\t")
+
+                else -> {
+                    if (
+                        character.code < ASCII_SPACE ||
+                        character == '\u2028' ||
+                        character == '\u2029' ||
+                        Character.isSurrogate(character)
+                    ) {
+                        appendUnicodeEscape(character)
+                    } else {
+                        append(character)
+                    }
+                }
+            }
+        }
+        append('"')
+    }
+
+    private fun StringBuilder.appendUnicodeEscape(character: Char) {
+        append("\\u")
+        append(character.code.toString(16).padStart(4, '0'))
+    }
+
+    private const val ASCII_SPACE = 0x20
+}

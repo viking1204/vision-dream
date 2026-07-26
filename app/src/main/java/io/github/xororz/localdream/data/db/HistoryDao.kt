@@ -36,6 +36,9 @@ interface HistoryDao {
     @Query("SELECT * FROM generation_history WHERE id = :id")
     suspend fun getById(id: Long): HistoryEntity?
 
+    @Query("SELECT * FROM generation_history WHERE requestId = :requestId ORDER BY id DESC LIMIT 1")
+    suspend fun getByRequestId(requestId: String): HistoryEntity?
+
     @Query("UPDATE generation_history SET favorite = :favorite WHERE id = :id")
     suspend fun setFavorite(id: Long, favorite: Boolean): Int
 
@@ -68,6 +71,9 @@ interface HistoryDao {
 
     @Query("SELECT DISTINCT scheduler FROM generation_history ORDER BY scheduler")
     fun observeKnownSchedulers(): Flow<List<String>>
+
+    @Query("SELECT DISTINCT origin FROM generation_history ORDER BY origin")
+    fun observeKnownOrigins(): Flow<List<String>>
 
     @Query("SELECT DISTINCT (width || 'x' || height) FROM generation_history ORDER BY width * height DESC")
     fun observeKnownSizes(): Flow<List<String>>

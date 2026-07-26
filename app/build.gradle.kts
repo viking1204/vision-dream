@@ -30,12 +30,12 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "io.github.xororz.localdream"
+        applicationId = "io.github.ddq.visiondream"
         minSdk = 28
 //        minSdk = 31
         targetSdk = 36
-        versionCode = 74
-        versionName = "2.8.1"
+        versionCode = 1
+        versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -94,17 +94,6 @@ android {
             useLegacyPackaging = true
         }
     }
-    flavorDimensions += "version"
-    productFlavors {
-        create("basic") {
-            dimension = "version"
-            versionNameSuffix = ""
-        }
-        create("filter") {
-            dimension = "version"
-            versionNameSuffix = "_with_filter"
-        }
-    }
 }
 
 kotlin {
@@ -118,7 +107,7 @@ androidComponents {
         variant.outputs.forEach { output ->
             val versionName = output.versionName.orNull
             if (output is com.android.build.api.variant.impl.VariantOutputImpl) {
-                output.outputFileName.set("LocalDream_armv8a_$versionName.apk")
+                output.outputFileName.set("VisionDream_armv8a_$versionName.apk")
             }
         }
     }
@@ -151,8 +140,10 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.paging.runtime)
     implementation(libs.androidx.paging.compose)
+    implementation(libs.androidx.biometric)
 
     testImplementation(libs.junit)
+    testImplementation(libs.json)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

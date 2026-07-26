@@ -12,12 +12,10 @@ import android.util.Log
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.Model
 import io.github.xororz.localdream.service.BackgroundGenerationService
-import io.github.xororz.localdream.ui.screens.GenerationParameters
-import java.io.ByteArrayOutputStream
+import io.github.xororz.localdream.service.OpenAiApiService
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.util.Base64
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
@@ -26,17 +24,8 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 
 private val saveSequence = AtomicLong(0L)
-
-private val reportClient: OkHttpClient by lazy {
-    Http.client.newBuilder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .build()
-}
 
 // A single upscale call covers model load + tiled inference, which can take
 // minutes for large inputs.
@@ -78,6 +67,13 @@ suspend fun performUpscale(
     backendHost: String = BackgroundGenerationService.LOCAL_BACKEND_HOST,
     remoteUpscalerPath: String? = null,
 ): Bitmap = withContext(Dispatchers.IO) {
+    if (backendHost == BackgroundGenerationService.LOCAL_BACKEND_HOST &&
+        OpenAiApiService.isRunning.value
+    ) {
+        throw IllegalStateException(
+            context.getString(R.string.openai_api_upscale_conflict),
+        )
+    }
     val totalStartTime = System.currentTimeMillis()
 
     val upscalerPath = remoteUpscalerPath ?: run {
@@ -179,64 +175,6 @@ suspend fun performUpscale(
     }
 }
 
-suspend fun reportImage(
-    bitmap: Bitmap,
-    modelName: String,
-    params: GenerationParameters,
-    onSuccess: () -> Unit,
-    onError: (String) -> Unit,
-) {
-    withContext(Dispatchers.IO) {
-        try {
-            val byteArrayOutputStream = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.PNG, 90, byteArrayOutputStream)
-            val byteArray = byteArrayOutputStream.toByteArray()
-            val base64Image = Base64.getEncoder().encodeToString(byteArray)
-
-            val jsonObject = JSONObject().apply {
-                put("model_name", modelName)
-                put(
-                    "generation_params",
-                    JSONObject().apply {
-                        put("prompt", params.prompt)
-                        put("negative_prompt", params.negativePrompt)
-                        put("steps", params.steps)
-                        put("cfg", params.cfg)
-                        put("seed", params.seed ?: JSONObject.NULL)
-                        put("size", "${params.width}x${params.height}")
-                        put("run_on_cpu", params.runOnCpu)
-                        put("generation_time", params.generationTime ?: JSONObject.NULL)
-                    },
-                )
-                put("image_data", base64Image)
-            }
-
-            val requestBody = jsonObject.toString()
-                .toRequestBody("application/json".toMediaTypeOrNull())
-
-            val request = Request.Builder()
-                .url("https://report.chino.icu/report")
-                .post(requestBody)
-                .build()
-
-            val response = reportClient.newCall(request).execute()
-
-            withContext(Dispatchers.Main) {
-                if (response.isSuccessful) {
-                    onSuccess()
-                } else {
-                    onError("Report failed: ${response.code}")
-                }
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-//                onError("Failed to report: ${e.localizedMessage}")
-                onError("Network Error")
-            }
-        }
-    }
-}
-
 suspend fun saveImage(context: Context, bitmap: Bitmap, onSuccess: () -> Unit, onError: (String) -> Unit) {
     withContext(Dispatchers.IO) {
         try {
@@ -264,7 +202,7 @@ suspend fun saveImage(context: Context, bitmap: Bitmap, onSuccess: () -> Unit, o
                     put(MediaStore.Images.Media.MIME_TYPE, mimeType)
                     put(
                         MediaStore.Images.Media.RELATIVE_PATH,
-                        Environment.DIRECTORY_PICTURES + "/LocalDream",
+                        Environment.DIRECTORY_PICTURES + "/VisionDream",
                     )
                 }
 
@@ -292,7 +230,7 @@ suspend fun saveImage(context: Context, bitmap: Bitmap, onSuccess: () -> Unit, o
                     Environment.getExternalStoragePublicDirectory(
                         Environment.DIRECTORY_PICTURES,
                     ),
-                    "LocalDream",
+                    "VisionDream",
                 )
 
                 if (!imagesDir.exists()) {
@@ -337,7 +275,7 @@ suspend fun saveImage(context: Context, bitmap: Bitmap, onSuccess: () -> Unit, o
 }
 
 /**
- * Copies a pre-encoded image file (PNG/JPEG) into the Pictures/LocalDream gallery
+ * Copies a pre-encoded image file (PNG/JPEG) into the Pictures/VisionDream gallery
  * folder without decoding + re-encoding. Used for batch-saving history items
  * where the source file is already in the format we want to export.
  */
@@ -359,7 +297,7 @@ suspend fun saveImageFromFile(context: Context, sourceFile: File, onSuccess: () 
                     put(MediaStore.Images.Media.MIME_TYPE, mimeType)
                     put(
                         MediaStore.Images.Media.RELATIVE_PATH,
-                        Environment.DIRECTORY_PICTURES + "/LocalDream",
+                        Environment.DIRECTORY_PICTURES + "/VisionDream",
                     )
                 }
                 val resolver = context.contentResolver
@@ -376,7 +314,7 @@ suspend fun saveImageFromFile(context: Context, sourceFile: File, onSuccess: () 
                     Environment.getExternalStoragePublicDirectory(
                         Environment.DIRECTORY_PICTURES,
                     ),
-                    "LocalDream",
+                    "VisionDream",
                 )
                 if (!imagesDir.exists()) imagesDir.mkdirs()
                 val outFile = File(imagesDir, filename)

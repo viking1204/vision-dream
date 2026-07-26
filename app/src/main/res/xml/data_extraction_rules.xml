@@ -5,15 +5,15 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
+        <!-- The LAN API key is device-local authentication material. -->
+        <exclude domain="sharedpref" path="openai_api.xml" />
         <!-- TODO: Use <include> and <exclude> to control what is backed up.
         <include .../>
         <exclude .../>
         -->
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <!-- Do not migrate credentials to another device. -->
+        <exclude domain="sharedpref" path="openai_api.xml" />
     </device-transfer>
-    -->
 </data-extraction-rules>

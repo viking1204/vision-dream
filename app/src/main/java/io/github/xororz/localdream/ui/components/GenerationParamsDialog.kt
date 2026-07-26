@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -37,6 +39,8 @@ fun GenerationParamsDialog(
     showImg2imgButton: Boolean,
     showShareButton: Boolean = true,
     showReproduceButton: Boolean = true,
+    onSavePrompt: (() -> Unit)? = null,
+    onCopyPrompts: (() -> Unit)? = null,
     onShare: () -> Unit,
     onSendToImg2img: () -> Unit,
     onReproduce: () -> Unit,
@@ -50,6 +54,24 @@ fun GenerationParamsDialog(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(title, modifier = Modifier.weight(1f))
+                if (onSavePrompt != null && params.prompt.isNotBlank()) {
+                    IconButton(onClick = onSavePrompt) {
+                        Icon(
+                            imageVector = Icons.Default.BookmarkAdd,
+                            contentDescription = stringResource(
+                                R.string.asset_save_prompt_action,
+                            ),
+                        )
+                    }
+                }
+                if (onCopyPrompts != null) {
+                    IconButton(onClick = onCopyPrompts) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = stringResource(R.string.asset_copy_prompts),
+                        )
+                    }
+                }
                 if (showShareButton) {
                     IconButton(onClick = onShare) {
                         Icon(

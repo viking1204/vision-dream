@@ -19,14 +19,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,8 +44,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -50,26 +59,41 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavController
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.RemoteConnectResult
 import io.github.xororz.localdream.data.RemoteRepository
+import io.github.xororz.localdream.navigation.Screen
+import io.github.xororz.localdream.navigation.navigateTopLevel
 import io.github.xororz.localdream.navigation.popBackStackIfResumed
+import io.github.xororz.localdream.openai.OpenAiApiPreferences
+import io.github.xororz.localdream.openai.OpenAiBackgroundAccess
 import io.github.xororz.localdream.remote.RemoteProtocol
 import io.github.xororz.localdream.service.BackendService
+import io.github.xororz.localdream.service.OpenAiApiService
 import io.github.xororz.localdream.service.RemoteHostService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -80,16 +104,49 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun RemoteScreen(navController: NavController, modifier: Modifier = Modifier) {
+fun RemoteScreen(
+    navController: NavController,
+    modifier: Modifier = Modifier,
+    isTopLevel: Boolean = false,
+    bottomBar: @Composable () -> Unit = {},
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val remoteRepository = remember { RemoteRepository.getInstance(context) }
 
     val hostRunning by RemoteHostService.isRunning.collectAsState()
+    val apiStatus by OpenAiApiService.status.collectAsState()
     val servingModelId by BackendService.servingModelId.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val apiPreferences = remember { OpenAiApiPreferences(context) }
+    var apiKey by remember { mutableStateOf(apiPreferences.apiKey()) }
+    var queueCapacityInput by remember {
+        mutableStateOf(apiPreferences.queueCapacity().toString())
+    }
+    var apiKeyVisible by remember { mutableStateOf(false) }
+    var confirmApiKeyRegeneration by remember { mutableStateOf(false) }
+    var backgroundAccessExempt by remember {
+        mutableStateOf(OpenAiBackgroundAccess.isExempt(context))
+    }
+    val requiresVendorBackgroundControl = remember {
+        OpenAiBackgroundAccess.requiresVendorControl()
+    }
+    val clipboardManager = LocalClipboardManager.current
 
     val msgConnectedTo = stringResource(R.string.remote_connected_to)
     val msgUnreachable = stringResource(R.string.remote_connect_failed_unreachable)
+    val apiKeyCopiedMessage = stringResource(R.string.openai_api_key_copied)
+    val queueCapacityRange =
+        OpenAiApiPreferences.MIN_QUEUE_CAPACITY..OpenAiApiPreferences.MAX_QUEUE_CAPACITY
+
+    fun commitQueueCapacity() {
+        val value = queueCapacityInput.toIntOrNull()
+        if (value in queueCapacityRange) {
+            apiPreferences.setQueueCapacity(requireNotNull(value))
+        } else {
+            queueCapacityInput = apiPreferences.queueCapacity().toString()
+        }
+    }
 
     var hostInput by remember { mutableStateOf("") }
     var connecting by remember { mutableStateOf(false) }
@@ -100,12 +157,22 @@ fun RemoteScreen(navController: NavController, modifier: Modifier = Modifier) {
     // is off.
     var screenShield by remember { mutableStateOf(false) }
 
-    // Host mode is meant to keep serving while the user leaves the device on
-    // this screen; prevent the system from dozing the CPU via screen off.
+    // Either LAN server is meant to keep serving while the user leaves the
+    // device on this screen; prevent the system from dozing the CPU via screen
+    // off. The optional black shield below keeps OLED pixels off.
     val view = LocalView.current
-    DisposableEffect(hostRunning) {
-        view.keepScreenOn = hostRunning
+    DisposableEffect(hostRunning, apiStatus.running) {
+        view.keepScreenOn = hostRunning || apiStatus.running
         onDispose { view.keepScreenOn = false }
+    }
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                backgroundAccessExempt = OpenAiBackgroundAccess.isExempt(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -113,23 +180,62 @@ fun RemoteScreen(navController: NavController, modifier: Modifier = Modifier) {
     if (screenShield) {
         ScreenShieldOverlay(onExit = { screenShield = false })
     }
+    if (confirmApiKeyRegeneration) {
+        AlertDialog(
+            onDismissRequest = { confirmApiKeyRegeneration = false },
+            text = { Text(stringResource(R.string.openai_api_regenerate_key_confirm)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        apiKey = apiPreferences.regenerateApiKey()
+                        confirmApiKeyRegeneration = false
+                    },
+                ) {
+                    Text(stringResource(R.string.confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmApiKeyRegeneration = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.remote_link)) },
+            CenterAlignedTopAppBar(
+                title = {
+                    Text(
+                        text = stringResource(
+                            if (isTopLevel) {
+                                R.string.studio_nav_services
+                            } else {
+                                R.string.remote_link
+                            },
+                        ),
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStackIfResumed() }) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            stringResource(R.string.back),
-                        )
+                    if (!isTopLevel) {
+                        IconButton(onClick = { navController.popBackStackIfResumed() }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                stringResource(R.string.back),
+                            )
+                        }
                     }
                 },
                 scrollBehavior = scrollBehavior,
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                ),
             )
         },
+        bottomBar = bottomBar,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
     ) { paddingValues ->
         val focusManager = LocalFocusManager.current
         Column(
@@ -147,9 +253,244 @@ fun RemoteScreen(navController: NavController, modifier: Modifier = Modifier) {
                 // Keep the focused field above the IME instead of behind it.
                 .imePadding()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
+            // === OpenAI-compatible LAN API ===
+            Column {
+                SectionHeader(
+                    icon = Icons.Default.Dns,
+                    title = stringResource(R.string.openai_api_section),
+                )
+                Text(
+                    stringResource(R.string.openai_api_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    stringResource(R.string.openai_api_http_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+                )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        if (apiStatus.ready) {
+                            Text(
+                                stringResource(R.string.openai_api_address),
+                                style = MaterialTheme.typography.titleSmall,
+                            )
+                            Text(
+                                stringResource(R.string.openai_api_same_device_address),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                "http://127.0.0.1:${OpenAiApiPreferences.PORT}/v1",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Text(
+                                stringResource(R.string.openai_api_lan_address),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            val addresses = remember(apiStatus.ready) {
+                                RemoteHostService.localIpAddresses()
+                            }
+                            addresses.forEach { address ->
+                                Text(
+                                    "http://$address:${OpenAiApiPreferences.PORT}/v1",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            Text(
+                                stringResource(
+                                    R.string.openai_api_queue_status,
+                                    if (apiStatus.active) 1 else 0,
+                                    apiStatus.queued,
+                                    apiStatus.queueCapacity,
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else if (apiStatus.running) {
+                            Text(
+                                stringResource(R.string.openai_api_starting),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        OutlinedTextField(
+                            value = apiKey,
+                            onValueChange = {},
+                            readOnly = true,
+                            singleLine = true,
+                            label = { Text(stringResource(R.string.openai_api_key)) },
+                            visualTransformation = if (apiKeyVisible) {
+                                VisualTransformation.None
+                            } else {
+                                PasswordVisualTransformation()
+                            },
+                            trailingIcon = {
+                                Row {
+                                    IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                                        Icon(
+                                            if (apiKeyVisible) {
+                                                Icons.Default.VisibilityOff
+                                            } else {
+                                                Icons.Default.Visibility
+                                            },
+                                            contentDescription = null,
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            clipboardManager.setText(AnnotatedString(apiKey))
+                                            Toast.makeText(
+                                                context,
+                                                apiKeyCopiedMessage,
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                        },
+                                    ) {
+                                        Icon(
+                                            Icons.Default.ContentCopy,
+                                            stringResource(R.string.openai_api_copy_key),
+                                        )
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = queueCapacityInput,
+                            onValueChange = { raw ->
+                                if (raw.isEmpty() || (raw.all(Char::isDigit) && raw.length <= 2)) {
+                                    queueCapacityInput = raw
+                                    raw.toIntOrNull()
+                                        ?.takeIf { it in queueCapacityRange }
+                                        ?.let { value ->
+                                            apiPreferences.setQueueCapacity(value)
+                                        }
+                                }
+                            },
+                            singleLine = true,
+                            isError = queueCapacityInput.isNotEmpty() &&
+                                queueCapacityInput.toIntOrNull() !in queueCapacityRange,
+                            label = {
+                                Text(stringResource(R.string.openai_api_queue_capacity))
+                            },
+                            supportingText = {
+                                Text(
+                                    if (
+                                        queueCapacityInput.isNotEmpty() &&
+                                        queueCapacityInput.toIntOrNull() !in queueCapacityRange
+                                    ) {
+                                        stringResource(R.string.openai_api_queue_invalid)
+                                    } else {
+                                        stringResource(R.string.openai_api_queue_hint)
+                                    },
+                                )
+                            },
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done,
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    commitQueueCapacity()
+                                    focusManager.clearFocus()
+                                },
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onFocusChanged { state ->
+                                    if (!state.isFocused) commitQueueCapacity()
+                                },
+                        )
+                        apiStatus.error?.let { error ->
+                            Text(
+                                stringResource(R.string.openai_api_error, error),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        if (requiresVendorBackgroundControl || !backgroundAccessExempt) {
+                            Text(
+                                stringResource(
+                                    if (requiresVendorBackgroundControl) {
+                                        R.string.openai_api_vendor_battery_warning
+                                    } else {
+                                        R.string.openai_api_battery_warning
+                                    },
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    OpenAiBackgroundAccess.requestExemption(context)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(stringResource(R.string.openai_api_battery_action))
+                            }
+                        }
+                        if (apiStatus.running) {
+                            Button(
+                                onClick = { screenShield = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(stringResource(R.string.remote_screen_shield))
+                            }
+                            OutlinedButton(
+                                onClick = { OpenAiApiService.stop(context) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(stringResource(R.string.openai_api_stop))
+                            }
+                        } else {
+                            Button(
+                                onClick = {
+                                    OpenAiApiService.start(context)
+                                    if (
+                                        !requiresVendorBackgroundControl &&
+                                        !backgroundAccessExempt
+                                    ) {
+                                        OpenAiBackgroundAccess.requestExemption(context)
+                                    }
+                                },
+                                enabled = !hostRunning,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(stringResource(R.string.openai_api_start))
+                            }
+                            TextButton(
+                                onClick = { confirmApiKeyRegeneration = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(stringResource(R.string.openai_api_regenerate_key))
+                            }
+                        }
+                    }
+                }
+            }
+
             // === Host mode (this device runs the models) ===
             Column {
                 SectionHeader(
@@ -164,6 +505,7 @@ fun RemoteScreen(navController: NavController, modifier: Modifier = Modifier) {
                 )
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     ),
@@ -221,6 +563,7 @@ fun RemoteScreen(navController: NavController, modifier: Modifier = Modifier) {
                         } else {
                             Button(
                                 onClick = { RemoteHostService.start(context) },
+                                enabled = !apiStatus.running,
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text(stringResource(R.string.remote_host_start))
@@ -244,6 +587,7 @@ fun RemoteScreen(navController: NavController, modifier: Modifier = Modifier) {
                 )
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     ),
@@ -320,7 +664,13 @@ fun RemoteScreen(navController: NavController, modifier: Modifier = Modifier) {
                                                     msgConnectedTo.format(result.deviceName),
                                                     Toast.LENGTH_SHORT,
                                                 ).show()
-                                                navController.popBackStackIfResumed()
+                                                if (isTopLevel) {
+                                                    navController.navigateTopLevel(
+                                                        Screen.ModelList.route,
+                                                    )
+                                                } else {
+                                                    navController.popBackStackIfResumed()
+                                                }
                                             }
 
                                             is RemoteConnectResult.Unreachable ->
@@ -431,18 +781,23 @@ private fun ScreenShieldOverlay(onExit: () -> Unit) {
 private fun SectionHeader(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(bottom = 12.dp),
+        modifier = Modifier.padding(bottom = 8.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(8.dp))
+        Surface(
+            shape = MaterialTheme.shapes.small,
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.padding(7.dp).size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
         Text(
             title,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleLarge,
         )
     }
 }

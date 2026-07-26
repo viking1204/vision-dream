@@ -2,12 +2,14 @@ package io.github.xororz.localdream.service
 
 import android.app.*
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import io.github.xororz.localdream.BuildConfig
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.Model
+import io.github.xororz.localdream.data.ModelUsageRanking
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.Executors
@@ -46,6 +48,13 @@ class BackendService : Service() {
     @Volatile
     private var runtimeDirReady = false
 
+    // The checked-in/prebuilt native core used by release APKs predates the
+    // unified --type/--model_dir CLI, while locally rebuilt cores use it.
+    // Probe once per Service instance and build the matching command instead
+    // of coupling the Kotlin service to whichever binary happened to be
+    // packaged.
+    private var unifiedNativeCli: Boolean? = null
+
     // All backend process management (asset copies, exec, destroy/waitFor)
     // runs on this single thread: jobs stay ordered relative to each other
     // and the main thread never blocks on waitFor() or large file copies.
@@ -68,6 +77,8 @@ class BackendService : Service() {
         // (single-threaded, no cross-instance start/stop race). Affects only
         // reuse/latency, never correctness: a slower re-entry just starts fresh.
         private const val IDLE_GRACE_MS = 1500L
+        private const val FORCE_STOP_TIMEOUT_SECONDS = 5L
+        private val TILE_PROGRESS_REGEX = Regex("""Processed tile (\d+)/(\d+)""")
 
         const val ACTION_STOP = "io.github.xororz.localdream.STOP_GENERATION"
         const val ACTION_RESTART = "io.github.xororz.localdream.RESTART_BACKEND"
@@ -78,11 +89,32 @@ class BackendService : Service() {
         // startService() deliveries to an already-foreground service instead
         // of new-FGS starts, which Android 12+ blocks from the background.
         const val ACTION_STANDBY = "io.github.xororz.localdream.STANDBY_BACKEND"
+        const val ACTION_PREPARE_OPENAI_GATEWAY =
+            "io.github.xororz.localdream.PREPARE_OPENAI_GATEWAY"
+        const val EXTRA_REQUEST_OWNER = "request_owner"
+        const val EXTRA_IMAGE_INPUT_ENABLED = "image_input_enabled"
+        const val EXTRA_EXPECTED_MODEL_ID = "expected_model_id"
+        const val REQUEST_OWNER_OPENAI_API = "openai_api"
 
         // Pseudo backend type: native process in --upscaler_mode (no model
         // dir). Used by host mode so a controller's standalone upscale page
         // can run on this device's NPU.
         const val BACKEND_TYPE_UPSCALER = "upscaler"
+
+        /**
+         * API commands must declare image-input intent explicitly and are
+         * independent from the in-app img2img switch. Commands from the UI
+         * retain the legacy preference fallback when no override is supplied.
+         */
+        internal fun resolveImageInputRequested(
+            requestOwner: String?,
+            explicitOverride: Boolean?,
+            localPreference: Boolean,
+        ): Boolean = if (requestOwner == REQUEST_OWNER_OPENAI_API) {
+            explicitOverride == true
+        } else {
+            explicitOverride ?: localPreference
+        }
 
         private object StateHolder {
             val _backendState = MutableStateFlow<BackendState>(BackendState.Idle)
@@ -96,6 +128,15 @@ class BackendService : Service() {
             // host mode's /status so a controller only declares Ready once the
             // backend matches its full config, not just the model id.
             val _servingResolution = MutableStateFlow<Pair<Int, Int>?>(null)
+            val _servingImageInputEnabled = MutableStateFlow<Boolean?>(null)
+
+            // Monotonic acknowledgement for API startup. Waiting for a new
+            // value prevents port 8809 from opening while an old native
+            // process is still bound to 0.0.0.0.
+            val _openAiPreparation = MutableStateFlow(OpenAiPreparation())
+            val _commandResult = MutableStateFlow(BackendCommandResult())
+            val _currentLog = MutableStateFlow("")
+            val _tileProgress = MutableStateFlow<TileProgress?>(null)
         }
 
         val backendState: StateFlow<BackendState> = StateHolder._backendState
@@ -104,6 +145,16 @@ class BackendService : Service() {
 
         val servingResolution: StateFlow<Pair<Int, Int>?> = StateHolder._servingResolution
 
+        val servingImageInputEnabled: StateFlow<Boolean?> =
+            StateHolder._servingImageInputEnabled
+
+        val openAiPreparation: StateFlow<OpenAiPreparation> = StateHolder._openAiPreparation
+        val commandResult: StateFlow<BackendCommandResult> = StateHolder._commandResult
+
+        val currentLog: StateFlow<String> = StateHolder._currentLog
+
+        val tileProgress: StateFlow<TileProgress?> = StateHolder._tileProgress
+
         private fun updateState(state: BackendState) {
             StateHolder._backendState.value = state
         }
@@ -111,6 +162,24 @@ class BackendService : Service() {
         private fun updateServing(config: BackendConfig?) {
             StateHolder._servingModelId.value = config?.modelId
             StateHolder._servingResolution.value = config?.let { Pair(it.width, it.height) }
+            StateHolder._servingImageInputEnabled.value = config?.imageInputEnabled
+        }
+
+        private fun publishCommandResult(
+            modelId: String?,
+            error: String?,
+        ) {
+            val previous = StateHolder._commandResult.value
+            StateHolder._commandResult.value = BackendCommandResult(
+                version = previous.version + 1L,
+                modelId = modelId,
+                error = error,
+            )
+        }
+
+        fun clearProgress() {
+            StateHolder._currentLog.value = ""
+            StateHolder._tileProgress.value = null
         }
     }
 
@@ -126,6 +195,20 @@ class BackendService : Service() {
         data class Error(val message: String, val modelId: String? = null) : BackendState()
     }
 
+    data class OpenAiPreparation(
+        val version: Long = 0L,
+        val succeeded: Boolean = true,
+        val error: String? = null,
+    )
+
+    data class BackendCommandResult(
+        val version: Long = 0L,
+        val modelId: String? = null,
+        val error: String? = null,
+    )
+
+    data class TileProgress(val current: Int, val total: Int)
+
     // What a backend process is (or should be) running for. Equality drives
     // reconcile()'s "already serving this exact config" decision. listenOnAll
     // is part of the config on purpose: entering/exiting host mode changes the
@@ -138,6 +221,7 @@ class BackendService : Service() {
         val width: Int,
         val height: Int,
         val listenOnAll: Boolean,
+        val imageInputEnabled: Boolean,
     )
 
     override fun onCreate() {
@@ -150,11 +234,19 @@ class BackendService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "service command: ${intent?.action}")
+        val openAiGatewayOwnsBackend = OpenAiApiService.isRunning.value
         try {
-            startForeground(
-                NOTIFICATION_ID,
-                createNotification(this.getString(R.string.backend_notify)),
-            )
+            val notification = createNotification(this.getString(R.string.backend_notify))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val foregroundType = if (openAiGatewayOwnsBackend) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                } else {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                }
+                startForeground(NOTIFICATION_ID, notification, foregroundType)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
         } catch (e: Exception) {
             // Android 12+ can reject foreground promotion when the command
             // arrived with the app in the background (e.g. the service was
@@ -167,8 +259,38 @@ class BackendService : Service() {
         // Commands only declare intent; the single backend thread converges the
         // actual process to it via reconcile(). This keeps every start/stop
         // ordered and race-free regardless of how fast the screen comes and goes.
+        val requestedByOpenAiGateway =
+            intent?.getStringExtra(EXTRA_REQUEST_OWNER) == REQUEST_OWNER_OPENAI_API
+        val isLocalRuntimeCommand = intent?.action != ACTION_STANDBY &&
+            intent?.action != ACTION_PREPARE_OPENAI_GATEWAY &&
+            !requestedByOpenAiGateway
+        val requestedModelId = intent?.getStringExtra("modelId")
+            ?: intent?.getStringExtra(EXTRA_EXPECTED_MODEL_ID)
+        if (openAiGatewayOwnsBackend &&
+            isLocalRuntimeCommand &&
+            (
+                OpenAiApiService.hasPendingInference() ||
+                    BackgroundGenerationService.isServiceRunning.value
+                )
+        ) {
+            val message = "An image request is using the backend"
+            Log.w(TAG, "Rejecting local backend command: $message")
+            publishCommandResult(requestedModelId, message)
+            return START_NOT_STICKY
+        }
+        if (isLocalRuntimeCommand) publishCommandResult(requestedModelId, null)
+
         when (intent?.action) {
-            ACTION_STOP -> serviceScope.launch { requestStop(startId) }
+            ACTION_STOP -> serviceScope.launch {
+                requestStop(
+                    startId = startId,
+                    expectedModelId = intent.getStringExtra(EXTRA_EXPECTED_MODEL_ID),
+                )
+            }
+
+            ACTION_PREPARE_OPENAI_GATEWAY -> serviceScope.launch {
+                prepareOpenAiGateway()
+            }
 
             // Foreground promotion only; no backend change.
             ACTION_STANDBY -> {}
@@ -194,10 +316,46 @@ class BackendService : Service() {
         // persisted flag: a crash can never leave a stale "expose the port"
         // bit behind, and a config-equality check below forces a restart when
         // the bind address requirement changes.
-        val listenOnAll = getSharedPreferences("app_prefs", MODE_PRIVATE)
-            .getBoolean("listen_on_all_addresses", false) ||
-            RemoteHostService.isRunning.value
-        return BackendConfig(modelId, backendType, width, height, listenOnAll)
+        // The authenticated OpenAI gateway must be the only LAN-facing
+        // surface while active. Exposing native 8081 as well would bypass its
+        // bearer check and bounded queue.
+        val listenOnAll = if (OpenAiApiService.isRunning.value) {
+            false
+        } else {
+            getSharedPreferences("app_prefs", MODE_PRIVATE)
+                .getBoolean("listen_on_all_addresses", false) ||
+                RemoteHostService.isRunning.value
+        }
+        val explicitImageInput = intent
+            .takeIf { it.hasExtra(EXTRA_IMAGE_INPUT_ENABLED) }
+            ?.getBooleanExtra(EXTRA_IMAGE_INPUT_ENABLED, false)
+        val imageInputRequested = resolveImageInputRequested(
+            requestOwner = intent.getStringExtra(EXTRA_REQUEST_OWNER),
+            explicitOverride = explicitImageInput,
+            localPreference = getSharedPreferences("app_prefs", MODE_PRIVATE)
+                .getBoolean("use_img2img", true),
+        )
+        val imageInputEnabled = backendType != BACKEND_TYPE_UPSCALER &&
+            imageInputRequested &&
+            hasImageEncoder(modelId, backendType)
+        return BackendConfig(
+            modelId = modelId,
+            backendType = backendType,
+            width = width,
+            height = height,
+            listenOnAll = listenOnAll,
+            imageInputEnabled = imageInputEnabled,
+        )
+    }
+
+    private fun hasImageEncoder(modelId: String, backendType: String): Boolean {
+        val encoderName = when (backendType) {
+            "sd15cpu" -> "vae_encoder.mnn"
+            "sd15npu", "sdxl", "anima" -> "vae_encoder.bin"
+            else -> return false
+        }
+        val encoder = File(File(Model.getModelsDir(this), modelId), encoderName)
+        return encoder.isFile && encoder.length() > 0L
     }
 
     // Declares the desired backend and converges to it. Cancels any pending
@@ -213,10 +371,49 @@ class BackendService : Service() {
         reconcile(forceRestart)
     }
 
+    /**
+     * Removes any pre-existing native listener before the authenticated API is
+     * published. The service remains foreground and ready for the first API
+     * model request.
+     */
+    private fun prepareOpenAiGateway() {
+        idleStopJob?.cancel()
+        idleStopJob = null
+        // A loopback-only process is already isolated from LAN clients and can
+        // remain loaded while the gateway starts. Only a legacy LAN-bound
+        // process must be torn down before port 8809 is published.
+        val requiresStop = process?.isAlive == true && serving?.listenOnAll == true
+        val stopped = if (requiresStop) {
+            desired = null
+            stopBackend()
+        } else {
+            true
+        }
+        if (stopped && process?.isAlive != true && runtimeDirReady) {
+            updateState(BackendState.Idle)
+        }
+        val previous = StateHolder._openAiPreparation.value
+        StateHolder._openAiPreparation.value = OpenAiPreparation(
+            version = previous.version + 1L,
+            succeeded = stopped,
+            error = if (stopped) null else "Native backend did not stop",
+        )
+    }
+
     // Declares that nothing should run, but only tears down after a grace
     // window. A re-entry within the window cancels this job and reconciles in
     // place; otherwise the process is stopped and the Service stops itself.
-    private fun requestStop(startId: Int) {
+    private fun requestStop(
+        startId: Int,
+        expectedModelId: String?,
+    ) {
+        if (expectedModelId != null && serving?.modelId != expectedModelId) {
+            Log.i(
+                TAG,
+                "Ignoring stale unload for $expectedModelId; serving ${serving?.modelId}",
+            )
+            return
+        }
         desired = null
         idleStopJob?.cancel()
         idleStopJob = serviceScope.launch {
@@ -234,7 +431,10 @@ class BackendService : Service() {
                 // promoting a freshly started service to the foreground from
                 // that state. Keeping this one alive makes those commands
                 // plain startService() deliveries to a live FGS.
-                if (!RemoteHostService.isRunning.value && stopSelfResult(startId)) {
+                if (!RemoteHostService.isRunning.value &&
+                    !OpenAiApiService.isRunning.value &&
+                    stopSelfResult(startId)
+                ) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
                 }
             }
@@ -255,18 +455,34 @@ class BackendService : Service() {
         if (alreadyServing && !forceRestart) {
             Log.i(TAG, "backend already serving ${want.modelId} ${want.width}x${want.height}")
             updateServing(want)
+            recordModelUsage(want)
             updateState(BackendState.Running)
             return
         }
-        stopBackend()
+        if (!stopBackend()) {
+            updateState(
+                BackendState.Error(
+                    "Previous backend did not stop",
+                    serving?.modelId,
+                ),
+            )
+            return
+        }
         if (startBackend(want)) {
             serving = want
             updateServing(want)
+            recordModelUsage(want)
             updateState(BackendState.Running)
         } else {
             serving = null
             updateServing(null)
             updateState(BackendState.Error("Backend start failed", want.modelId))
+        }
+    }
+
+    private fun recordModelUsage(config: BackendConfig) {
+        if (config.backendType != BACKEND_TYPE_UPSCALER) {
+            ModelUsageRanking.record(this, config.modelId)
         }
     }
 
@@ -366,33 +582,6 @@ class BackendService : Service() {
                 throw RuntimeException("Failed to prepare QNN libraries from assets", e)
             }
 
-            if (BuildConfig.FLAVOR == "filter") {
-                try {
-                    val safetyCheckerTarget = File(filesDir, "safety_checker.mnn")
-                    val assetSize = assets.open("safety_checker.mnn")
-                        .use { it.available().toLong() }
-
-                    if (!safetyCheckerTarget.exists() ||
-                        safetyCheckerTarget.length() != assetSize
-                    ) {
-                        assets.open("safety_checker.mnn").use { input ->
-                            safetyCheckerTarget.outputStream().use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-                        Log.i(
-                            TAG,
-                            "Safety checker model copied to: ${safetyCheckerTarget.absolutePath}",
-                        )
-                    }
-
-                    safetyCheckerTarget.setReadable(true, true)
-                } catch (e: IOException) {
-                    Log.e(TAG, "copy safety_checker.mnn failed", e)
-                    throw RuntimeException("Failed to copy safety checker model", e)
-                }
-            }
-
             runtimeDir.setReadable(true, true)
             runtimeDir.setExecutable(true, true)
             runtimeDirReady = true
@@ -416,6 +605,8 @@ class BackendService : Service() {
         // crash reporting for the process we are about to start.
         stopping = false
         updateState(BackendState.Starting)
+        StateHolder._currentLog.value = ""
+        StateHolder._tileProgress.value = null
 
         try {
             val nativeDir = applicationInfo.nativeLibraryDir
@@ -429,91 +620,28 @@ class BackendService : Service() {
             }
 
             val preferences = this.getSharedPreferences("app_prefs", MODE_PRIVATE)
-            val useImg2img = preferences.getBoolean("use_img2img", true)
-            // Part of the config (captured at command time in parseConfig) so
-            // reconcile() restarts the process when the bind address
-            // requirement changes instead of reusing a mismatched one.
-            val listenOnAll = config.listenOnAll
-
-            val command = if (backendType == BACKEND_TYPE_UPSCALER) {
-                // Same invocation as the standalone upscale screen's private
-                // process; run through this service so host mode gets the
-                // usual reconcile/stop-grace lifecycle and --listen_all.
-                mutableListOf(
-                    executableFile.absolutePath,
-                    "--upscaler_mode",
-                    "--lib_dir",
-                    runtimeDir.absolutePath,
-                    "--port",
-                    "8081",
-                )
-            } else {
-                mutableListOf(
-                    executableFile.absolutePath,
-                    "--type",
-                    backendType,
-                    "--model_dir",
-                    modelsDir.absolutePath,
-                    "--port",
-                    "8081",
-                )
-            }
-            if (backendType != "sd15cpu" && backendType != BACKEND_TYPE_UPSCALER) {
-                command += listOf("--lib_dir", runtimeDir.absolutePath)
-            }
-            if (!useImg2img && backendType != BACKEND_TYPE_UPSCALER) {
-                command += "--no_img2img"
-            }
-            if (backendType == "sd15npu" && (width != 512 || height != 512)) {
-                val patchFile = if (width == height) {
-                    val squarePatch = File(modelsDir, "$width.patch")
-                    if (squarePatch.exists()) {
-                        squarePatch
-                    } else {
-                        File(modelsDir, "${width}x$height.patch")
-                    }
-                } else {
-                    File(modelsDir, "${width}x$height.patch")
-                }
-
-                if (patchFile.exists()) {
-                    command += listOf("--patch", patchFile.absolutePath)
-                    Log.i(TAG, "Using patch file: ${patchFile.name}")
-                } else {
-                    Log.w(
-                        TAG,
-                        "Patch file not found: ${patchFile.absolutePath}, falling back to 512×512",
-                    )
-                }
-            }
-            if (File(modelsDir, "V_PRED").exists()) {
-                command += "--use_v_pred"
-            }
-            // The upscaler-mode process takes no safety-checker flag (same as
-            // the standalone upscale screen's own invocation).
-            if (BuildConfig.FLAVOR == "filter" && backendType != BACKEND_TYPE_UPSCALER) {
-                command += listOf(
-                    "--safety_checker",
-                    File(filesDir, "safety_checker.mnn").absolutePath,
-                )
-            }
-            // SDXL and Anima are the large NPU formats that benefit from
-            // per-stage load/release. They share the same backend --lowram flag
-            // but keep separate UI toggles so each can opt in independently.
-            if (backendType == "sdxl" && preferences.getBoolean("sdxl_lowram", true)) {
-                command += "--lowram"
-            }
-            if (backendType == "anima" && preferences.getBoolean("anima_lowram", true)) {
-                command += "--lowram"
-                // Aggressive variant: never hold both DiT halves resident at
-                // once, so 12GB devices can run Anima low-RAM. Slower per step.
-                if (preferences.getBoolean("anima_seq_dit", false)) {
-                    command += "--anima_seq_dit"
-                }
-            }
-            if (listenOnAll) {
-                command += "--listen_all"
-            }
+            val usesUnifiedCli = supportsUnifiedNativeCli(executableFile)
+            val command = NativeBackendCommandFactory.build(
+                executableFile = executableFile,
+                modelsDir = modelsDir,
+                runtimeDir = runtimeDir,
+                config = NativeBackendLaunchConfig(
+                    modelId = config.modelId,
+                    backendType = config.backendType,
+                    width = config.width,
+                    height = config.height,
+                    listenOnAll = config.listenOnAll,
+                    imageInputEnabled = config.imageInputEnabled,
+                    sdxlLowRam = preferences.getBoolean("sdxl_lowram", true),
+                    animaLowRam = preferences.getBoolean("anima_lowram", true),
+                    animaSequentialDit = preferences.getBoolean("anima_seq_dit", false),
+                ),
+                usesUnifiedCli = usesUnifiedCli,
+            )
+            Log.i(
+                TAG,
+                "Using ${if (usesUnifiedCli) "unified" else "legacy"} native CLI",
+            )
             val env = mutableMapOf<String, String>()
 
             val systemLibPaths = mutableListOf(
@@ -573,13 +701,53 @@ class BackendService : Service() {
         }
     }
 
+    private fun supportsUnifiedNativeCli(executableFile: File): Boolean {
+        unifiedNativeCli?.let { return it }
+        val unified = try {
+            val probe = ProcessBuilder(
+                executableFile.absolutePath,
+                "--type",
+                "__vision_dream_cli_probe__",
+            ).redirectErrorStream(true).start()
+            val output = probe.inputStream.bufferedReader().use { it.readText() }
+            if (!probe.waitFor(5, TimeUnit.SECONDS)) {
+                probe.destroyForcibly()
+                throw IOException("native CLI probe timed out")
+            }
+            output.contains("Invalid --type")
+        } catch (e: Exception) {
+            // New builds are the forward-compatible default. A failed probe
+            // must not silently downgrade their richer model contract.
+            Log.w(TAG, "Native CLI probe failed; assuming unified CLI", e)
+            true
+        }
+        unifiedNativeCli = unified
+        return unified
+    }
+
     private fun startMonitorThread(proc: Process) {
         Thread {
             val exitCode = try {
                 proc.inputStream.bufferedReader().use { reader ->
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        Log.i(TAG, "Backend: $line")
+                        val logLine = line!!
+                        Log.i(TAG, "Backend: $logLine")
+                        // A replaced process can still flush buffered stdout
+                        // after the new process cleared its progress state.
+                        // Publish only logs belonging to the currently tracked
+                        // process so stale tiles cannot overwrite the new run.
+                        if (process === proc) {
+                            StateHolder._currentLog.value = logLine
+                            TILE_PROGRESS_REGEX.find(logLine)?.let { match ->
+                                val current = match.groupValues[1].toIntOrNull()
+                                val total = match.groupValues[2].toIntOrNull()
+                                if (current != null && total != null && total > 0) {
+                                    StateHolder._tileProgress.value =
+                                        TileProgress(current, total)
+                                }
+                            }
+                        }
                     }
                 }
                 proc.waitFor()
@@ -626,18 +794,31 @@ class BackendService : Service() {
         }
     }
 
-    private fun stopBackend() {
+    /**
+     * Stops the tracked native process and returns only after its listener can
+     * no longer be alive. API preparation must not acknowledge success based
+     * solely on sending SIGKILL: doing so could briefly expose the previous
+     * unauthenticated LAN listener beside the authenticated gateway.
+     */
+    private fun stopBackend(): Boolean {
         Log.i(TAG, "to stop backend")
         // Mark the upcoming exit as intentional before destroy() so the monitor
         // thread (which wakes the instant the process dies) won't race ahead and
         // report it as a crash.
         stopping = true
-        process?.let { proc ->
+        val proc = process
+        if (proc != null) {
             try {
                 proc.destroy()
 
-                if (!proc.waitFor(5, TimeUnit.SECONDS)) {
+                if (!proc.waitFor(FORCE_STOP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                     proc.destroyForcibly()
+                    if (!proc.waitFor(FORCE_STOP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                        val message = "Native backend did not exit after forced stop"
+                        Log.e(TAG, message)
+                        updateState(BackendState.Error(message, serving?.modelId))
+                        return false
+                    }
                 }
 
                 Log.i(TAG, "process end, code: ${proc.exitValue()}")
@@ -645,11 +826,18 @@ class BackendService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "error", e)
                 updateState(BackendState.Error("error: ${e.message}"))
+                if (proc.isAlive) return false
             } finally {
-                process = null
+                if (!proc.isAlive && process === proc) {
+                    process = null
+                }
             }
         }
+        if (process?.isAlive == true) return false
         serving = null
         updateServing(null)
+        StateHolder._currentLog.value = ""
+        StateHolder._tileProgress.value = null
+        return true
     }
 }

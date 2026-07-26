@@ -3,6 +3,7 @@ package io.github.xororz.localdream.utils
 import android.content.Context
 import android.util.Log
 import io.github.xororz.localdream.data.ModelRepository
+import io.github.xororz.localdream.data.ModelStorage
 import io.github.xororz.localdream.service.ModelDownloadService
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -58,7 +59,8 @@ object TempCleaner {
         // Download scratch dir: only when no transfer is using it.
         val downloadActive = ModelDownloadService.downloadState.value.let { state ->
             state is ModelDownloadService.DownloadState.Downloading ||
-                state is ModelDownloadService.DownloadState.Extracting
+                state is ModelDownloadService.DownloadState.Extracting ||
+                state is ModelDownloadService.DownloadState.Installing
         }
         if (!downloadActive) {
             File(filesDir, "temp_downloads").takeIf { it.exists() }?.let { targets += it }
@@ -67,7 +69,7 @@ object TempCleaner {
             // dirs). Built-in models, upscalers and finished custom models are
             // preserved. Skipped during a download since a model dir may be
             // mid-populate.
-            File(filesDir, "models").takeIf { it.isDirectory }?.listFiles()?.forEach { entry ->
+            ModelStorage.requireModelsDir(context).listFiles()?.forEach { entry ->
                 if (!isRecognizedModelEntry(entry)) targets += entry
             }
         }
@@ -100,7 +102,8 @@ object TempCleaner {
         // so a marker-less dir is an unusable, half-finished import.
         return File(entry, "finished").exists() ||
             File(entry, "npucustom").exists() ||
-            File(entry, "SDXL").exists()
+            File(entry, "SDXL").exists() ||
+            File(entry, "ANIMA").exists()
     }
 
     private fun sizeOf(file: File): Long = if (file.isDirectory) {
