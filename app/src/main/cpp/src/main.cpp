@@ -425,8 +425,7 @@ static void registerGenerateEndpoint(httplib::Server &svr, Pipeline *pipeline) {
                     // A failed write means the client hung up (cancelled).
                     // Abort the generation right away instead of burning
                     // NPU/CPU on a result nobody will receive.
-                    if (!sink.is_writable() ||
-                        !sink.write(ev.c_str(), ev.size()))
+                    if (!sink.write(ev.c_str(), ev.size()))
                       throw std::runtime_error(
                           "Client disconnected, generation aborted");
                   });
@@ -777,6 +776,7 @@ int main(int argc, char **argv) {
 
   // --- HTTP Server ---
   httplib::Server svr;
+  svr.set_payload_max_length(256 * 1024 * 1024);
   svr.set_default_headers({
       {"Access-Control-Allow-Origin", "*"},
       {"Access-Control-Allow-Methods", "GET, POST, OPTIONS"},
