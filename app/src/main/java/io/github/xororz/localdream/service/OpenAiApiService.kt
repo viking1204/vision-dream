@@ -13,7 +13,8 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.github.xororz.localdream.R
-import io.github.xororz.localdream.openai.BoundedSerialExecutor
+import io.github.xororz.localdream.inference.BackendRuntimeLeaseManager
+import io.github.xororz.localdream.inference.InferenceDispatcher
 import io.github.xororz.localdream.openai.OpenAiApiController
 import io.github.xororz.localdream.openai.OpenAiApiPreferences
 import io.github.xororz.localdream.openai.OpenAiHttpServer
@@ -40,7 +41,8 @@ class OpenAiApiService : Service() {
 
     @Volatile
     private var server: OpenAiHttpServer? = null
-    private var executor: BoundedSerialExecutor? = null
+    private var dispatcher: InferenceDispatcher? = null
+    private var runtimeLease: BackendRuntimeLeaseManager.Lease? = null
     private var controller: OpenAiApiController? = null
     private var startupJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -95,14 +97,12 @@ class OpenAiApiService : Service() {
 
         val preferences = OpenAiApiPreferences(applicationContext)
         val queueCapacity = preferences.queueCapacity()
-        val serialExecutor = BoundedSerialExecutor(
-            waitingCapacity = queueCapacity,
-            preferredAffinityKey = { BackendService.servingModelId.value },
-        )
+        val sharedDispatcher = InferenceDispatcher.process
+        sharedDispatcher.configureWaitingCapacity(queueCapacity)
         val apiController = OpenAiApiController(
             context = applicationContext,
             apiKey = preferences.apiKey(),
-            executor = serialExecutor,
+            dispatcher = sharedDispatcher,
             onQueueChanged = { active, queued ->
                 if (acceptQueueUpdates) {
                     updateStatus(
@@ -122,8 +122,9 @@ class OpenAiApiService : Service() {
             isAuthorized = apiController::isTransportAuthorized,
             handler = apiController::route,
         )
-        executor = serialExecutor
-        activeExecutor.set(serialExecutor)
+        dispatcher = sharedDispatcher
+        activeDispatcher.set(sharedDispatcher)
+        runtimeLease = sharedDispatcher.acquireServiceLease(OpenAiApiController.DISPATCH_OWNER)
         controller = apiController
         acceptQueueUpdates = true
 
@@ -211,12 +212,16 @@ class OpenAiApiService : Service() {
         serverToClose?.shutdown()
         controller?.cancelActiveCalls()
         controller = null
-        val executorToStop = executor
-        activeExecutor.compareAndSet(executorToStop, null)
-        executorToStop?.shutdownNow()
-        executor = null
+        val dispatcherToRelease = dispatcher
+        activeDispatcher.compareAndSet(dispatcherToRelease, null)
+        dispatcherToRelease?.cancelOwner(OpenAiApiController.DISPATCH_OWNER)
+        dispatcher = null
+        runtimeLease?.close()
+        runtimeLease = null
         updateStatus(Status(error = terminalError))
-        if (backendPrepared && BackendService.servingModelId.value == null) {
+        if (backendPrepared &&
+            dispatcherToRelease?.runtimeLeases?.canStopBackend() == true
+        ) {
             backendPrepared = false
             try {
                 startService(
@@ -323,7 +328,7 @@ class OpenAiApiService : Service() {
 
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning
-        private val activeExecutor = AtomicReference<BoundedSerialExecutor?>()
+        private val activeDispatcher = AtomicReference<InferenceDispatcher?>()
 
         private fun updateStatus(value: Status) {
             _status.value = value
@@ -334,8 +339,8 @@ class OpenAiApiService : Service() {
          * Exact executor state used by in-app operations to avoid racing a
          * queued API request before the asynchronous status UI recomposes.
          */
-        fun hasPendingInference(): Boolean = activeExecutor.get()?.let { executor ->
-            executor.hasActiveTask || executor.queuedTaskCount > 0
+        fun hasPendingInference(): Boolean = activeDispatcher.get()?.let { dispatcher ->
+            dispatcher.hasActiveTask || dispatcher.queuedTaskCount > 0
         } ?: false
 
         fun start(context: Context) {

@@ -325,6 +325,29 @@ class BoundedSerialExecutorTest {
         assertTrue(executor.awaitTermination(2, TimeUnit.SECONDS))
     }
 
+    @Test
+    fun cancelOwnerReturnsExecutionBarrierForAnActiveOperation() {
+        val executor = BoundedSerialExecutor(waitingCapacity = 0)
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        try {
+            accepted(executor.submit(ownerId = "mcp") {
+                started.countDown()
+                release.await(2, TimeUnit.SECONDS)
+            })
+            assertTrue(started.await(2, TimeUnit.SECONDS))
+
+            val completion = executor.cancelOwner("mcp").single()
+            assertFalse("native operation is still unwinding", completion.isDone)
+            release.countDown()
+            completion.get(2, TimeUnit.SECONDS)
+        } finally {
+            release.countDown()
+            executor.shutdown()
+            assertTrue(executor.awaitTermination(2, TimeUnit.SECONDS))
+        }
+    }
+
     private fun waitUntilIdle(executor: BoundedSerialExecutor) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
         while (executor.hasActiveTask && System.nanoTime() < deadline) {

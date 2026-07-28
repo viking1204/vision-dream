@@ -74,6 +74,13 @@ data class HistoryItem(
     }
 }
 
+/** Immutable inference metadata captured when a request enters the shared queue. */
+data class InferenceHistoryAssociation(
+    val jobId: String,
+    val presetId: String,
+    val presetRevision: Long,
+)
+
 // Keep id batches under SQLite's host-parameter limit (999 on older API levels).
 private const val SQLITE_IN_CHUNK = 900
 
@@ -113,6 +120,7 @@ class HistoryManager(private val context: Context) {
         upscalerId: String? = null,
         origin: AssetOrigin = AssetOrigin.LOCAL_APP,
         requestId: String? = null,
+        inferenceAssociation: InferenceHistoryAssociation? = null,
     ): HistoryItem? {
         // Upscaled and ultrafixed images are 4x-class resolutions; store
         // them as JPEG (PNG would be tens of MB and seconds to encode).
@@ -128,6 +136,7 @@ class HistoryManager(private val context: Context) {
             upscalerId = upscalerId,
             origin = origin,
             requestId = requestId,
+            inferenceAssociation = inferenceAssociation,
             format = format,
         ) { output ->
             bitmap.compress(
@@ -185,6 +194,7 @@ class HistoryManager(private val context: Context) {
         upscalerId: String? = null,
         origin: AssetOrigin = AssetOrigin.LOCAL_APP,
         requestId: String? = null,
+        inferenceAssociation: InferenceHistoryAssociation? = null,
     ): HistoryItem? {
         val declaredFormat = EncodedImageFormat.fromMimeType(mimeType)
         val detectedFormat = EncodedImageFormat.detect(encodedImage)
@@ -202,6 +212,7 @@ class HistoryManager(private val context: Context) {
             upscalerId = upscalerId,
             origin = origin,
             requestId = requestId,
+            inferenceAssociation = inferenceAssociation,
             format = detectedFormat,
         ) { output ->
             output.write(encodedImage)
@@ -238,6 +249,7 @@ class HistoryManager(private val context: Context) {
         upscalerId: String?,
         origin: AssetOrigin,
         requestId: String?,
+        inferenceAssociation: InferenceHistoryAssociation?,
         format: EncodedImageFormat,
         writer: (OutputStream) -> Boolean,
     ): HistoryItem? = withContext(Dispatchers.IO) {
@@ -279,6 +291,9 @@ class HistoryManager(private val context: Context) {
                 origin = origin.persistedValue,
                 mimeType = format.mimeType,
                 requestId = requestId?.trim()?.takeIf { it.isNotEmpty() },
+                jobId = inferenceAssociation?.jobId,
+                presetId = inferenceAssociation?.presetId,
+                presetRevision = inferenceAssociation?.presetRevision,
             )
             val id = try {
                 dao.insert(entity)

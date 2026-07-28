@@ -1,0 +1,114 @@
+package io.github.xororz.localdream.inference
+
+import io.github.xororz.localdream.openai.BoundedSerialExecutor
+import java.util.concurrent.ThreadFactory
+
+/**
+ * Process-wide admission point for native inference. Transport shutdown may
+ * cancel only its own work; it never shuts down this dispatcher because other
+ * services can still own accepted jobs.
+ */
+class InferenceDispatcher(
+    waitingCapacity: Int = DEFAULT_WAITING_CAPACITY,
+    preferredAffinityKey: () -> String? = { null },
+    private val leases: BackendRuntimeLeaseManager = BackendRuntimeLeaseManager(),
+) {
+    private val monitor = Any()
+    private val preferredAffinityKey = preferredAffinityKey
+    private var executor = newExecutor(waitingCapacity)
+
+    /**
+     * Applies a transport's queue preference only while the shared pipeline is
+     * idle. Once another owner has accepted work, its fairness guarantees take
+     * precedence over a live queue resize.
+     */
+    fun configureWaitingCapacity(waitingCapacity: Int): Boolean = synchronized(monitor) {
+        if (uiActive || executor.hasActiveTask || executor.queuedTaskCount > 0) return@synchronized false
+        executor.shutdown()
+        executor = newExecutor(waitingCapacity)
+        true
+    }
+
+    private fun newExecutor(waitingCapacity: Int) = BoundedSerialExecutor(
+        waitingCapacity = waitingCapacity,
+        preferredAffinityKey = preferredAffinityKey,
+        threadFactory = ThreadFactory { runnable ->
+            Thread(runnable, "inference-dispatcher").apply { isDaemon = true }
+        },
+    )
+    private var uiActive = false
+    private var runtimeTransitionActive = false
+
+    val runtimeLeases: BackendRuntimeLeaseManager
+        get() = leases
+
+    val queuedTaskCount: Int
+        get() = executor.queuedTaskCount
+
+    val hasActiveTask: Boolean
+        get() = executor.hasActiveTask
+
+    fun acquireServiceLease(
+        ownerId: String,
+    ): BackendRuntimeLeaseManager.Lease = leases.acquire(
+        ownerId,
+        BackendRuntimeLeaseManager.Kind.SERVICE,
+    )
+
+    fun tryAcquireForUi(): Boolean = synchronized(monitor) {
+        if (uiActive || executor.hasActiveTask || executor.queuedTaskCount > 0) {
+            false
+        } else {
+            uiActive = true
+            true
+        }
+    }
+
+    fun releaseFromUi() = synchronized(monitor) {
+        check(uiActive) { "UI inference is not acquired" }
+        uiActive = false
+    }
+
+    /**
+     * Admits a short runtime lifecycle transition only when the shared native
+     * pipeline is idle. The operation must only submit the lifecycle command;
+     * it must not block while the backend stops.
+     */
+    fun <T> tryRunRuntimeTransition(operation: () -> T): T? = synchronized(monitor) {
+        if (uiActive || runtimeTransitionActive || executor.hasActiveTask || executor.queuedTaskCount > 0) {
+            return@synchronized null
+        }
+        runtimeTransitionActive = true
+        try {
+            operation()
+        } finally {
+            runtimeTransitionActive = false
+        }
+    }
+
+    /** Returns null when a UI generation owns the pipeline. */
+    fun <T> submit(
+        ownerId: String,
+        affinityKey: String? = null,
+        operation: () -> T,
+    ): BoundedSerialExecutor.Submission<T>? = synchronized(monitor) {
+        if (uiActive || runtimeTransitionActive) return@synchronized null
+        executor.submit(affinityKey = affinityKey, ownerId = ownerId, operation = operation).also {
+            if (it is BoundedSerialExecutor.Submission.Accepted) {
+                val jobLease = leases.acquire(ownerId, BackendRuntimeLeaseManager.Kind.JOB)
+                it.executionFinished.whenComplete { _, _ -> jobLease.close() }
+            }
+        }
+    }
+
+    /**
+     * Cancels one owner and returns its real execution-completion barriers.
+     * A cancelled future is not proof that a native call has stopped.
+     */
+    fun cancelOwner(ownerId: String) = executor.cancelOwner(ownerId)
+
+    companion object {
+        private const val DEFAULT_WAITING_CAPACITY = 3
+        val process = InferenceDispatcher()
+    }
+}

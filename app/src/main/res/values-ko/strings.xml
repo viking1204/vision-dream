@@ -1,6 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Vision Dream</string>
+    <string name="mcp_section">MCP 서버</string>
+    <string name="mcp_notify_title">MCP 서버 실행 중</string>
+    <string name="mcp_notify">인증된 MCP 리스너 포트: %1$d</string>
+    <string name="mcp_stop">MCP 중지</string>
+    <string name="mcp_admin_section">MCP 접근</string>
+    <string name="mcp_admin_hint">독립된 인증 MCP 리스너입니다. 권한을 교체하거나 취소해도 OpenAI API에는 영향을 주지 않습니다.</string>
+    <string name="mcp_admin_port">MCP 리스너 포트</string>
+    <string name="mcp_admin_lan_on">LAN 접근: 켜짐</string>
+    <string name="mcp_admin_lan_off">LAN 접근: 꺼짐(로컬 전용)</string>
+    <string name="mcp_admin_error">MCP 오류: %1$s</string>
+    <string name="mcp_admin_running">MCP 리스너가 포트 %1$d에서 실행 중</string>
+    <string name="mcp_admin_start">MCP 리스너 시작</string>
+    <string name="mcp_admin_stop">MCP 리스너 중지</string>
+    <string name="mcp_admin_grants">클라이언트 권한</string>
+    <string name="mcp_admin_client_id">클라이언트 ID</string>
+    <string name="mcp_admin_create">권한 만들기 또는 교체</string>
+    <string name="mcp_admin_no_grants">활성 MCP 클라이언트 권한이 없습니다.</string>
+    <string name="mcp_admin_scopes">범위: %1$s</string>
+    <string name="mcp_admin_revoke">취소</string>
+    <string name="mcp_admin_audit">최근 감사</string>
+    <string name="mcp_admin_configuration">MCP 클라이언트 구성</string>
+    <string name="mcp_admin_copy">구성 복사</string>
+    <string name="mcp_admin_config_copied">MCP 구성을 복사했습니다</string>
+    <string name="mcp_admin_confirmations">파괴적 작업 확인</string>
+    <string name="mcp_admin_confirmation_detail">클라이언트 %1$s이(가) %2$s을(를) 요청했습니다. 대상: %3$s</string>
+    <string name="mcp_admin_confirmation_meta">범위: %1$s\n요청 다이제스트: %2$s\n%3$d초 후 만료됩니다</string>
+    <string name="mcp_admin_approve">이번 한 번만 승인</string>
+    <string name="mcp_admin_reject">거부</string>
+    <string name="mcp_admin_confirmation_id">확인 ID</string>
+    <string name="mcp_admin_confirmation_id_hint">이 일회용 ID를 MCP 클라이언트에 전달하고 정확히 같은 작업을 다시 시도하세요:\n%1$s</string>
 
     <!-- Models -->
     <string name="anythingv5_description">애니풍 이미지 생성</string>

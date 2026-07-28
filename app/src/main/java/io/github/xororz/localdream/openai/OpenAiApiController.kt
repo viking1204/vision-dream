@@ -7,7 +7,12 @@ import io.github.xororz.localdream.data.AssetOrigin
 import io.github.xororz.localdream.data.GenerationDefaults
 import io.github.xororz.localdream.data.GenerationMode
 import io.github.xororz.localdream.data.HistoryManager
+import io.github.xororz.localdream.data.InferenceHistoryAssociation
+import io.github.xororz.localdream.data.InferenceJobStatus
 import io.github.xororz.localdream.data.Model
+import io.github.xororz.localdream.data.RoomInferenceJobRepository
+import io.github.xororz.localdream.data.db.AppDatabase
+import io.github.xororz.localdream.inference.InferenceDispatcher
 import io.github.xororz.localdream.service.BackendService
 import io.github.xororz.localdream.ui.screens.GenerationParameters
 import java.io.File
@@ -24,7 +29,7 @@ import org.json.JSONObject
 class OpenAiApiController(
     private val context: Context,
     private val apiKey: String,
-    private val executor: BoundedSerialExecutor,
+    private val dispatcher: InferenceDispatcher,
     private val onQueueChanged: (active: Boolean, queued: Int) -> Unit,
 ) {
     private val catalog = InstalledModelCatalog(context)
@@ -33,6 +38,7 @@ class OpenAiApiController(
     private val multipartParser = OpenAiMultipartParser()
     private val historyManager = HistoryManager(context)
     private val temporaryImages = TemporaryImageStore()
+    private val inferenceJobs = RoomInferenceJobRepository(AppDatabase.get(context))
 
     fun route(request: HttpRequest): HttpResponse {
         if (request.method == "GET" &&
@@ -106,7 +112,7 @@ class OpenAiApiController(
 
     private fun health(): HttpResponse = HttpResponse.json(
         200,
-        """{"status":"ok","active":${executor.hasActiveTask},"queued":${executor.queuedTaskCount}}""",
+        """{"status":"ok","active":${dispatcher.hasActiveTask},"queued":${dispatcher.queuedTaskCount}}""",
     )
 
     private fun generation(request: HttpRequest): HttpResponse {
@@ -142,7 +148,9 @@ class OpenAiApiController(
             TAG,
             "Generation request model=${entry.id} responseFormat=${parameters.responseFormat}",
         )
-        return submit(entry.id) { executeGeneration(parameters, entry, responseHost) }
+        return submit(entry.id) { association ->
+            executeGeneration(parameters, entry, responseHost, association)
+        }
     }
 
     private fun edit(request: HttpRequest): HttpResponse {
@@ -185,7 +193,9 @@ class OpenAiApiController(
             )
         }
         val responseHost = request.header("Host")
-        return submit(entry.id) { executeGeneration(parameters, entry, responseHost) }
+        return submit(entry.id) { association ->
+            executeGeneration(parameters, entry, responseHost, association)
+        }
     }
 
     private fun upscale(request: HttpRequest): HttpResponse {
@@ -208,7 +218,7 @@ class OpenAiApiController(
                 code = "invalid_model",
             )
         }
-        return submit(entry.id) {
+        return submit(entry.id) { association ->
             val path = entry.upscalerFile?.absolutePath
                 ?: throw OpenAiRequestException(
                     404,
@@ -240,6 +250,7 @@ class OpenAiApiController(
                 mode = GenerationMode.UNKNOWN,
                 upscalerId = entry.id,
                 requestId = requestId,
+                inferenceAssociation = association,
             )
             imageResponse(
                 image = image,
@@ -279,6 +290,7 @@ class OpenAiApiController(
         parameters: ImageRequestParameters,
         entry: InstalledModelCatalog.Entry,
         responseHost: String?,
+        inferenceAssociation: InferenceHistoryAssociation,
     ): HttpResponse {
         val dimensions = runBlocking {
             coordinator.ensureReady(entry, parameters.width, parameters.height)
@@ -311,6 +323,7 @@ class OpenAiApiController(
             ),
             mode = mode,
             requestId = requestId,
+            inferenceAssociation = inferenceAssociation,
         )
         return imageResponse(
             image = image,
@@ -327,6 +340,7 @@ class OpenAiApiController(
         mode: GenerationMode,
         requestId: String,
         upscalerId: String? = null,
+        inferenceAssociation: InferenceHistoryAssociation,
     ) {
         val saved = runBlocking {
             historyManager.saveEncodedImage(
@@ -338,6 +352,7 @@ class OpenAiApiController(
                 upscalerId = upscalerId,
                 origin = AssetOrigin.OPENAI_API,
                 requestId = requestId,
+                inferenceAssociation = inferenceAssociation,
             )
         }
         if (saved == null) {
@@ -352,24 +367,41 @@ class OpenAiApiController(
 
     private fun submit(
         affinityKey: String,
-        operation: () -> HttpResponse,
+        operation: (InferenceHistoryAssociation) -> HttpResponse,
     ): HttpResponse {
-        val submission = InferenceArbiter.process.submitForApi(
-            executor = executor,
+        val acceptedSnapshot = runBlocking {
+            inferenceJobs.accept(ownerId = DISPATCH_OWNER)
+        }
+        val association = InferenceHistoryAssociation(
+            jobId = acceptedSnapshot.jobId,
+            presetId = acceptedSnapshot.presetId,
+            presetRevision = acceptedSnapshot.revision,
+        )
+        val submission = dispatcher.submit(
+            ownerId = DISPATCH_OWNER,
             affinityKey = affinityKey,
         ) {
-            onQueueChanged(executor.hasActiveTask, executor.queuedTaskCount)
+            onQueueChanged(dispatcher.hasActiveTask, dispatcher.queuedTaskCount)
             try {
-                operation()
+                runBlocking { inferenceJobs.updateStatus(association.jobId, InferenceJobStatus.RUNNING) }
+                operation(association).also {
+                    runBlocking {
+                        inferenceJobs.updateStatus(association.jobId, InferenceJobStatus.SUCCEEDED)
+                    }
+                }
+            } catch (error: Throwable) {
+                runBlocking { inferenceJobs.updateStatus(association.jobId, InferenceJobStatus.FAILED) }
+                throw error
             } finally {
                 // The executor promotes the next item immediately after this
                 // lambda returns. Publish that imminent state rather than the
                 // still-active task visible from inside its own finally block.
-                val waiting = executor.queuedTaskCount
+                val waiting = dispatcher.queuedTaskCount
                 onQueueChanged(waiting > 0, (waiting - 1).coerceAtLeast(0))
             }
         }
         if (submission == null) {
+            runBlocking { inferenceJobs.discard(association.jobId) }
             return error(
                 status = 409,
                 message = "An in-app image generation is already running",
@@ -377,7 +409,7 @@ class OpenAiApiController(
                 extraHeaders = mapOf("Retry-After" to "5"),
             )
         }
-        onQueueChanged(executor.hasActiveTask, executor.queuedTaskCount)
+        onQueueChanged(dispatcher.hasActiveTask, dispatcher.queuedTaskCount)
         return when (submission) {
             is BoundedSerialExecutor.Submission.Accepted -> try {
                 submission.future.get()
@@ -400,20 +432,23 @@ class OpenAiApiController(
                 throw mapExecutionFailure(e.cause ?: e)
             }
 
-            is BoundedSerialExecutor.Submission.Rejected -> when (submission.reason) {
-                BoundedSerialExecutor.RejectionReason.QUEUE_FULL -> error(
-                    429,
-                    "The image request queue is full",
-                    code = "queue_full",
-                    extraHeaders = mapOf("Retry-After" to "5"),
-                )
+            is BoundedSerialExecutor.Submission.Rejected -> {
+                runBlocking { inferenceJobs.discard(association.jobId) }
+                when (submission.reason) {
+                    BoundedSerialExecutor.RejectionReason.QUEUE_FULL -> error(
+                        429,
+                        "The image request queue is full",
+                        code = "queue_full",
+                        extraHeaders = mapOf("Retry-After" to "5"),
+                    )
 
-                BoundedSerialExecutor.RejectionReason.SHUTDOWN -> error(
-                    503,
-                    "The API service is stopping",
-                    type = "server_error",
-                    code = "service_stopping",
-                )
+                    BoundedSerialExecutor.RejectionReason.SHUTDOWN -> error(
+                        503,
+                        "The API service is stopping",
+                        type = "server_error",
+                        code = "service_stopping",
+                    )
+                }
             }
         }
     }
@@ -549,5 +584,6 @@ class OpenAiApiController(
         private const val DEFAULT_CFG = 7f
         private const val DEFAULT_DENOISE = 0.6f
         private const val DEFAULT_SCHEDULER = "dpm"
+        const val DISPATCH_OWNER = "openai-api"
     }
 }

@@ -1,0 +1,15 @@
+{
+  "name": "vision-dream-mcp-conformance",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Locked official MCP server conformance runner for Vision Dream",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "active": "node run-active-suite.mjs"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/conformance": "0.1.11"
+  }
+}

@@ -1,6 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Vision Dream</string>
+    <string name="mcp_section">MCP 服务</string>
+    <string name="mcp_notify_title">MCP 服务正在运行</string>
+    <string name="mcp_notify">已认证的 MCP 监听端口：%1$d</string>
+    <string name="mcp_stop">停止 MCP</string>
+    <string name="mcp_admin_section">MCP 访问</string>
+    <string name="mcp_admin_hint">独立的已认证 MCP 监听器。轮换或撤销授权不会影响 OpenAI API。</string>
+    <string name="mcp_admin_port">MCP 监听端口</string>
+    <string name="mcp_admin_lan_on">局域网访问：已开启</string>
+    <string name="mcp_admin_lan_off">局域网访问：已关闭（仅本机环回）</string>
+    <string name="mcp_admin_error">MCP 错误：%1$s</string>
+    <string name="mcp_admin_running">MCP 监听器正在端口 %1$d 运行</string>
+    <string name="mcp_admin_start">启动 MCP 监听器</string>
+    <string name="mcp_admin_stop">停止 MCP 监听器</string>
+    <string name="mcp_admin_grants">客户端授权</string>
+    <string name="mcp_admin_client_id">客户端 ID</string>
+    <string name="mcp_admin_create">创建或轮换授权</string>
+    <string name="mcp_admin_no_grants">没有有效的 MCP 客户端授权。</string>
+    <string name="mcp_admin_scopes">权限：%1$s</string>
+    <string name="mcp_admin_revoke">撤销</string>
+    <string name="mcp_admin_audit">最近审计</string>
+    <string name="mcp_admin_configuration">MCP 客户端配置</string>
+    <string name="mcp_admin_copy">复制配置</string>
+    <string name="mcp_admin_config_copied">MCP 配置已复制</string>
+    <string name="mcp_admin_confirmations">破坏性操作确认</string>
+    <string name="mcp_admin_confirmation_detail">客户端 %1$s 请求执行 %2$s，目标：%3$s</string>
+    <string name="mcp_admin_confirmation_meta">权限：%1$s\n请求摘要：%2$s\n将在 %3$d 秒后过期</string>
+    <string name="mcp_admin_approve">仅批准一次</string>
+    <string name="mcp_admin_reject">拒绝</string>
+    <string name="mcp_admin_confirmation_id">确认 ID</string>
+    <string name="mcp_admin_confirmation_id_hint">将这个一次性 ID 提供给 MCP 客户端，并重试完全相同的操作：\n%1$s</string>
 
     <!-- Models -->
     <string name="anythingv5_description">动漫图像生成模型</string>

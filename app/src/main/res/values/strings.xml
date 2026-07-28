@@ -1,6 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Vision Dream</string>
+    <string name="mcp_section">MCP server</string>
+    <string name="mcp_notify_title">MCP server running</string>
+    <string name="mcp_notify">Authenticated MCP listener on port %1$d</string>
+    <string name="mcp_stop">Stop MCP</string>
+    <string name="mcp_admin_section">MCP access</string>
+    <string name="mcp_admin_hint">Separate, authenticated MCP listener. Grants can be rotated or revoked without affecting the OpenAI API.</string>
+    <string name="mcp_admin_port">MCP listener port</string>
+    <string name="mcp_admin_lan_on">LAN access: on</string>
+    <string name="mcp_admin_lan_off">LAN access: off (loopback only)</string>
+    <string name="mcp_admin_error">MCP error: %1$s</string>
+    <string name="mcp_admin_running">MCP listener running on port %1$d</string>
+    <string name="mcp_admin_start">Start MCP listener</string>
+    <string name="mcp_admin_stop">Stop MCP listener</string>
+    <string name="mcp_admin_grants">Client grants</string>
+    <string name="mcp_admin_client_id">Client ID</string>
+    <string name="mcp_admin_create">Create or rotate grant</string>
+    <string name="mcp_admin_no_grants">No active MCP client grants.</string>
+    <string name="mcp_admin_scopes">Scopes: %1$s</string>
+    <string name="mcp_admin_revoke">Revoke</string>
+    <string name="mcp_admin_audit">Recent audit</string>
+    <string name="mcp_admin_configuration">MCP client configuration</string>
+    <string name="mcp_admin_copy">Copy configuration</string>
+    <string name="mcp_admin_config_copied">MCP configuration copied</string>
+    <string name="mcp_admin_confirmations">Destructive action confirmations</string>
+    <string name="mcp_admin_confirmation_detail">Client %1$s requests %2$s for: %3$s</string>
+    <string name="mcp_admin_confirmation_meta">Scopes: %1$s\nRequest digest: %2$s\nExpires in %3$d seconds</string>
+    <string name="mcp_admin_approve">Approve once</string>
+    <string name="mcp_admin_reject">Reject</string>
+    <string name="mcp_admin_confirmation_id">Confirmation ID</string>
+    <string name="mcp_admin_confirmation_id_hint">Send this single-use ID to the MCP client and retry the exact action:\n%1$s</string>
 
     <!-- Models -->
     <string name="anythingv5_description">Anime Image Generation</string>

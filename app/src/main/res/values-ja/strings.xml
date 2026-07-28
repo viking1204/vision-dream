@@ -1,6 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Vision Dream</string>
+    <string name="mcp_section">MCP サーバー</string>
+    <string name="mcp_notify_title">MCP サーバーを実行中</string>
+    <string name="mcp_notify">認証済み MCP リスナー：ポート %1$d</string>
+    <string name="mcp_stop">MCP を停止</string>
+    <string name="mcp_admin_section">MCP アクセス</string>
+    <string name="mcp_admin_hint">独立した認証済み MCP リスナーです。権限のローテーションまたは取り消しは OpenAI API に影響しません。</string>
+    <string name="mcp_admin_port">MCP リスナーポート</string>
+    <string name="mcp_admin_lan_on">LAN アクセス: オン</string>
+    <string name="mcp_admin_lan_off">LAN アクセス: オフ（ローカルのみ）</string>
+    <string name="mcp_admin_error">MCP エラー: %1$s</string>
+    <string name="mcp_admin_running">MCP リスナーはポート %1$d で実行中</string>
+    <string name="mcp_admin_start">MCP リスナーを開始</string>
+    <string name="mcp_admin_stop">MCP リスナーを停止</string>
+    <string name="mcp_admin_grants">クライアント権限</string>
+    <string name="mcp_admin_client_id">クライアント ID</string>
+    <string name="mcp_admin_create">権限を作成またはローテーション</string>
+    <string name="mcp_admin_no_grants">有効な MCP クライアント権限はありません。</string>
+    <string name="mcp_admin_scopes">スコープ: %1$s</string>
+    <string name="mcp_admin_revoke">取り消す</string>
+    <string name="mcp_admin_audit">最近の監査</string>
+    <string name="mcp_admin_configuration">MCP クライアント設定</string>
+    <string name="mcp_admin_copy">設定をコピー</string>
+    <string name="mcp_admin_config_copied">MCP 設定をコピーしました</string>
+    <string name="mcp_admin_confirmations">破壊的操作の確認</string>
+    <string name="mcp_admin_confirmation_detail">クライアント %1$s が %2$s を要求しています。対象: %3$s</string>
+    <string name="mcp_admin_confirmation_meta">スコープ: %1$s\nリクエスト要約: %2$s\n%3$d 秒で期限切れになります</string>
+    <string name="mcp_admin_approve">今回のみ承認</string>
+    <string name="mcp_admin_reject">拒否</string>
+    <string name="mcp_admin_confirmation_id">確認 ID</string>
+    <string name="mcp_admin_confirmation_id_hint">この使い切り ID を MCP クライアントに渡し、まったく同じ操作を再試行してください:\n%1$s</string>
 
     <!-- Models -->
     <string name="anythingv5_description">Anime Image Generation</string>

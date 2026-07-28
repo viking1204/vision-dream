@@ -39,6 +39,10 @@ interface HistoryDao {
     @Query("SELECT * FROM generation_history WHERE requestId = :requestId ORDER BY id DESC LIMIT 1")
     suspend fun getByRequestId(requestId: String): HistoryEntity?
 
+    /** MCP resolves results through this server-side association, never a client path. */
+    @Query("SELECT * FROM generation_history WHERE jobId = :jobId ORDER BY id DESC LIMIT 1")
+    suspend fun getByJobId(jobId: String): HistoryEntity?
+
     @Query("UPDATE generation_history SET favorite = :favorite WHERE id = :id")
     suspend fun setFavorite(id: Long, favorite: Boolean): Int
 

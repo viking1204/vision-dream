@@ -66,9 +66,10 @@ class BoundedSerialExecutor(
 
     fun <T> submit(
         affinityKey: String? = null,
+        ownerId: String? = null,
         operation: () -> T,
     ): Submission<T> {
-        val task = QueuedTask(affinityKey, operation)
+        val task = QueuedTask(affinityKey, ownerId, operation)
         synchronized(monitor) {
             if (shutdownRequested) {
                 return Submission.Rejected(RejectionReason.SHUTDOWN)
@@ -119,6 +120,27 @@ class BoundedSerialExecutor(
         activeToCancel?.cancelResult()
         waitingToCancel.forEach { it.cancelBeforeExecution() }
         worker.interrupt()
+    }
+
+    /**
+     * Cancels only work owned by one transport. An active native operation is
+     * allowed to unwind on the worker; its execution lifecycle remains open
+     * until that operation returns.
+     */
+    fun cancelOwner(ownerId: String): List<CompletableFuture<Unit>> {
+        val (activeToCancel, waitingToCancel) = synchronized(monitor) {
+            val active = activeTask?.takeIf { it.ownerId == ownerId }
+            val waiting = waitingTasks.filter { it.ownerId == ownerId }
+            waitingTasks.removeAll(waiting.toSet())
+            monitor.notifyAll()
+            active to waiting
+        }
+        activeToCancel?.cancelResult()
+        waitingToCancel.forEach { it.cancelBeforeExecution() }
+        return buildList {
+            activeToCancel?.let { add(it.executionFinished) }
+            waitingToCancel.forEach { add(it.executionFinished) }
+        }
     }
 
     fun awaitTermination(
@@ -216,6 +238,7 @@ class BoundedSerialExecutor(
 
     private class QueuedTask<T>(
         val affinityKey: String?,
+        val ownerId: String?,
         private val operation: () -> T,
     ) {
         val future = CompletableFuture<T>()

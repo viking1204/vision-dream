@@ -86,6 +86,14 @@ import androidx.navigation.NavController
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.RemoteConnectResult
 import io.github.xororz.localdream.data.RemoteRepository
+import io.github.xororz.localdream.mcp.AndroidMcpGrantRepository
+import io.github.xororz.localdream.mcp.McpClientCredentialStore
+import io.github.xororz.localdream.mcp.McpConfirmationStore
+import io.github.xororz.localdream.mcp.McpConnectionConfiguration
+import io.github.xororz.localdream.mcp.McpLanHostAllowlist
+import io.github.xororz.localdream.mcp.McpPendingConfirmation
+import io.github.xororz.localdream.mcp.McpServerPreferences
+import io.github.xororz.localdream.mcp.McpTransport
 import io.github.xororz.localdream.navigation.Screen
 import io.github.xororz.localdream.navigation.navigateTopLevel
 import io.github.xororz.localdream.navigation.popBackStackIfResumed
@@ -93,6 +101,7 @@ import io.github.xororz.localdream.openai.OpenAiApiPreferences
 import io.github.xororz.localdream.openai.OpenAiBackgroundAccess
 import io.github.xororz.localdream.remote.RemoteProtocol
 import io.github.xororz.localdream.service.BackendService
+import io.github.xororz.localdream.service.McpService
 import io.github.xororz.localdream.service.OpenAiApiService
 import io.github.xororz.localdream.service.RemoteHostService
 import kotlinx.coroutines.delay
@@ -119,12 +128,24 @@ fun RemoteScreen(
     val servingModelId by BackendService.servingModelId.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val apiPreferences = remember { OpenAiApiPreferences(context) }
+    val mcpPreferences = remember { McpServerPreferences(context) }
+    val mcpGrantRepository = remember { AndroidMcpGrantRepository(context) }
+    val mcpAllowlist = remember { McpLanHostAllowlist(context) }
     var apiKey by remember { mutableStateOf(apiPreferences.apiKey()) }
     var queueCapacityInput by remember {
         mutableStateOf(apiPreferences.queueCapacity().toString())
     }
     var apiKeyVisible by remember { mutableStateOf(false) }
     var confirmApiKeyRegeneration by remember { mutableStateOf(false) }
+    val mcpStatus by McpService.status.collectAsState()
+    val mcpConfirmationRequests by McpService.confirmationRequests.collectAsState()
+    var mcpPortInput by remember { mutableStateOf(mcpPreferences.port().toString()) }
+    var mcpLanEnabled by remember { mutableStateOf(mcpPreferences.lanEnabled()) }
+    var mcpClientId by remember { mutableStateOf("mcp-client") }
+    var mcpConfig by remember { mutableStateOf<String?>(null) }
+    var mcpGrants by remember { mutableStateOf(emptyList<McpClientCredentialStore.GrantSummary>()) }
+    var mcpAudit by remember { mutableStateOf(emptyList<String>()) }
+    var mcpConfirmationId by remember { mutableStateOf<String?>(null) }
     var backgroundAccessExempt by remember {
         mutableStateOf(OpenAiBackgroundAccess.isExempt(context))
     }
@@ -136,6 +157,7 @@ fun RemoteScreen(
     val msgConnectedTo = stringResource(R.string.remote_connected_to)
     val msgUnreachable = stringResource(R.string.remote_connect_failed_unreachable)
     val apiKeyCopiedMessage = stringResource(R.string.openai_api_key_copied)
+    val mcpConfigCopiedMessage = stringResource(R.string.mcp_admin_config_copied)
     val queueCapacityRange =
         OpenAiApiPreferences.MIN_QUEUE_CAPACITY..OpenAiApiPreferences.MAX_QUEUE_CAPACITY
 
@@ -145,6 +167,14 @@ fun RemoteScreen(
             apiPreferences.setQueueCapacity(requireNotNull(value))
         } else {
             queueCapacityInput = apiPreferences.queueCapacity().toString()
+        }
+    }
+
+    fun refreshMcpAudit(clientId: String) {
+        scope.launch {
+            mcpAudit = mcpGrantRepository.recentAudit(clientId).map { event ->
+                "${event.method}: ${event.outcomeCode}"
+            }
         }
     }
 
@@ -198,6 +228,57 @@ fun RemoteScreen(
                 TextButton(onClick = { confirmApiKeyRegeneration = false }) {
                     Text(stringResource(R.string.cancel))
                 }
+            },
+        )
+    }
+    LaunchedEffect(mcpGrantRepository) {
+        mcpGrants = mcpGrantRepository.grants()
+    }
+    mcpConfig?.let { configuration ->
+        AlertDialog(
+            onDismissRequest = { mcpConfig = null },
+            title = { Text(stringResource(R.string.mcp_admin_configuration)) },
+            text = {
+                OutlinedTextField(
+                    value = configuration,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text(stringResource(R.string.mcp_admin_configuration)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(configuration))
+                        Toast.makeText(context, mcpConfigCopiedMessage, Toast.LENGTH_SHORT).show()
+                        mcpConfig = null
+                    },
+                ) { Text(stringResource(R.string.mcp_admin_copy)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { mcpConfig = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+    mcpConfirmationId?.let { confirmationId ->
+        AlertDialog(
+            onDismissRequest = { mcpConfirmationId = null },
+            title = { Text(stringResource(R.string.mcp_admin_confirmation_id)) },
+            text = {
+                Text(stringResource(R.string.mcp_admin_confirmation_id_hint, confirmationId))
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(confirmationId))
+                        Toast.makeText(context, mcpConfigCopiedMessage, Toast.LENGTH_SHORT).show()
+                        mcpConfirmationId = null
+                    },
+                ) { Text(stringResource(R.string.mcp_admin_copy)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { mcpConfirmationId = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -491,6 +572,166 @@ fun RemoteScreen(
                 }
             }
 
+            // === MCP listener: independent service, listener, port and credentials ===
+            Column {
+                SectionHeader(
+                    icon = Icons.Default.Devices,
+                    title = stringResource(R.string.mcp_admin_section),
+                )
+                Text(
+                    stringResource(R.string.mcp_admin_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = mcpPortInput,
+                            onValueChange = { raw ->
+                                if (raw.isEmpty() || (raw.all(Char::isDigit) && raw.length <= 5)) mcpPortInput = raw
+                            },
+                            singleLine = true,
+                            enabled = !mcpStatus.running,
+                            label = { Text(stringResource(R.string.mcp_admin_port)) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedButton(
+                            onClick = { mcpLanEnabled = !mcpLanEnabled },
+                            enabled = !mcpStatus.running,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                stringResource(
+                                    if (mcpLanEnabled) R.string.mcp_admin_lan_on else R.string.mcp_admin_lan_off,
+                                ),
+                            )
+                        }
+                        mcpStatus.error?.let { error ->
+                            Text(
+                                stringResource(R.string.mcp_admin_error, error),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        if (mcpStatus.running) {
+                            Text(
+                                stringResource(R.string.mcp_admin_running, mcpStatus.port),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            OutlinedButton(
+                                onClick = { McpService.stop(context) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(stringResource(R.string.mcp_admin_stop)) }
+                        } else {
+                            Button(
+                                onClick = {
+                                    val port = mcpPortInput.toIntOrNull()
+                                    if (port == null || runCatching { mcpPreferences.setPort(port) }.isFailure) {
+                                        mcpPortInput = mcpPreferences.port().toString()
+                                        return@Button
+                                    }
+                                    val localHosts = if (mcpLanEnabled) RemoteHostService.localIpAddresses() else emptyList()
+                                    if (mcpLanEnabled && localHosts.isEmpty()) return@Button
+                                    mcpAllowlist.replace(localHosts)
+                                    mcpPreferences.setLanEnabled(mcpLanEnabled)
+                                    McpService.start(context, port, mcpLanEnabled)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(stringResource(R.string.mcp_admin_start)) }
+                        }
+                        HorizontalDivider()
+                        Text(
+                            stringResource(R.string.mcp_admin_grants),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        OutlinedTextField(
+                            value = mcpClientId,
+                            onValueChange = { value -> mcpClientId = value },
+                            singleLine = true,
+                            label = { Text(stringResource(R.string.mcp_admin_client_id)) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    val transport = if (mcpLanEnabled) McpTransport.LAN else McpTransport.LOOPBACK
+                                    val credential = try {
+                                        mcpGrantRepository.provision(mcpClientId, transport, DEFAULT_MCP_SCOPES)
+                                    } catch (_: IllegalArgumentException) {
+                                        return@launch
+                                    }
+                                    mcpGrants = mcpGrantRepository.grants()
+                                    val host = if (transport == McpTransport.LOOPBACK) {
+                                        "127.0.0.1"
+                                    } else {
+                                        RemoteHostService.localIpAddresses().firstOrNull().orEmpty()
+                                    }
+                                    mcpConfig = McpConnectionConfiguration.render(host, mcpPreferences.port(), credential.token, credential.scopes)
+                                        .takeIf(String::isNotEmpty)
+                                    refreshMcpAudit(credential.clientId)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(stringResource(R.string.mcp_admin_create)) }
+                        if (mcpGrants.isEmpty()) {
+                            Text(
+                                stringResource(R.string.mcp_admin_no_grants),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            mcpGrants.forEach { grant ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(grant.clientId, style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            stringResource(R.string.mcp_admin_scopes, grant.scopes.sorted().joinToString(" ")),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    TextButton(onClick = {
+                                        scope.launch {
+                                            mcpGrantRepository.revoke(grant.clientId)
+                                            mcpGrants = mcpGrantRepository.grants()
+                                            refreshMcpAudit(grant.clientId)
+                                        }
+                                    }) { Text(stringResource(R.string.mcp_admin_revoke)) }
+                                }
+                            }
+                        }
+                        if (mcpAudit.isNotEmpty()) {
+                            Text(stringResource(R.string.mcp_admin_audit), style = MaterialTheme.typography.titleSmall)
+                            mcpAudit.forEach { event ->
+                                Text(event, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        McpConfirmationRequests(
+                            requests = mcpConfirmationRequests,
+                            onApprove = { requestId ->
+                                mcpConfirmationId = McpService.approveConfirmation(requestId)
+                            },
+                            onReject = McpService::rejectConfirmation,
+                        )
+                    }
+                }
+            }
+
             // === Host mode (this device runs the models) ===
             Column {
                 SectionHeader(
@@ -706,8 +947,59 @@ fun RemoteScreen(
     }
 }
 
+@Composable
+private fun McpConfirmationRequests(
+    requests: List<McpPendingConfirmation>,
+    onApprove: (String) -> Unit,
+    onReject: (String) -> Unit,
+) {
+    if (requests.isEmpty()) return
+    HorizontalDivider()
+    Text(stringResource(R.string.mcp_admin_confirmations), style = MaterialTheme.typography.titleSmall)
+    requests.forEach { request ->
+        Text(
+            stringResource(
+                R.string.mcp_admin_confirmation_detail,
+                request.clientId,
+                request.action,
+                request.targetIds.sorted().joinToString(", "),
+            ),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            stringResource(
+                R.string.mcp_admin_confirmation_meta,
+                request.scopes.sorted().joinToString(" "),
+                request.parameterDigest,
+                McpConfirmationStore.TTL_MILLIS / 1_000,
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onApprove(request.id) }) {
+                Text(stringResource(R.string.mcp_admin_approve))
+            }
+            OutlinedButton(onClick = { onReject(request.id) }) {
+                Text(stringResource(R.string.mcp_admin_reject))
+            }
+        }
+    }
+}
+
 // How long the shield's exit hint stays visible before fading to full black.
 private const val HINT_HIDE_DELAY_MS = 5_000L
+
+private val DEFAULT_MCP_SCOPES = setOf(
+    "models.read",
+    "generation.run",
+    "jobs.read",
+    "jobs.write",
+    "presets.read",
+    "presets.write",
+    "prompts.read",
+    "prompts.write",
+)
 
 /**
  * Full-screen pure-black overlay for host mode on OLED screens: the window

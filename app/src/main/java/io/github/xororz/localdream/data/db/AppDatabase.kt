@@ -8,13 +8,25 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [HistoryEntity::class, PromptTemplateEntity::class],
-    version = 4,
+    entities = [
+        HistoryEntity::class,
+        PromptTemplateEntity::class,
+        PerformancePresetEntity::class,
+        InferenceJobEntity::class,
+        PresetSnapshotEntity::class,
+        McpClientGrantEntity::class,
+        McpAuditEventEntity::class,
+    ],
+    version = 5,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
     abstract fun promptTemplateDao(): PromptTemplateDao
+    abstract fun performancePresetDao(): PerformancePresetDao
+    abstract fun inferenceJobDao(): InferenceJobDao
+    abstract fun mcpClientGrantDao(): McpClientGrantDao
+    abstract fun mcpAuditEventDao(): McpAuditEventDao
 
     companion object {
         @Volatile
@@ -127,13 +139,157 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 -> v5 only adds independent preset, Job and MCP structures. Existing history
+         * remains readable and its new optional associations intentionally stay null.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE generation_history ADD COLUMN jobId TEXT",
+                )
+                db.execSQL(
+                    "ALTER TABLE generation_history ADD COLUMN presetId TEXT",
+                )
+                db.execSQL(
+                    "ALTER TABLE generation_history ADD COLUMN presetRevision INTEGER",
+                )
+                db.execSQL(
+                    "ALTER TABLE generation_history ADD COLUMN runtimeFingerprint TEXT",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_generation_history_jobId ON generation_history (jobId)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_generation_history_presetId ON generation_history (presetId)",
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS performance_presets (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        selector TEXT NOT NULL,
+                        configJson TEXT NOT NULL,
+                        revision INTEGER NOT NULL,
+                        isFallback INTEGER NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_performance_presets_name ON performance_presets (name)",
+                )
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO performance_presets
+                    (id, name, selector, configJson, revision, isFallback, createdAt, updatedAt)
+                    VALUES ('00000000-0000-4000-8000-000000000000', 'Compatibility fallback',
+                            'COMPATIBILITY_FALLBACK', '{}', 1, 1, 0, 0)
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS inference_jobs (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        ownerId TEXT NOT NULL,
+                        presetId TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_inference_jobs_ownerId_createdAt ON inference_jobs (ownerId, createdAt)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_inference_jobs_status_updatedAt ON inference_jobs (status, updatedAt)",
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS preset_snapshots (
+                        jobId TEXT NOT NULL PRIMARY KEY,
+                        presetId TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        selector TEXT NOT NULL,
+                        configJson TEXT NOT NULL,
+                        revision INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS mcp_client_grants (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        clientId TEXT NOT NULL,
+                        tokenAlias TEXT NOT NULL,
+                        tokenGeneration INTEGER NOT NULL,
+                        scopesJson TEXT NOT NULL,
+                        lanAllowed INTEGER NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        revokedAt INTEGER
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_mcp_client_grants_clientId ON mcp_client_grants (clientId)",
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS mcp_audit_events (
+                        eventId TEXT NOT NULL PRIMARY KEY,
+                        timestamp INTEGER NOT NULL,
+                        clientId TEXT NOT NULL,
+                        transport TEXT NOT NULL,
+                        sessionHash TEXT,
+                        method TEXT NOT NULL,
+                        scopeSnapshot TEXT NOT NULL,
+                        risk TEXT NOT NULL,
+                        parameterDigest TEXT NOT NULL,
+                        jobId TEXT,
+                        outcomeCode TEXT NOT NULL,
+                        durationMs INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_mcp_audit_events_timestamp ON mcp_audit_events (timestamp)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_mcp_audit_events_clientId_timestamp ON mcp_audit_events (clientId, timestamp)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_mcp_audit_events_jobId ON mcp_audit_events (jobId)",
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 "local_dream.db",
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addCallback(
+                    object : RoomDatabase.Callback() {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            super.onCreate(db)
+                            // MIGRATION_4_5 creates this row for upgrades. A fresh v5
+                            // database skips migrations, so it needs the same safe
+                            // fallback before the first request can be accepted.
+                            db.execSQL(
+                                """
+                                INSERT OR IGNORE INTO performance_presets
+                                (id, name, selector, configJson, revision, isFallback, createdAt, updatedAt)
+                                VALUES ('00000000-0000-4000-8000-000000000000', 'Compatibility fallback',
+                                        'COMPATIBILITY_FALLBACK', '{}', 1, 1, 0, 0)
+                                """.trimIndent(),
+                            )
+                        }
+                    },
+                )
                 // No destructive fallback: a future schema bump without a
                 // matching migration should fail loudly at open time rather
                 // than silently dropping the user's whole generation history.

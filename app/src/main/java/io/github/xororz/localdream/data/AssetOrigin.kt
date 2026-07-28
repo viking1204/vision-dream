@@ -10,6 +10,7 @@ enum class AssetOrigin(val persistedValue: String) {
     LOCAL_APP("local_app"),
     REMOTE_LINK("remote_link"),
     OPENAI_API("openai_api"),
+    MCP("mcp"),
     CHAT_GENERATION("chat_generation"),
     ;
 

@@ -12,6 +12,8 @@ import androidx.room.PrimaryKey
         Index(value = ["timestamp"]),
         Index(value = ["mode"]),
         Index(value = ["origin", "timestamp"]),
+        Index(value = ["jobId"]),
+        Index(value = ["presetId"]),
     ],
 )
 data class HistoryEntity(
@@ -49,4 +51,10 @@ data class HistoryEntity(
     val mimeType: String = "image/png",
 
     val requestId: String? = null,
+
+    // 旧 history 不回填这些关联；v4 记录在 v5 migration 后保持 null。
+    val jobId: String? = null,
+    val presetId: String? = null,
+    val presetRevision: Long? = null,
+    val runtimeFingerprint: String? = null,
 )

@@ -4,6 +4,9 @@ import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.xororz.localdream.mcp.McpAuditEvent
+import io.github.xororz.localdream.mcp.McpTransport
+import io.github.xororz.localdream.mcp.RoomMcpAuditSink
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -35,7 +38,7 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migrationFrom3To4PreservesHistoryAndCreatesPromptTemplates() {
+    fun migrationFrom3To5PreservesHistoryAndCreatesV5Structures() {
         createVersion3Database()
 
         val migrated = Room.databaseBuilder(
@@ -43,14 +46,15 @@ class AppDatabaseMigrationTest {
             AppDatabase::class.java,
             DATABASE_NAME,
         )
-            .addMigrations(AppDatabase.MIGRATION_3_4)
+            .addMigrations(AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5)
             .allowMainThreadQueries()
             .build()
         roomDatabase = migrated
 
         migrated.openHelper.writableDatabase.query(
             """
-            SELECT modelId, favorite, origin, mimeType, requestId
+            SELECT modelId, favorite, origin, mimeType, requestId, jobId, presetId,
+                   presetRevision, runtimeFingerprint
             FROM generation_history
             ORDER BY id
             """.trimIndent(),
@@ -61,6 +65,10 @@ class AppDatabaseMigrationTest {
             assertEquals("local_app", cursor.getString(2))
             assertEquals("image/png", cursor.getString(3))
             assertTrue(cursor.isNull(4))
+            assertTrue(cursor.isNull(5))
+            assertTrue(cursor.isNull(6))
+            assertTrue(cursor.isNull(7))
+            assertTrue(cursor.isNull(8))
 
             assertTrue(cursor.moveToNext())
             assertEquals("jpg-model", cursor.getString(0))
@@ -68,6 +76,10 @@ class AppDatabaseMigrationTest {
             assertEquals("local_app", cursor.getString(2))
             assertEquals("image/jpeg", cursor.getString(3))
             assertTrue(cursor.isNull(4))
+            assertTrue(cursor.isNull(5))
+            assertTrue(cursor.isNull(6))
+            assertTrue(cursor.isNull(7))
+            assertTrue(cursor.isNull(8))
         }
 
         runBlocking {
@@ -85,6 +97,86 @@ class AppDatabaseMigrationTest {
             assertEquals(0, loaded?.useCount)
             assertNull(loaded?.lastUsedAt)
         }
+
+        migrated.openHelper.writableDatabase.query(
+            "SELECT selector, isFallback FROM performance_presets WHERE id = ?",
+            arrayOf("00000000-0000-4000-8000-000000000000"),
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("COMPATIBILITY_FALLBACK", cursor.getString(0))
+            assertEquals(1, cursor.getInt(1))
+        }
+
+        runBlocking {
+            val job = InferenceJobEntity(
+                id = "accepted-openai-job",
+                ownerId = "openai-api",
+                presetId = "00000000-0000-4000-8000-000000000000",
+                status = "queued",
+                createdAt = 50,
+                updatedAt = 50,
+            )
+            migrated.inferenceJobDao().insertAccepted(
+                job,
+                PresetSnapshotEntity(
+                    jobId = job.id,
+                    presetId = job.presetId,
+                    name = "Compatibility fallback",
+                    selector = "COMPATIBILITY_FALLBACK",
+                    configJson = "{}",
+                    revision = 1,
+                ),
+            )
+            assertEquals("queued", migrated.inferenceJobDao().getById(job.id)?.status)
+            assertEquals(1L, migrated.inferenceJobDao().snapshotFor(job.id)?.revision)
+            migrated.inferenceJobDao().updateStatus(job.id, "succeeded", 60)
+            assertEquals("succeeded", migrated.inferenceJobDao().getById(job.id)?.status)
+        }
+    }
+
+    @Test
+    fun roomAuditSinkPersistsOnlySanitizedMcpEventFields() {
+        val database = Room.databaseBuilder(
+            context,
+            AppDatabase::class.java,
+            DATABASE_NAME,
+        )
+            .allowMainThreadQueries()
+            .build()
+        roomDatabase = database
+        val sink = RoomMcpAuditSink(
+            dao = database.mcpAuditEventDao(),
+            nowMillis = { 99L },
+            eventId = { "mcp-audit-event-1" },
+        )
+
+        sink.append(
+            McpAuditEvent(
+                timestamp = 0L,
+                clientId = "mcp-client-1",
+                transport = McpTransport.LOOPBACK,
+                sessionHash = "session-sha256",
+                method = "generation.create",
+                scopeSnapshot = "generation.run jobs.read",
+                risk = "mutate",
+                parameterDigest = "parameters-sha256",
+                jobId = "job-1",
+                outcomeCode = "OK",
+                durationMs = 12L,
+            ),
+        )
+
+        val stored = runBlocking { database.mcpAuditEventDao().listForClient("mcp-client-1", 1).single() }
+        assertEquals("mcp-audit-event-1", stored.eventId)
+        assertEquals(99L, stored.timestamp)
+        assertEquals("loopback", stored.transport)
+        assertEquals("session-sha256", stored.sessionHash)
+        assertEquals("generation.create", stored.method)
+        assertEquals("generation.run jobs.read", stored.scopeSnapshot)
+        assertEquals("parameters-sha256", stored.parameterDigest)
+        assertEquals("job-1", stored.jobId)
+        assertEquals("OK", stored.outcomeCode)
+        assertEquals(12L, stored.durationMs)
     }
 
     private fun createVersion3Database() {

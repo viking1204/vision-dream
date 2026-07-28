@@ -361,7 +361,13 @@ class OpenAiHttpServerInstrumentedTest {
         val trickleWriter = Thread(
             {
                 try {
-                    repeat(TRICKLE_WRITE_COUNT) {
+                    // Keep sending data before the deadline, then stop. On
+                    // Android, continuing to write after the server closes an
+                    // incomplete request can make TCP discard the otherwise
+                    // valid 408 response with an RST. Three writes prove that
+                    // the deadline is absolute without introducing that
+                    // transport-level race into the assertion.
+                    repeat(REQUIRED_TRICKLE_WRITES) {
                         output.write('a'.code)
                         output.flush()
                         successfulWrites.incrementAndGet()
@@ -421,7 +427,6 @@ class OpenAiHttpServerInstrumentedTest {
         const val SOCKET_TIMEOUT_MS = 2_000
         const val REQUEST_DEADLINE_MS = 800
         const val TRICKLE_INTERVAL_MS = 100L
-        const val TRICKLE_WRITE_COUNT = 30
         const val TRICKLE_JOIN_TIMEOUT_MS = 500L
         const val REQUIRED_TRICKLE_WRITES = 3
         const val TRICKLE_PROOF_TIMEOUT_MS = 600L
