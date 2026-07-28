@@ -85,13 +85,23 @@ class RoomInferenceJobRepository(
 ) {
     suspend fun accept(
         ownerId: String,
-        presetId: String = PerformancePresetRepository.COMPATIBILITY_FALLBACK_ID,
+        modelId: String? = null,
+        explicitPresetId: String? = null,
     ): InferenceJobSnapshot {
         require(ownerId.isNotBlank()) { "Job owner is required" }
         return database.withTransaction {
+            val bindingDao = database.performancePresetBindingDao()
+            val presetId = explicitPresetId?.takeIf(String::isNotBlank)
+                ?: modelId?.let { model ->
+                    bindingDao.get(PerformancePresetBinding.model(model))?.presetId
+                }
+                ?: bindingDao.get(PerformancePresetBinding.DEFAULT)?.presetId
+                ?: PerformancePresetRepository.COMPATIBILITY_FALLBACK_ID
             val preset = requireNotNull(database.performancePresetDao().getById(presetId)) {
                 "Preset not found"
             }
+            val parsedConfig = PerformancePresetConfig.parse(preset.configJson)
+            parsedConfig.requireExecutableSnapshot(preset.isFallback)
             val acceptedAt = nowMillis()
             val job = InferenceJobEntity(
                 id = UUID.randomUUID().toString(),

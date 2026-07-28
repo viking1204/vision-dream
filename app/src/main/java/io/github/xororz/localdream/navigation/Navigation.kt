@@ -41,6 +41,8 @@ sealed class Screen(val route: String) {
 
     object PromptManager : Screen("prompt_manager")
 
+    object PerformancePresets : Screen("performance_presets")
+
     object ChatGeneration : Screen("chat_generation")
 
     object RemoteLink : Screen("remote_link")

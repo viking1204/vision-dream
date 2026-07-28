@@ -10,7 +10,10 @@ import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.data.InferenceHistoryAssociation
 import io.github.xororz.localdream.data.InferenceJobStatus
 import io.github.xororz.localdream.data.Model
+import io.github.xororz.localdream.data.PerformancePresetConfig
+import io.github.xororz.localdream.data.PerformancePresetEngineConfig
 import io.github.xororz.localdream.data.RoomInferenceJobRepository
+import io.github.xororz.localdream.data.toProtectedProjection
 import io.github.xororz.localdream.data.db.AppDatabase
 import io.github.xororz.localdream.inference.InferenceDispatcher
 import io.github.xororz.localdream.service.BackendService
@@ -110,10 +113,23 @@ class OpenAiApiController(
         return HttpResponse.json(200, OpenAiJson.models(models))
     }
 
-    private fun health(): HttpResponse = HttpResponse.json(
-        200,
-        """{"status":"ok","active":${dispatcher.hasActiveTask},"queued":${dispatcher.queuedTaskCount}}""",
-    )
+    private fun health(): HttpResponse {
+        val probe = BackendService.runtimeProbe.value.toProtectedProjection()
+        return HttpResponse.json(
+            200,
+            JSONObject()
+                .put("status", "ok")
+                .put("active", dispatcher.hasActiveTask)
+                .put("queued", dispatcher.queuedTaskCount)
+                .put(
+                    "runtimeProbe",
+                    JSONObject()
+                        .put("status", probe.status.name)
+                        .put("rejectionReasons", org.json.JSONArray(probe.rejectionReasons)),
+                )
+                .toString(),
+        )
+    }
 
     private fun generation(request: HttpRequest): HttpResponse {
         requireJsonContentType(request)
@@ -143,13 +159,14 @@ class OpenAiApiController(
         )
         validateParameters(parameters, requiresImage = false)
         val entry = resolveGenerationEntry(parameters.modelId)
+        val presetId = body.stringValue("preset_id")
         val responseHost = request.header("Host")
         Log.i(
             TAG,
             "Generation request model=${entry.id} responseFormat=${parameters.responseFormat}",
         )
-        return submit(entry.id) { association ->
-            executeGeneration(parameters, entry, responseHost, association)
+        return submit(entry.id, presetId) { association, presetEngineConfig ->
+            executeGeneration(parameters, entry, responseHost, association, presetEngineConfig)
         }
     }
 
@@ -184,6 +201,7 @@ class OpenAiApiController(
         )
         validateParameters(parameters, requiresImage = true)
         val entry = resolveGenerationEntry(parameters.modelId)
+        val presetId = form.fields["preset_id"]
         if (!entry.supportsImageInput) {
             throw OpenAiRequestException(
                 400,
@@ -193,8 +211,8 @@ class OpenAiApiController(
             )
         }
         val responseHost = request.header("Host")
-        return submit(entry.id) { association ->
-            executeGeneration(parameters, entry, responseHost, association)
+        return submit(entry.id, presetId) { association, presetEngineConfig ->
+            executeGeneration(parameters, entry, responseHost, association, presetEngineConfig)
         }
     }
 
@@ -218,7 +236,7 @@ class OpenAiApiController(
                 code = "invalid_model",
             )
         }
-        return submit(entry.id) { association ->
+        return submit(entry.id) { association, _ ->
             val path = entry.upscalerFile?.absolutePath
                 ?: throw OpenAiRequestException(
                     404,
@@ -291,9 +309,10 @@ class OpenAiApiController(
         entry: InstalledModelCatalog.Entry,
         responseHost: String?,
         inferenceAssociation: InferenceHistoryAssociation,
+        presetEngineConfig: PerformancePresetEngineConfig?,
     ): HttpResponse {
         val dimensions = runBlocking {
-            coordinator.ensureReady(entry, parameters.width, parameters.height)
+            coordinator.ensureReady(entry, parameters.width, parameters.height, presetEngineConfig)
         }
         val startedAt = System.currentTimeMillis()
         val image = backendClient.generate(parameters, dimensions.first, dimensions.second)
@@ -367,11 +386,26 @@ class OpenAiApiController(
 
     private fun submit(
         affinityKey: String,
-        operation: (InferenceHistoryAssociation) -> HttpResponse,
+        explicitPresetId: String? = null,
+        operation: (InferenceHistoryAssociation, PerformancePresetEngineConfig?) -> HttpResponse,
     ): HttpResponse {
-        val acceptedSnapshot = runBlocking {
-            inferenceJobs.accept(ownerId = DISPATCH_OWNER)
+        val acceptedSnapshot = try {
+            runBlocking {
+                inferenceJobs.accept(
+                    ownerId = DISPATCH_OWNER,
+                    modelId = affinityKey,
+                    explicitPresetId = explicitPresetId,
+                )
+            }
+        } catch (error: IllegalArgumentException) {
+            throw OpenAiRequestException(
+                statusCode = 400,
+                message = "Requested performance preset is not executable",
+                parameter = "preset_id",
+                code = "preset_incompatible",
+            )
         }
+        val snapshotEngineConfig = PerformancePresetConfig.parse(acceptedSnapshot.configJson).engine
         val association = InferenceHistoryAssociation(
             jobId = acceptedSnapshot.jobId,
             presetId = acceptedSnapshot.presetId,
@@ -384,7 +418,7 @@ class OpenAiApiController(
             onQueueChanged(dispatcher.hasActiveTask, dispatcher.queuedTaskCount)
             try {
                 runBlocking { inferenceJobs.updateStatus(association.jobId, InferenceJobStatus.RUNNING) }
-                operation(association).also {
+                operation(association, snapshotEngineConfig).also {
                     runBlocking {
                         inferenceJobs.updateStatus(association.jobId, InferenceJobStatus.SUCCEEDED)
                     }

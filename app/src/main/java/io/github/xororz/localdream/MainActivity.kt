@@ -57,6 +57,7 @@ import io.github.xororz.localdream.ui.screens.ModelListScreen
 import io.github.xororz.localdream.ui.screens.ModelRunScreen
 import io.github.xororz.localdream.ui.screens.ModelStorageAccessScreen
 import io.github.xororz.localdream.ui.screens.PromptManagerScreen
+import io.github.xororz.localdream.ui.screens.PerformancePresetScreen
 import io.github.xororz.localdream.ui.screens.RemoteScreen
 import io.github.xororz.localdream.ui.screens.StudioHomeScreen
 import io.github.xororz.localdream.ui.screens.UpscaleScreen
@@ -627,6 +628,9 @@ private fun AppContent() {
         }
         composable(Screen.PromptManager.route) {
             PromptManagerScreen(navController)
+        }
+        composable(Screen.PerformancePresets.route) {
+            PerformancePresetScreen(navController)
         }
         composable(Screen.ChatGeneration.route) {
             ChatGenerationScreen(

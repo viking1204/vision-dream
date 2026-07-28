@@ -138,6 +138,9 @@ import io.github.xororz.localdream.data.HistoryFilter
 import io.github.xororz.localdream.data.HistoryItem
 import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.data.ModelRepository
+import io.github.xororz.localdream.data.PerformancePresetConfig
+import io.github.xororz.localdream.data.PerformancePresetEngineConfig
+import io.github.xororz.localdream.data.PresetSnapshot
 import io.github.xororz.localdream.data.PatchScanner
 import io.github.xororz.localdream.data.RemoteRepository
 import io.github.xororz.localdream.data.Resolution
@@ -145,6 +148,8 @@ import io.github.xororz.localdream.data.TagAutocompleteRepository
 import io.github.xororz.localdream.data.TagMatchType
 import io.github.xororz.localdream.data.TagSuggestion
 import io.github.xororz.localdream.data.UpscalerRepository
+import io.github.xororz.localdream.mcp.AndroidPerformancePresetResolver
+import io.github.xororz.localdream.remote.RemotePresetExecution
 import io.github.xororz.localdream.service.BackendService
 import io.github.xororz.localdream.service.BackgroundGenerationService
 import io.github.xororz.localdream.service.BackgroundGenerationService.GenerationState
@@ -197,6 +202,9 @@ fun ModelRunScreen(
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val generationPreferences = remember { GenerationPreferences(context) }
+    val performancePresetResolver = remember {
+        AndroidPerformancePresetResolver(context.applicationContext)
+    }
     val coroutineScope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     val modelRepository = remember { ModelRepository.getInstance(context) }
@@ -261,6 +269,7 @@ fun ModelRunScreen(
     var imageVersion by remember { mutableIntStateOf(0) }
     var generationParams by remember { mutableStateOf<GenerationParameters?>(null) }
     var generationParamsModelId by remember { mutableStateOf(modelId) }
+    var activePresetSnapshot by remember(modelId) { mutableStateOf<PresetSnapshot?>(null) }
 
     // History state
     var historyFilter by remember(modelId) {
@@ -2038,6 +2047,74 @@ fun ModelRunScreen(
                                     if (seed.isNotBlank()) 1 else batchCounts
 
                                 batchGenerationJob = coroutineScope.launch {
+                                    val presetSnapshot = try {
+                                        withContext(Dispatchers.IO) {
+                                            performancePresetResolver.resolve(modelId)
+                                        }
+                                    } catch (error: IllegalArgumentException) {
+                                        errorMessage = "性能预设不可执行：${error.message}"
+                                        return@launch
+                                    }
+                                    val engineConfig = PerformancePresetConfig
+                                        .parse(presetSnapshot.configJson)
+                                        .engine
+                                        // The legacy fallback is still executable. Capture its
+                                        // effective values now rather than letting BackendService
+                                        // read mutable preferences after this request was accepted.
+                                        ?: PerformancePresetEngineConfig(
+                                            sdxlLowRam = preferences.getBoolean("sdxl_lowram", true),
+                                            animaLowRam = preferences.getBoolean("anima_lowram", true),
+                                            animaSequentialDit = preferences.getBoolean("anima_seq_dit", false),
+                                        )
+                                    activePresetSnapshot = presetSnapshot
+                                    backendReady = false
+                                    isCheckingBackend = true
+                                    if (isRemote) {
+                                        val selected = remoteClient?.selectModel(
+                                            modelId = modelId,
+                                            width = currentWidth,
+                                            height = currentHeight,
+                                            presetExecution = RemotePresetExecution(
+                                                snapshot = presetSnapshot,
+                                                engineConfig = engineConfig,
+                                            ),
+                                        ) ?: false
+                                        if (!selected) {
+                                            isCheckingBackend = false
+                                            errorMessage = msgRemoteSelectFailed
+                                            return@launch
+                                        }
+                                    } else {
+                                        model?.let { selectedModel ->
+                                            context.startForegroundService(
+                                                Intent(context, BackendService::class.java).apply {
+                                                    action = BackendService.ACTION_RESTART
+                                                    putExtra("modelId", selectedModel.id)
+                                                    putExtra("backendType", selectedModel.backendType)
+                                                    putExtra("width", currentWidth)
+                                                    putExtra("height", currentHeight)
+                                                    putExtra(
+                                                        BackendService.EXTRA_SDXL_LOW_RAM,
+                                                        engineConfig.sdxlLowRam,
+                                                    )
+                                                    putExtra(
+                                                        BackendService.EXTRA_ANIMA_LOW_RAM,
+                                                        engineConfig.animaLowRam,
+                                                    )
+                                                    putExtra(
+                                                        BackendService.EXTRA_ANIMA_SEQUENTIAL_DIT,
+                                                        engineConfig.animaSequentialDit,
+                                                    )
+                                                },
+                                            )
+                                        }
+                                    }
+                                    // ACTION_RESTART is handled on BackendService's serial thread;
+                                    // delay one scheduler turn so the health check cannot observe the
+                                    // pre-snapshot process as ready.
+                                    delay(250)
+                                    awaitBackendReady()
+                                    if (!backendReady) return@launch
                                     for (i in 0 until actualBatchCount) {
                                         currentBatchIndex = i + 1
                                         Log.d(
@@ -2092,6 +2169,11 @@ fun ModelRunScreen(
                                             putExtra("aspect_ratio", aspectRatio)
                                             putExtra("batch_index", i)
                                             putExtra("backend_host", backendHost)
+                                            putExtra("preset_id", presetSnapshot.presetId)
+                                            putExtra("preset_name", presetSnapshot.name)
+                                            putExtra("preset_selector", presetSnapshot.selector)
+                                            putExtra("preset_config_json", presetSnapshot.configJson)
+                                            putExtra("preset_revision", presetSnapshot.revision)
                                             if (selectedImageUri != null && base64EncodeDone) {
                                                 putExtra("has_image", true)
                                                 if (isInpaintMode && maskBitmap != null) {
@@ -2187,6 +2269,13 @@ fun ModelRunScreen(
                                     Text(stringResource(R.string.generate_image))
                                 }
                             }
+                        }
+                        activePresetSnapshot?.let { snapshot ->
+                            Text(
+                                text = "本次性能预设：${snapshot.name} r${snapshot.revision}",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
                         }
                     }
                 }

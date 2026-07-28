@@ -61,11 +61,25 @@ class NativeBackendCommandFactoryTest {
         assertFalse(command.contains("--backend"))
     }
 
+    @Test
+    fun `snapshot engine flags control the native command field by field`() {
+        val modelsDir = temporaryFolder.newFolder("snapshot-sdxl")
+        val command = build(
+            backendType = "sdxl",
+            usesUnifiedCli = true,
+            modelsDir = modelsDir,
+            sdxlLowRam = false,
+        )
+
+        assertFalse(command.contains("--lowram"))
+    }
+
     private fun build(
         backendType: String,
         usesUnifiedCli: Boolean,
         modelsDir: File = temporaryFolder.newFolder("models-${System.nanoTime()}"),
         imageInputEnabled: Boolean = true,
+        sdxlLowRam: Boolean = true,
     ): MutableList<String> {
         val runtimeDir = temporaryFolder.newFolder("runtime-${System.nanoTime()}")
         return NativeBackendCommandFactory.build(
@@ -79,7 +93,7 @@ class NativeBackendCommandFactoryTest {
                 height = 512,
                 listenOnAll = false,
                 imageInputEnabled = imageInputEnabled,
-                sdxlLowRam = true,
+                sdxlLowRam = sdxlLowRam,
                 animaLowRam = true,
                 animaSequentialDit = false,
             ),

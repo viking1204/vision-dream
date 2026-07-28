@@ -14,6 +14,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.graphics.createBitmap
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.GenerationDefaults
+import io.github.xororz.localdream.data.PresetSnapshot
 import io.github.xororz.localdream.openai.InferenceArbiter
 import io.github.xororz.localdream.utils.Http
 import java.io.BufferedReader
@@ -68,6 +69,12 @@ class BackgroundGenerationService : Service() {
         private val _generationState = MutableStateFlow<GenerationState>(GenerationState.Idle)
         val generationState: StateFlow<GenerationState> = _generationState
 
+        // The UI accepts a performance preset before starting this service.
+        // Keeping the complete value object here makes the accepted launch
+        // observable without re-reading a mutable preset row while streaming.
+        private val _activePresetSnapshot = MutableStateFlow<PresetSnapshot?>(null)
+        val activePresetSnapshot: StateFlow<PresetSnapshot?> = _activePresetSnapshot
+
         private val _bitmapConsumed = MutableStateFlow(false)
 
         private val _isServiceRunning = MutableStateFlow(false)
@@ -76,6 +83,7 @@ class BackgroundGenerationService : Service() {
         fun resetState() {
             _generationState.value = GenerationState.Idle
             _bitmapConsumed.value = false
+            _activePresetSnapshot.value = null
         }
 
         fun clearCompleteState() {
@@ -150,6 +158,18 @@ class BackgroundGenerationService : Service() {
             Log.e("GenerationService", "empty prompt")
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        intent.getStringExtra("preset_id")?.let { presetId ->
+            val name = intent.getStringExtra("preset_name") ?: return@let
+            val configJson = intent.getStringExtra("preset_config_json") ?: return@let
+            _activePresetSnapshot.value = PresetSnapshot(
+                presetId = presetId,
+                name = name,
+                selector = intent.getStringExtra("preset_selector") ?: "",
+                configJson = configJson,
+                revision = intent.getLongExtra("preset_revision", 0L),
+            )
         }
 
         val negativePrompt = GenerationDefaults.resolveNegativePrompt(
@@ -632,6 +652,7 @@ class BackgroundGenerationService : Service() {
         super.onDestroy()
         activeCall?.cancel()
         serviceScope.cancel()
+        _activePresetSnapshot.value = null
         if (inferenceLeaseAcquired) {
             inferenceLeaseAcquired = false
             InferenceArbiter.process.releaseFromApp()

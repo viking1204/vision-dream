@@ -43,7 +43,21 @@ class McpToolRegistry {
             definition("models.list", setOf("models.read"), McpToolRisk.READ),
             definition("models.get", setOf("models.read"), McpToolRisk.READ, setOf("modelId"), setOf("modelId")),
             definition("runtime.status", setOf("diagnostics.read"), McpToolRisk.READ),
-            definition("generation.create", setOf("generation.run"), McpToolRisk.MUTATE, setOf("modelId", "presetId", "prompt", "negativePrompt")),
+            definition(
+                "generation.create",
+                setOf("generation.run"),
+                McpToolRisk.MUTATE,
+                setOf("modelId", "presetId", "prompt", "negativePrompt", "seed", "width", "height", "scheduler", "steps", "cfg", "denoiseStrength"),
+                setOf("modelId", "prompt"),
+                argumentTypes = mapOf(
+                    "seed" to "integer",
+                    "width" to "integer",
+                    "height" to "integer",
+                    "steps" to "integer",
+                    "cfg" to "number",
+                    "denoiseStrength" to "number",
+                ),
+            ),
             definition("jobs.get", setOf("jobs.read"), McpToolRisk.READ, setOf("jobId"), setOf("jobId")),
             definition("jobs.list", setOf("jobs.read"), McpToolRisk.READ),
             definition("presets.list", setOf("presets.read"), McpToolRisk.READ),
@@ -77,7 +91,8 @@ class McpToolRegistry {
             risk: McpToolRisk,
             required: Set<String> = emptySet(),
             allowed: Set<String> = emptySet(),
-        ) = McpToolDefinition(name, scopes, risk, required, allowed)
+            argumentTypes: Map<String, String> = emptyMap(),
+        ) = McpToolDefinition(name, scopes, risk, required, allowed, argumentTypes = argumentTypes)
 
         private fun destructive(name: String, scope: String, target: String) = McpToolDefinition(
             name = name,
@@ -97,6 +112,7 @@ data class McpToolDefinition(
     val requiredArguments: Set<String>,
     val allowedArguments: Set<String>,
     val targetArgument: String? = null,
+    val argumentTypes: Map<String, String> = emptyMap(),
 )
 
 enum class McpToolRisk { READ, MUTATE, DESTRUCTIVE }

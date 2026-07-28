@@ -3,6 +3,7 @@ package io.github.xororz.localdream.mcp
 import android.util.Log
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -48,7 +49,7 @@ class McpHttpServer(
     private val clients = ConcurrentHashMap.newKeySet<Socket>()
     private val taskEvents = McpTaskEventBus.subscribe { event ->
         sessions.sessionsFor(event.clientId, transport).forEach { session ->
-            sseEvents.publish(session.id, "task", taskEvent(event))
+            sseEvents.publish(session.id, if (event.isDiffusionProgress) "progress" else "task", taskEvent(event))
         }
     }
 
@@ -277,7 +278,7 @@ class McpHttpServer(
                                     "properties",
                                     JSONObject().apply {
                                         definition.allowedArguments.sorted().forEach { argument ->
-                                            put(argument, JSONObject().put("type", "string"))
+                                            put(argument, JSONObject().put("type", definition.argumentTypes[argument] ?: "string"))
                                         }
                                     },
                                 )
@@ -471,6 +472,9 @@ class McpHttpServer(
                 if (event == null) output.write(": keepalive\n\n".toByteArray(StandardCharsets.US_ASCII)) else writeSseEvent(output, event)
                 output.flush()
             }
+        } catch (_: IOException) {
+            // SSE is intentionally client-disconnectable. A broken pipe after
+            // a consumer has read an event must not crash the app process.
         } finally {
             stream.subscription.close()
             guards.closeSse(stream.clientId)
@@ -485,6 +489,13 @@ class McpHttpServer(
     private fun taskEvent(event: McpTaskEventBus.Event): String = JSONObject()
         .put("jobId", event.jobId)
         .put("task", McpTaskProjection.from(event.status).wireValue)
+        .apply {
+            event.diffusionStep?.let { step ->
+                put("step", step)
+                put("totalSteps", event.totalDiffusionSteps)
+                put("progress", step.toDouble() / requireNotNull(event.totalDiffusionSteps))
+            }
+        }
         .toString()
 
     private fun HttpRequest.bearerToken(): String? = headers["authorization"]

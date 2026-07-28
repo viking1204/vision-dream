@@ -2,6 +2,11 @@ package io.github.xororz.localdream.mcp
 
 import io.github.xororz.localdream.data.InferenceJobStatus
 import io.github.xororz.localdream.data.PerformancePreset
+import io.github.xororz.localdream.data.PerformancePresetBinding
+import io.github.xororz.localdream.data.PerformancePresetRepository
+import io.github.xororz.localdream.data.RuntimeProbeProjection
+import io.github.xororz.localdream.data.RuntimeProbeStatus
+import io.github.xororz.localdream.data.PresetDeleteResult
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -51,10 +56,63 @@ class McpGenerationGatewayTest {
         val path = completed.result.getString("image")
         assertEquals("completed", completed.result.getString("task"))
         assertTrue(path.endsWith("/capability-1"))
+        val resourceLink = completed.result.getJSONArray("content").getJSONObject(0)
+        assertEquals("resource_link", resourceLink.getString("type"))
+        assertEquals(path, resourceLink.getString("uri"))
+        assertEquals("image/png", resourceLink.getString("mimeType"))
         assertEquals(
             "asset-1",
             capabilities.peek("capability-1", "client-a", "job-1", McpTransport.LOOPBACK)?.assetId,
         )
+    }
+
+    @Test
+    fun generationProjectsW7FixtureParametersIntoTheAcceptedRequest() {
+        val scheduler = RecordingScheduler()
+        val gateway = McpGenerationGateway(FakeJobs(), scheduler, McpImageCapabilityStore())
+        val client = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)
+
+        val result = gateway.execute(
+            client,
+            invocation("generation.create"),
+            JSONObject()
+                .put("modelId", "model-a")
+                .put("prompt", "fixed fixture")
+                .put("negativePrompt", "fixed negative")
+                .put("seed", 42L)
+                .put("width", 1024)
+                .put("height", 1024)
+                .put("scheduler", "euler_a")
+                .put("steps", 20)
+                .put("cfg", 7.0)
+                .put("denoiseStrength", 0.65),
+        ) as McpToolGatewayResult.Completed
+
+        assertEquals("job-1", result.jobId)
+        val request = requireNotNull(scheduler.request)
+        assertEquals(42L, request.seed)
+        assertEquals(1024, request.width)
+        assertEquals(1024, request.height)
+        assertEquals("euler_a", request.scheduler)
+        assertEquals(20, request.steps)
+        assertEquals(7f, request.cfg)
+        assertEquals(0.65f, request.denoiseStrength)
+    }
+
+    @Test
+    fun generationRejectsMalformedFixtureParametersBeforeScheduling() {
+        val scheduler = RecordingScheduler()
+        val gateway = McpGenerationGateway(FakeJobs(), scheduler, McpImageCapabilityStore())
+        val client = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)
+
+        val result = gateway.execute(
+            client,
+            invocation("generation.create"),
+            JSONObject().put("modelId", "model-a").put("prompt", "p").put("steps", "twenty"),
+        ) as McpToolGatewayResult.Rejected
+
+        assertEquals("INVALID_PARAMS", result.code)
+        assertEquals(null, scheduler.request)
     }
 
     @Test
@@ -284,6 +342,11 @@ class McpGenerationGatewayTest {
         assertEquals("model-a", status.result.getString("runtimeId"))
         assertEquals(1, status.result.getInt("queued"))
         assertTrue(!status.result.has("path"))
+        assertEquals("REJECTED", status.result.getJSONObject("runtimeProbe").getString("status"))
+        assertEquals(
+            "DEVICE_MODEL_MISMATCH",
+            status.result.getJSONObject("runtimeProbe").getJSONArray("rejectionReasons").getString(0),
+        )
 
         val unloaded = gateway.execute(
             client,
@@ -363,6 +426,17 @@ class McpGenerationGatewayTest {
             ),
         ) as McpToolGatewayResult.Completed
         assertEquals("Imported", imported.result.getJSONArray("presets").getJSONObject(0).getString("name"))
+
+        presets.reboundBindingKeys = listOf("DEFAULT", "MODEL:model-a")
+        val deleted = gateway.execute(client, invocation("presets.delete"), JSONObject().put("presetId", id))
+            as McpToolGatewayResult.Completed
+        assertTrue(deleted.result.getBoolean("deleted"))
+        assertEquals(
+            listOf("DEFAULT", "MODEL:model-a"),
+            (0 until deleted.result.getJSONArray("reboundBindingKeys").length()).map {
+                deleted.result.getJSONArray("reboundBindingKeys").getString(it)
+            },
+        )
     }
 
     private fun invocation(name: String): McpToolInvocation = McpToolInvocation(
@@ -395,10 +469,10 @@ class McpGenerationGatewayTest {
         var discarded = false
         var listedFor: String? = null
 
-        override fun accept(ownerId: String, presetId: String) = McpJobRecord(
+        override fun accept(ownerId: String, modelId: String, explicitPresetId: String?) = McpJobRecord(
             id = "job-1",
             ownerId = ownerId,
-            presetId = presetId,
+            presetId = explicitPresetId ?: PerformancePresetRepository.COMPATIBILITY_FALLBACK_ID,
             presetRevision = 1,
             status = status,
         )
@@ -493,6 +567,10 @@ class McpGenerationGatewayTest {
             runtimeId = "model-a",
             queuedTaskCount = 1,
             hasActiveTask = true,
+            runtimeProbe = RuntimeProbeProjection(
+                status = RuntimeProbeStatus.REJECTED,
+                rejectionReasons = listOf("DEVICE_MODEL_MISMATCH"),
+            ),
         )
 
         override fun unload(runtimeId: String): McpRuntimeUnloadResult {
@@ -518,7 +596,9 @@ class McpGenerationGatewayTest {
 
     private class FakePresets : McpPresetStore {
         private val values = linkedMapOf<String, PerformancePreset>()
+        private val bindings = linkedMapOf<String, PerformancePresetBinding>()
         private var nextId = 1
+        var reboundBindingKeys: List<String> = emptyList()
 
         override fun list(): List<PerformancePreset> = values.values.toList()
 
@@ -539,7 +619,17 @@ class McpGenerationGatewayTest {
                 .also { values[id] = it }
         }
 
-        override fun delete(id: String): Boolean = values.remove(id) != null
+        override fun delete(id: String): PresetDeleteResult = PresetDeleteResult(
+            deleted = values.remove(id) != null,
+            reboundBindingKeys = reboundBindingKeys,
+        )
+
+        override fun binding(bindingKey: String): PerformancePresetBinding? = bindings[bindingKey]
+
+        override fun bind(bindingKey: String, presetId: String): PerformancePresetBinding = PerformancePresetBinding(
+            bindingKey = bindingKey,
+            presetId = presetId,
+        ).also { bindings[bindingKey] = it }
 
         override fun exportEnvelope(): String = JSONObject()
             .put("format", "vision-dream-performance-preset")

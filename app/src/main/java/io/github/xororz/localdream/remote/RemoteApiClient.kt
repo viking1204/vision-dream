@@ -46,15 +46,31 @@ class RemoteApiClient(
         }.getOrNull()
     }
 
-    suspend fun selectModel(modelId: String, width: Int, height: Int): Boolean = withContext(Dispatchers.IO) {
+    suspend fun selectModel(
+        modelId: String,
+        width: Int,
+        height: Int,
+        presetExecution: RemotePresetExecution? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
         runCatching {
-            val body = JSONObject().apply {
-                put("model_id", modelId)
-                put("width", width)
-                put("height", height)
-            }
+            val body = selectRequestBody(modelId, width, height, presetExecution)
             post(RemoteProtocol.PATH_SELECT, body) != null
         }.getOrDefault(false)
+    }
+
+    internal fun selectRequestBody(
+        modelId: String,
+        width: Int,
+        height: Int,
+        presetExecution: RemotePresetExecution? = null,
+    ): JSONObject = JSONObject().apply {
+        put("model_id", modelId)
+        put("width", width)
+        put("height", height)
+        presetExecution?.toJson()?.let { execution ->
+            put("preset_snapshot", execution.getJSONObject("preset_snapshot"))
+            put("engine", execution.getJSONObject("engine"))
+        }
     }
 
     suspend fun fetchStatus(): RemoteHostStatus? = withContext(Dispatchers.IO) {

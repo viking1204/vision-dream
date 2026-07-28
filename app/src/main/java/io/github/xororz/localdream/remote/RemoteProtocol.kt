@@ -1,5 +1,9 @@
 package io.github.xororz.localdream.remote
 
+import io.github.xororz.localdream.data.PerformancePresetConfig
+import io.github.xororz.localdream.data.PerformancePresetEngineConfig
+import io.github.xororz.localdream.data.PresetConfigParseStatus
+import io.github.xororz.localdream.data.PresetSnapshot
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -35,6 +39,89 @@ object RemoteProtocol {
     const val STATE_STARTING = "starting"
     const val STATE_RUNNING = "running"
     const val STATE_ERROR = "error"
+}
+
+/**
+ * The immutable performance-preset value accepted by a controller before it
+ * asks a remote host to start a generation backend. The host intentionally
+ * does not look up its own mutable preset rows: a v1 preset must match its
+ * serialized engine flags, while the legacy fallback carries the controller's
+ * already-resolved flags explicitly.
+ */
+data class RemotePresetExecution(
+    val snapshot: PresetSnapshot,
+    val engineConfig: PerformancePresetEngineConfig,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put(
+            "preset_snapshot",
+            JSONObject().apply {
+                put("preset_id", snapshot.presetId)
+                put("name", snapshot.name)
+                put("selector", snapshot.selector)
+                put("config_json", snapshot.configJson)
+                put("revision", snapshot.revision)
+            },
+        )
+        put(
+            "engine",
+            JSONObject().apply {
+                put("sdxl_low_ram", engineConfig.sdxlLowRam)
+                put("anima_low_ram", engineConfig.animaLowRam)
+                put("anima_sequential_dit", engineConfig.animaSequentialDit)
+            },
+        )
+    }
+
+    companion object {
+        fun fromJson(body: JSONObject): RemotePresetExecution? {
+            val snapshotJson = body.optJSONObject("preset_snapshot") ?: return null
+            val engineJson = body.optJSONObject("engine") ?: return null
+            if (snapshotJson.keys().asSequence().toSet() != SNAPSHOT_KEYS ||
+                engineJson.keys().asSequence().toSet() != ENGINE_KEYS
+            ) {
+                return null
+            }
+            val presetId = snapshotJson.opt("preset_id") as? String ?: return null
+            val name = snapshotJson.opt("name") as? String ?: return null
+            val selector = snapshotJson.opt("selector") as? String ?: return null
+            val configJson = snapshotJson.opt("config_json") as? String ?: return null
+            val revision = snapshotJson.opt("revision") as? Number ?: return null
+            if (presetId.isBlank() || name.isBlank() || selector.isBlank() ||
+                revision.toDouble() != revision.toLong().toDouble()
+            ) {
+                return null
+            }
+            val sdxlLowRam = engineJson.opt("sdxl_low_ram") as? Boolean ?: return null
+            val animaLowRam = engineJson.opt("anima_low_ram") as? Boolean ?: return null
+            val animaSequentialDit = engineJson.opt("anima_sequential_dit") as? Boolean ?: return null
+            val engineConfig = PerformancePresetEngineConfig(
+                sdxlLowRam = sdxlLowRam,
+                animaLowRam = animaLowRam,
+                animaSequentialDit = animaSequentialDit,
+            )
+            val parsed = PerformancePresetConfig.parse(configJson)
+            if (parsed.status != PresetConfigParseStatus.SUPPORTED &&
+                parsed.status != PresetConfigParseStatus.LEGACY_COMPATIBILITY
+            ) {
+                return null
+            }
+            if (parsed.engine != null && parsed.engine != engineConfig) return null
+            return RemotePresetExecution(
+                snapshot = PresetSnapshot(
+                    presetId = presetId,
+                    name = name,
+                    selector = selector,
+                    configJson = configJson,
+                    revision = revision.toLong(),
+                ),
+                engineConfig = engineConfig,
+            )
+        }
+
+        private val SNAPSHOT_KEYS = setOf("preset_id", "name", "selector", "config_json", "revision")
+        private val ENGINE_KEYS = setOf("sdxl_low_ram", "anima_low_ram", "anima_sequential_dit")
+    }
 }
 
 /** Identity block returned by GET /info (the only unauthenticated endpoint). */

@@ -439,6 +439,21 @@ static void registerGenerateEndpoint(httplib::Server &svr, Pipeline *pipeline) {
                          enc_end - enc_start)
                          .count()
                   << "ms\n";
+              // Keep the legacy top-level timings stable for existing clients.
+              // Stage timers that this native core cannot observe yet are
+              // explicit UNAVAILABLE values, never fabricated zeroes.  The
+              // host harness therefore treats them as diagnostics rather than
+              // a OnePlus 13 performance measurement.
+              nlohmann::json stage_metrics = {
+                  {"end_to_end_ms", result.generation_time_ms},
+                  {"first_step_ms", result.first_step_time_ms},
+                  {"context_load_ms", { {"status", "UNAVAILABLE"} }},
+                  {"clip_ms", { {"status", "UNAVAILABLE"} }},
+                  {"unet_ms", { {"status", "UNAVAILABLE"} }},
+                  {"vae_decode_ms", { {"status", "UNAVAILABLE"} }},
+                  {"peak_pss_kb", { {"status", "UNAVAILABLE"} }},
+                  {"htp_spill_fill", { {"status", "UNAVAILABLE"} }},
+              };
               nlohmann::json c = {
                   {"type", "complete"},
                   {"image", enc_img},
@@ -448,7 +463,8 @@ static void registerGenerateEndpoint(httplib::Server &svr, Pipeline *pipeline) {
                   {"height", result.height},
                   {"channels", result.channels},
                   {"generation_time_ms", result.generation_time_ms},
-                  {"first_step_time_ms", result.first_step_time_ms}};
+                  {"first_step_time_ms", result.first_step_time_ms},
+                  {"stage_metrics", stage_metrics}};
               std::string ev = "event: complete\ndata: " + c.dump() + "\n\n";
               auto send_start = std::chrono::high_resolution_clock::now();
               sink.write(ev.c_str(), ev.size());

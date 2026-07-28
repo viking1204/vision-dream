@@ -7,7 +7,23 @@ import io.github.xororz.localdream.data.InferenceJobStatus
  * task state, never prompts, paths or image bytes.
  */
 object McpTaskEventBus {
-    data class Event(val clientId: String, val jobId: String, val status: InferenceJobStatus)
+    data class Event(
+        val clientId: String,
+        val jobId: String,
+        val status: InferenceJobStatus,
+        val diffusionStep: Int? = null,
+        val totalDiffusionSteps: Int? = null,
+    ) {
+        init {
+            require((diffusionStep == null) == (totalDiffusionSteps == null))
+            if (diffusionStep != null && totalDiffusionSteps != null) {
+                require(diffusionStep in 1..totalDiffusionSteps)
+            }
+        }
+
+        val isDiffusionProgress: Boolean
+            get() = diffusionStep != null
+    }
 
     private val listeners = linkedSetOf<(Event) -> Unit>()
 

@@ -9,7 +9,9 @@ import io.github.xororz.localdream.data.HistoryItem
 import io.github.xororz.localdream.data.HistoryFilter
 import io.github.xororz.localdream.data.InferenceHistoryAssociation
 import io.github.xororz.localdream.data.InferenceJobStatus
+import io.github.xororz.localdream.data.PerformancePresetConfig
 import io.github.xororz.localdream.data.PerformancePresetRepository
+import io.github.xororz.localdream.data.requireExecutableSnapshot
 import io.github.xororz.localdream.data.PromptRepository
 import io.github.xororz.localdream.data.RoomInferenceJobRepository
 import io.github.xororz.localdream.data.db.AppDatabase
@@ -20,6 +22,7 @@ import io.github.xororz.localdream.openai.BoundedSerialExecutor
 import io.github.xororz.localdream.openai.ImageRequestParameters
 import io.github.xororz.localdream.openai.InstalledModelCatalog
 import io.github.xororz.localdream.openai.NativeBackendClient
+import io.github.xororz.localdream.openai.validateParameters
 import io.github.xororz.localdream.ui.screens.GenerationParameters
 import java.io.File
 import java.util.concurrent.CompletableFuture
@@ -112,10 +115,18 @@ class McpGenerationGateway(
         val modelId = arguments.optString("modelId").trim()
         val prompt = arguments.optString("prompt").trim()
         if (modelId.isEmpty() || prompt.isEmpty()) return McpToolGatewayResult.Rejected("INVALID_PARAMS")
+        val parameters = try {
+            generationParameters(modelId, prompt, arguments)
+        } catch (_: IllegalArgumentException) {
+            return McpToolGatewayResult.Rejected("INVALID_PARAMS")
+        } catch (_: io.github.xororz.localdream.openai.OpenAiRequestException) {
+            return McpToolGatewayResult.Rejected("INVALID_PARAMS")
+        }
         val job = try {
             jobs.accept(
-                client.clientId,
-                arguments.optString("presetId").ifBlank { PerformancePresetRepository.COMPATIBILITY_FALLBACK_ID },
+                ownerId = client.clientId,
+                modelId = modelId,
+                explicitPresetId = arguments.optString("presetId").takeIf(String::isNotBlank),
             )
         } catch (_: IllegalArgumentException) {
             return McpToolGatewayResult.Rejected("PRESET_INCOMPATIBLE")
@@ -123,7 +134,7 @@ class McpGenerationGateway(
             return McpToolGatewayResult.Rejected("PRESET_INCOMPATIBLE")
         }
         val scheduled = scheduler.submit(
-            McpGenerationRequest(job, modelId, prompt, arguments.optString("negativePrompt")),
+            McpGenerationRequest(job, parameters),
         )
         if (scheduled != McpGenerationScheduleResult.ACCEPTED) {
             jobs.discard(job.id)
@@ -133,6 +144,31 @@ class McpGenerationGateway(
             JSONObject().put("jobId", job.id).put("task", McpTaskState.WORKING.wireValue),
             job.id,
         )
+    }
+
+    /**
+     * Keep W7's observable fixture fields on the accepted request. MCP must
+     * not silently inherit mutable UI defaults, otherwise it cannot be fairly
+     * compared with the equivalent `/v1` request.
+     */
+    private fun generationParameters(modelId: String, prompt: String, arguments: JSONObject): ImageRequestParameters {
+        val width = arguments.optionalPositiveInt("width")
+        val height = arguments.optionalPositiveInt("height")
+        require((width == null) == (height == null)) { "width and height must be supplied together" }
+        val defaults = ImageRequestParameters(
+            modelId = modelId,
+            prompt = prompt,
+            negativePrompt = arguments.optString("negativePrompt"),
+        )
+        return defaults.copy(
+            width = width,
+            height = height,
+            steps = arguments.optionalPositiveInt("steps") ?: defaults.steps,
+            cfg = arguments.optionalFiniteFloat("cfg") ?: defaults.cfg,
+            seed = arguments.optionalLong("seed"),
+            scheduler = arguments.optString("scheduler").takeIf(String::isNotBlank) ?: defaults.scheduler,
+            denoiseStrength = arguments.optionalFiniteFloat("denoiseStrength") ?: defaults.denoiseStrength,
+        ).also { validateParameters(it, requiresImage = false) }
     }
 
     private fun get(client: McpAuthenticatedClient, arguments: JSONObject): McpToolGatewayResult {
@@ -145,7 +181,20 @@ class McpGenerationGateway(
         if (job.status == InferenceJobStatus.SUCCEEDED) {
             val asset = jobs.historyAssetFor(job.id) ?: return McpToolGatewayResult.Rejected("INFERENCE_FAILED")
             val capability = capabilities.create(client.clientId, job.id, client.transport, asset.mimeType, asset.assetId)
-            result.put("image", McpProtocol.imagePath(job.id, capability.token))
+            val imagePath = McpProtocol.imagePath(job.id, capability.token)
+            // Keep the established image field for existing clients while exposing
+            // the MCP-standard link form. The opaque capability still binds this
+            // one download to the authenticated client, job and transport.
+            result.put("image", imagePath)
+            result.put(
+                "content",
+                org.json.JSONArray().put(
+                    JSONObject()
+                        .put("type", "resource_link")
+                        .put("uri", imagePath)
+                        .put("mimeType", asset.mimeType),
+                ),
+            )
         }
         return McpToolGatewayResult.Completed(result, job.id)
     }
@@ -246,10 +295,17 @@ class McpGenerationGateway(
 
     private fun deletePreset(arguments: JSONObject): McpToolGatewayResult {
         val id = presetId(arguments) ?: return McpToolGatewayResult.Rejected("PRESET_NOT_FOUND")
-        return when {
-            presets.get(id) == null -> McpToolGatewayResult.Rejected("PRESET_NOT_FOUND")
-            !presets.delete(id) -> McpToolGatewayResult.Rejected("PRESET_PROTECTED")
-            else -> McpToolGatewayResult.Completed(JSONObject().put("presetId", id).put("deleted", true))
+        if (presets.get(id) == null) return McpToolGatewayResult.Rejected("PRESET_NOT_FOUND")
+        val result = presets.delete(id)
+        return if (!result.deleted) {
+            McpToolGatewayResult.Rejected("PRESET_PROTECTED")
+        } else {
+            McpToolGatewayResult.Completed(
+                JSONObject()
+                    .put("presetId", id)
+                    .put("deleted", true)
+                    .put("reboundBindingKeys", org.json.JSONArray(result.reboundBindingKeys)),
+            )
         }
     }
 
@@ -388,6 +444,12 @@ class McpGenerationGateway(
                 .put("state", status.state.wireValue)
                 .put("queued", status.queuedTaskCount)
                 .put("active", status.hasActiveTask)
+                .put(
+                    "runtimeProbe",
+                    JSONObject()
+                        .put("status", status.runtimeProbe.status.name)
+                        .put("rejectionReasons", org.json.JSONArray(status.runtimeProbe.rejectionReasons)),
+                )
                 .apply { status.runtimeId?.let { put("runtimeId", it) } },
         )
     }
@@ -470,6 +532,28 @@ class McpGenerationGateway(
         .put("title", prompt.title)
         .put("prompt", prompt.prompt)
         .put("negativePrompt", prompt.negativePrompt)
+}
+
+private fun JSONObject.optionalPositiveInt(key: String): Int? {
+    if (!has(key) || isNull(key)) return null
+    val number = opt(key) as? Number ?: throw IllegalArgumentException("$key must be an integer")
+    val value = number.toLong()
+    require(number.toDouble() == value.toDouble() && value in 1..Int.MAX_VALUE) { "$key must be a positive integer" }
+    return value.toInt()
+}
+
+private fun JSONObject.optionalLong(key: String): Long? {
+    if (!has(key) || isNull(key)) return null
+    val number = opt(key) as? Number ?: throw IllegalArgumentException("$key must be an integer")
+    val value = number.toLong()
+    require(number.toDouble() == value.toDouble()) { "$key must be an integer" }
+    return value
+}
+
+private fun JSONObject.optionalFiniteFloat(key: String): Float? {
+    if (!has(key) || isNull(key)) return null
+    val number = opt(key) as? Number ?: throw IllegalArgumentException("$key must be a number")
+    return number.toFloat().also { require(it.isFinite()) { "$key must be finite" } }
 }
 
 data class McpPrompt(
@@ -583,13 +667,14 @@ data class McpJobRecord(
     val ownerId: String,
     val presetId: String,
     val presetRevision: Long,
+    val presetConfigJson: String = "{}",
     val status: InferenceJobStatus,
 )
 
 data class McpHistoryAsset(val assetId: String, val mimeType: String)
 
 interface McpJobStore {
-    fun accept(ownerId: String, presetId: String): McpJobRecord
+    fun accept(ownerId: String, modelId: String, explicitPresetId: String?): McpJobRecord
     fun get(jobId: String): McpJobRecord?
     fun listFor(ownerId: String): List<McpJobRecord>
     fun updateStatus(jobId: String, status: InferenceJobStatus)
@@ -600,22 +685,22 @@ interface McpJobStore {
 class RoomMcpJobStore(private val database: AppDatabase) : McpJobStore {
     private val repository = RoomInferenceJobRepository(database)
 
-    override fun accept(ownerId: String, presetId: String): McpJobRecord = runBlocking {
-        repository.accept(ownerId, presetId).let { snapshot ->
-            McpJobRecord(snapshot.jobId, ownerId, snapshot.presetId, snapshot.revision, InferenceJobStatus.QUEUED)
+    override fun accept(ownerId: String, modelId: String, explicitPresetId: String?): McpJobRecord = runBlocking {
+        repository.accept(ownerId, modelId = modelId, explicitPresetId = explicitPresetId).let { snapshot ->
+            McpJobRecord(snapshot.jobId, ownerId, snapshot.presetId, snapshot.revision, snapshot.configJson, InferenceJobStatus.QUEUED)
         }
     }
 
     override fun get(jobId: String): McpJobRecord? = runBlocking {
         val job = database.inferenceJobDao().getById(jobId) ?: return@runBlocking null
         val snapshot = database.inferenceJobDao().snapshotFor(jobId) ?: return@runBlocking null
-        McpJobRecord(job.id, job.ownerId, snapshot.presetId, snapshot.revision, InferenceJobStatus.fromWire(job.status))
+        McpJobRecord(job.id, job.ownerId, snapshot.presetId, snapshot.revision, snapshot.configJson, InferenceJobStatus.fromWire(job.status))
     }
 
     override fun listFor(ownerId: String): List<McpJobRecord> = runBlocking {
         database.inferenceJobDao().listForOwner(ownerId, MAX_LISTED_JOBS).mapNotNull { job ->
             val snapshot = database.inferenceJobDao().snapshotFor(job.id) ?: return@mapNotNull null
-            McpJobRecord(job.id, job.ownerId, snapshot.presetId, snapshot.revision, InferenceJobStatus.fromWire(job.status))
+            McpJobRecord(job.id, job.ownerId, snapshot.presetId, snapshot.revision, snapshot.configJson, InferenceJobStatus.fromWire(job.status))
         }
     }
 
@@ -638,10 +723,19 @@ class RoomMcpJobStore(private val database: AppDatabase) : McpJobStore {
 
 data class McpGenerationRequest(
     val job: McpJobRecord,
-    val modelId: String,
-    val prompt: String,
-    val negativePrompt: String,
-)
+    val parameters: ImageRequestParameters,
+) {
+    val modelId: String get() = requireNotNull(parameters.modelId)
+    val prompt: String get() = parameters.prompt
+    val negativePrompt: String get() = parameters.negativePrompt
+    val seed: Long? get() = parameters.seed
+    val width: Int? get() = parameters.width
+    val height: Int? get() = parameters.height
+    val scheduler: String get() = parameters.scheduler
+    val steps: Int get() = parameters.steps
+    val cfg: Float get() = parameters.cfg
+    val denoiseStrength: Float get() = parameters.denoiseStrength
+}
 
 enum class McpGenerationScheduleResult(val code: String) {
     ACCEPTED("OK"),
@@ -691,12 +785,31 @@ class AndroidMcpGenerationScheduler(
                 val entry = runBlocking { catalog.find(request.modelId) }
                     ?.takeIf { it.kind == InstalledModelCatalog.Kind.GENERATION }
                     ?: throw IllegalArgumentException("Requested model is not installed")
-                val dimensions = runBlocking { coordinator.ensureReady(entry, null, null) }
+                val presetConfig = PerformancePresetConfig.parse(request.job.presetConfigJson)
+                val presetEngineConfig = presetConfig.requireExecutableSnapshot(
+                    request.job.presetId == PerformancePresetRepository.COMPATIBILITY_FALLBACK_ID,
+                )
+                val dimensions = runBlocking {
+                    coordinator.ensureReady(entry, request.width, request.height, presetEngineConfig)
+                }
                 val negativePrompt = request.negativePrompt.ifBlank { GenerationDefaults.DEFAULT_NEGATIVE_PROMPT }
                 val generated = backend.generate(
-                    ImageRequestParameters(entry.id, request.prompt, negativePrompt),
+                    request.parameters.copy(modelId = entry.id, negativePrompt = negativePrompt),
                     dimensions.first,
                     dimensions.second,
+                    onDiffusionStep = { step, totalSteps ->
+                        if (request.job.id !in cancelledJobs) {
+                            McpTaskEventBus.publish(
+                                McpTaskEventBus.Event(
+                                    clientId = request.job.ownerId,
+                                    jobId = request.job.id,
+                                    status = InferenceJobStatus.RUNNING,
+                                    diffusionStep = step,
+                                    totalDiffusionSteps = totalSteps,
+                                ),
+                            )
+                        }
+                    },
                 )
                 // Cancellation may race native completion. Never materialize a
                 // historical asset after the Job has been cancelled.
@@ -709,8 +822,8 @@ class AndroidMcpGenerationScheduler(
                         encodedImage = generated.bytes,
                         mimeType = generated.mimeType,
                         params = GenerationParameters(
-                            steps = 28,
-                            cfg = 7f,
+                            steps = request.steps,
+                            cfg = request.cfg,
                             seed = generated.seed,
                             prompt = request.prompt,
                             negativePrompt = negativePrompt,
@@ -718,9 +831,9 @@ class AndroidMcpGenerationScheduler(
                             width = dimensions.first,
                             height = dimensions.second,
                             runOnCpu = entry.model?.runOnCpu == true,
-                            denoiseStrength = 0.6f,
+                            denoiseStrength = request.denoiseStrength,
                             useOpenCL = false,
-                            scheduler = "dpm",
+                            scheduler = request.scheduler,
                             mode = GenerationMode.TXT2IMG,
                         ),
                         mode = GenerationMode.TXT2IMG,

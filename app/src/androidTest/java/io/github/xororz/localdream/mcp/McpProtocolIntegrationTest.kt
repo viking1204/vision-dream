@@ -95,6 +95,81 @@ class McpProtocolIntegrationTest {
     }
 
     @Test
+    fun sseReplaysThroughTheSameSessionAndResetsExpiredLastEventId() {
+        val port = availableLoopbackPort()
+        val credentials = McpClientCredentialStore(context)
+        val grant = credentials.provision("sse-client", McpTransport.LOOPBACK, setOf("models.read"))
+        val events = McpSseEventStore()
+        val server = McpHttpServer(port, McpTransport.LOOPBACK, credentials, sseEvents = events)
+
+        try {
+            server.start()
+            val sessionId = request(port, "POST", grant.token, body = initializeRequest(1)).headers.getValue("mcp-session-id")
+            events.publish(sessionId, "task", JSONObject().put("jobId", "job-1").put("task", "working").toString())
+
+            val first = request(port, "GET", grant.token, sessionId, streamEvent = "event: task")
+            assertEquals(200, first.status)
+            assertTrue(first.body.contains("id: 1"))
+            assertTrue(first.body.contains("\"jobId\":\"job-1\""))
+
+            val replay = request(
+                port,
+                "GET",
+                grant.token,
+                sessionId,
+                lastEventId = 0,
+                streamEvent = "event: task",
+            )
+            assertTrue(replay.body.contains("id: 1"))
+            assertTrue(replay.body.contains("\"jobId\":\"job-1\""))
+
+            repeat(McpSseEventStore.MAX_REPLAY_EVENTS + 1) {
+                events.publish(sessionId, "task", JSONObject().put("jobId", "job-$it").put("task", "working").toString())
+            }
+            val reset = request(port, "GET", grant.token, sessionId, lastEventId = 1, streamEvent = "event: reset")
+            assertTrue(reset.body.contains("event: reset"))
+            assertTrue(reset.body.contains("replay_unavailable"))
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun diffusionStepsArePublishedAsReplayableProgressEvents() {
+        val port = availableLoopbackPort()
+        val credentials = McpClientCredentialStore(context)
+        val grant = credentials.provision("progress-client", McpTransport.LOOPBACK, setOf("models.read"))
+        val server = McpHttpServer(port, McpTransport.LOOPBACK, credentials)
+
+        try {
+            server.start()
+            val sessionId = request(port, "POST", grant.token, body = initializeRequest(1)).headers.getValue("mcp-session-id")
+            McpTaskEventBus.publish(
+                McpTaskEventBus.Event(
+                    clientId = grant.clientId,
+                    jobId = "job-progress",
+                    status = io.github.xororz.localdream.data.InferenceJobStatus.RUNNING,
+                    diffusionStep = 3,
+                    totalDiffusionSteps = 20,
+                ),
+            )
+
+            val first = request(port, "GET", grant.token, sessionId, streamEvent = "event: progress")
+            assertTrue(first.body.contains("event: progress"))
+            assertTrue(first.body.contains("\"jobId\":\"job-progress\""))
+            assertTrue(first.body.contains("\"step\":3"))
+            assertTrue(first.body.contains("\"totalSteps\":20"))
+            assertTrue(first.body.contains("\"progress\":0.15"))
+
+            val replay = request(port, "GET", grant.token, sessionId, lastEventId = 0, streamEvent = "event: progress")
+            assertTrue(replay.body.contains("id: 1"))
+            assertTrue(replay.body.contains("\"step\":3"))
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun listenerRejectsInvalidHostOriginAndPortConflictsAndKeepsTransportsIsolated() {
         val port = availableLoopbackPort()
         val credentials = McpClientCredentialStore(context)
@@ -162,6 +237,7 @@ class McpProtocolIntegrationTest {
         val port = availableLoopbackPort()
         val credentials = McpClientCredentialStore(context)
         val grant = credentials.provision("image-client", McpTransport.LOOPBACK, setOf("jobs.read"))
+        val otherGrant = credentials.provision("other-image-client", McpTransport.LOOPBACK, setOf("jobs.read"))
         val capabilities = McpImageCapabilityStore()
         val capability = capabilities.create(
             clientId = grant.clientId,
@@ -192,6 +268,17 @@ class McpProtocolIntegrationTest {
                     method = "GET",
                     token = grant.token,
                     path = McpProtocol.imagePath("other-job", capability.token),
+                ),
+                404,
+                "NOT_FOUND",
+            )
+
+            assertError(
+                request(
+                    port = port,
+                    method = "GET",
+                    token = otherGrant.token,
+                    path = McpProtocol.imagePath(capability.jobId, capability.token),
                 ),
                 404,
                 "NOT_FOUND",
@@ -325,6 +412,8 @@ class McpProtocolIntegrationTest {
         path: String = McpProtocol.PATH,
         body: String = "",
         stream: Boolean = false,
+        lastEventId: Long? = null,
+        streamEvent: String? = null,
     ): HttpResponse = Socket().use { socket ->
         socket.connect(InetSocketAddress(InetAddress.getByName(LOOPBACK_ADDRESS), port), SOCKET_TIMEOUT_MILLIS)
         socket.soTimeout = SOCKET_TIMEOUT_MILLIS
@@ -333,6 +422,7 @@ class McpProtocolIntegrationTest {
             append("Host: $host\r\n")
             token?.let { append("Authorization: Bearer $it\r\n") }
             sessionId?.let { append("Mcp-Session-Id: $it\r\n") }
+            lastEventId?.let { append("Last-Event-ID: $it\r\n") }
             origin?.let { append("Origin: $it\r\n") }
             if (body.isNotEmpty()) {
                 append("Content-Type: application/json\r\n")
@@ -344,11 +434,12 @@ class McpProtocolIntegrationTest {
         socket.getOutputStream().write(request.toByteArray(StandardCharsets.UTF_8))
         socket.getOutputStream().flush()
         val input = socket.getInputStream()
-        val raw = if (stream) {
+        val raw = if (stream || streamEvent != null) {
+            val terminator = streamEvent ?: "event: ready"
             buildString {
-                while (!contains("event: ready\n")) {
+                while (!contains("$terminator\n") || !endsWith("\n\n")) {
                     val next = input.read()
-                    check(next >= 0) { "SSE closed before ready event" }
+                    check(next >= 0) { "SSE closed before $terminator" }
                     append(next.toChar())
                 }
             }

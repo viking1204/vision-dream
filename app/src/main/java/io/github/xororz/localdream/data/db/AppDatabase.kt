@@ -12,18 +12,20 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         HistoryEntity::class,
         PromptTemplateEntity::class,
         PerformancePresetEntity::class,
+        PerformancePresetBindingEntity::class,
         InferenceJobEntity::class,
         PresetSnapshotEntity::class,
         McpClientGrantEntity::class,
         McpAuditEventEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
     abstract fun promptTemplateDao(): PromptTemplateDao
     abstract fun performancePresetDao(): PerformancePresetDao
+    abstract fun performancePresetBindingDao(): PerformancePresetBindingDao
     abstract fun inferenceJobDao(): InferenceJobDao
     abstract fun mcpClientGrantDao(): McpClientGrantDao
     abstract fun mcpAuditEventDao(): McpAuditEventDao
@@ -265,18 +267,37 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v5 -> v6 adds future-request preset bindings without rewriting historical snapshots. */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS performance_preset_bindings (
+                        bindingKey TEXT NOT NULL PRIMARY KEY,
+                        presetId TEXT NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_performance_preset_bindings_presetId " +
+                        "ON performance_preset_bindings (presetId)",
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 "local_dream.db",
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .addCallback(
                     object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
-                            // MIGRATION_4_5 creates this row for upgrades. A fresh v5
+                            // MIGRATION_4_5 creates this row for upgrades. A fresh v6
                             // database skips migrations, so it needs the same safe
                             // fallback before the first request can be accepted.
                             db.execSQL(

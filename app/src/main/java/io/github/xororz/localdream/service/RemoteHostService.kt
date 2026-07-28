@@ -23,6 +23,7 @@ import io.github.xororz.localdream.remote.RemoteHostServer
 import io.github.xororz.localdream.remote.RemoteHostStatus
 import io.github.xororz.localdream.remote.RemoteModelDefaults
 import io.github.xororz.localdream.remote.RemoteModelInfo
+import io.github.xororz.localdream.remote.RemotePresetExecution
 import io.github.xororz.localdream.remote.RemoteProtocol
 import io.github.xororz.localdream.remote.RemoteUpscalerInfo
 import java.io.File
@@ -182,6 +183,18 @@ class RemoteHostService : Service() {
             val modelId = body.optString("model_id")
             val width = body.optInt("width", 512)
             val height = body.optInt("height", 512)
+            // A present snapshot is an execution contract, not advisory host
+            // metadata. Reject malformed or internally inconsistent values so
+            // the host never substitutes its mutable preferences mid-request.
+            val presetExecution = if (body.has("preset_snapshot") || body.has("engine")) {
+                RemotePresetExecution.fromJson(body)
+                    ?: return RemoteHostServer.Response(
+                        400,
+                        JSONObject().put("error", "invalid preset snapshot"),
+                    )
+            } else {
+                null
+            }
             val backendType: String
             if (modelId == RemoteProtocol.UPSCALER_MODEL_ID) {
                 backendType = BackendService.BACKEND_TYPE_UPSCALER
@@ -200,6 +213,14 @@ class RemoteHostService : Service() {
                 putExtra("backendType", backendType)
                 putExtra("width", width)
                 putExtra("height", height)
+                presetExecution?.let { execution ->
+                    putExtra(BackendService.EXTRA_SDXL_LOW_RAM, execution.engineConfig.sdxlLowRam)
+                    putExtra(BackendService.EXTRA_ANIMA_LOW_RAM, execution.engineConfig.animaLowRam)
+                    putExtra(
+                        BackendService.EXTRA_ANIMA_SEQUENTIAL_DIT,
+                        execution.engineConfig.animaSequentialDit,
+                    )
+                }
             }
             // Plain startService: BackendService is already a live foreground
             // service (standby since host mode started), and this app holds an

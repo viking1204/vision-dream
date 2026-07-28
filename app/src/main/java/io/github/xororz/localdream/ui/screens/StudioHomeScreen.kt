@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -195,6 +196,13 @@ fun StudioHomeScreen(navController: NavController) {
                             accent = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f),
                             onClick = { navController.navigate(Screen.PromptManager.route) },
+                        )
+                        StudioQuickAction(
+                            title = "性能预设",
+                            icon = Icons.Default.Tune,
+                            accent = StudioCyan,
+                            modifier = Modifier.weight(1f),
+                            onClick = { navController.navigate(Screen.PerformancePresets.route) },
                         )
                         StudioQuickAction(
                             title = stringResource(R.string.studio_upscale),

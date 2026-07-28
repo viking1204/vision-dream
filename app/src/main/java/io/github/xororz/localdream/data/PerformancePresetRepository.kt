@@ -28,12 +28,40 @@ data class PresetImport(
     val configJson: String,
 )
 
+data class PerformancePresetBinding(
+    val bindingKey: String,
+    val presetId: String,
+    val updatedAt: Long = System.currentTimeMillis(),
+) {
+    companion object {
+        const val DEFAULT = "DEFAULT"
+
+        fun model(modelId: String): String {
+            require(modelId.isNotBlank() && !modelId.contains(':')) { "Model binding key is invalid" }
+            return "MODEL:$modelId"
+        }
+
+        fun isValid(bindingKey: String): Boolean = bindingKey == DEFAULT || (
+            bindingKey.startsWith("MODEL:") && bindingKey.removePrefix("MODEL:").isNotBlank() &&
+                !bindingKey.removePrefix("MODEL:").contains(':')
+            )
+    }
+}
+
+data class PresetDeleteResult(
+    val deleted: Boolean,
+    val reboundBindingKeys: List<String> = emptyList(),
+)
+
 interface PerformancePresetStore {
     fun all(): List<PerformancePreset>
     fun get(id: String): PerformancePreset?
     fun getByName(name: String): PerformancePreset?
     fun save(preset: PerformancePreset)
-    fun delete(id: String): Boolean
+    fun binding(bindingKey: String): PerformancePresetBinding?
+    fun bindingsForPreset(presetId: String): List<PerformancePresetBinding>
+    fun saveBinding(binding: PerformancePresetBinding)
+    fun deleteUserPresetAndRebind(id: String, fallbackId: String): PresetDeleteResult
 }
 
 /**
@@ -62,6 +90,11 @@ class PerformancePresetRepository(private val store: PerformancePresetStore) {
      * immutable snapshot before they accept an inference request.
      */
     fun list(): List<PerformancePreset> = synchronized(this) { store.all() }
+
+    fun binding(bindingKey: String): PerformancePresetBinding? = synchronized(this) {
+        require(PerformancePresetBinding.isValid(bindingKey)) { "Preset binding key is invalid" }
+        store.binding(bindingKey)
+    }
 
     fun create(name: String, selector: String, configJson: String): PerformancePreset = synchronized(this) {
         validate(name, selector, configJson)
@@ -96,10 +129,32 @@ class PerformancePresetRepository(private val store: PerformancePresetStore) {
         ).also(store::save)
     }
 
-    fun delete(id: String): Boolean = synchronized(this) {
-        val preset = store.get(id) ?: return false
-        if (preset.isFallback) return false
-        store.delete(id)
+    fun bind(bindingKey: String, presetId: String): PerformancePresetBinding = synchronized(this) {
+        require(PerformancePresetBinding.isValid(bindingKey)) { "Preset binding key is invalid" }
+        val preset = requireNotNull(store.get(presetId)) { "Preset not found" }
+        require(!preset.isFallback && PerformancePresetConfig.parse(preset.configJson).isSupported) {
+            "Only a supported user preset can be bound"
+        }
+        PerformancePresetBinding(bindingKey = bindingKey, presetId = presetId).also(store::saveBinding)
+    }
+
+    fun resolve(explicitPresetId: String? = null, modelId: String? = null): PresetSnapshot = synchronized(this) {
+        val selectedId = explicitPresetId?.takeIf(String::isNotBlank)
+            ?: modelId?.let(PerformancePresetBinding::model)?.let(store::binding)?.presetId
+            ?: store.binding(PerformancePresetBinding.DEFAULT)?.presetId
+            ?: COMPATIBILITY_FALLBACK_ID
+        val preset = requireNotNull(store.get(selectedId)) { "Preset not found" }
+        val parsed = PerformancePresetConfig.parse(preset.configJson)
+        require(parsed.isSupported || (preset.isFallback && parsed.status == PresetConfigParseStatus.LEGACY_COMPATIBILITY)) {
+            "Preset config is not executable"
+        }
+        snapshotOf(preset)
+    }
+
+    fun delete(id: String): PresetDeleteResult = synchronized(this) {
+        val preset = store.get(id) ?: return PresetDeleteResult(deleted = false)
+        if (preset.isFallback) return PresetDeleteResult(deleted = false)
+        store.deleteUserPresetAndRebind(id, COMPATIBILITY_FALLBACK_ID)
     }
 
     fun snapshot(id: String): PresetSnapshot = synchronized(this) {
@@ -124,9 +179,8 @@ class PerformancePresetRepository(private val store: PerformancePresetStore) {
     private fun validate(name: String, selector: String, configJson: String) {
         require(name.trim().isNotEmpty()) { "Preset name is required" }
         require(selector.trim().matches(SELECTOR)) { "Preset selector is invalid" }
-        val normalizedJson = configJson.trim()
-        require(normalizedJson.startsWith('{') && normalizedJson.endsWith('}')) {
-            "Preset config must be a JSON object"
+        require(PerformancePresetConfig.parse(configJson.trim()).isSupported) {
+            "Preset config must be a strict supported v1 schema"
         }
     }
 
@@ -147,6 +201,7 @@ class PerformancePresetRepository(private val store: PerformancePresetStore) {
 /** 仅供 JVM 规则测试和不接入 Room 的调用方使用。 */
 class InMemoryPerformancePresetStore : PerformancePresetStore {
     private val values = LinkedHashMap<String, PerformancePreset>()
+    private val bindings = LinkedHashMap<String, PerformancePresetBinding>()
 
     override fun all(): List<PerformancePreset> = values.values.toList()
 
@@ -158,5 +213,19 @@ class InMemoryPerformancePresetStore : PerformancePresetStore {
         values[preset.id] = preset
     }
 
-    override fun delete(id: String): Boolean = values.remove(id) != null
+    override fun binding(bindingKey: String): PerformancePresetBinding? = bindings[bindingKey]
+
+    override fun bindingsForPreset(presetId: String): List<PerformancePresetBinding> = bindings.values.filter { it.presetId == presetId }
+
+    override fun saveBinding(binding: PerformancePresetBinding) {
+        bindings[binding.bindingKey] = binding
+    }
+
+    override fun deleteUserPresetAndRebind(id: String, fallbackId: String): PresetDeleteResult {
+        if (!values.containsKey(id)) return PresetDeleteResult(deleted = false)
+        val rebound = bindingsForPreset(id).map(PerformancePresetBinding::bindingKey).sorted()
+        rebound.forEach { key -> bindings[key] = bindings.getValue(key).copy(presetId = fallbackId) }
+        values.remove(id)
+        return PresetDeleteResult(deleted = true, reboundBindingKeys = rebound)
+    }
 }

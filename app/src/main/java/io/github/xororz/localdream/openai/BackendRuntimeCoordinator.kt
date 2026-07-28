@@ -3,6 +3,7 @@ package io.github.xororz.localdream.openai
 import android.content.Context
 import android.content.Intent
 import io.github.xororz.localdream.data.PatchScanner
+import io.github.xororz.localdream.data.PerformancePresetEngineConfig
 import io.github.xororz.localdream.service.BackendService
 import io.github.xororz.localdream.utils.Http
 import java.util.concurrent.TimeUnit
@@ -31,6 +32,7 @@ class BackendRuntimeCoordinator(private val context: Context) {
         entry: InstalledModelCatalog.Entry,
         requestedWidth: Int?,
         requestedHeight: Int?,
+        presetEngineConfig: PerformancePresetEngineConfig? = null,
     ): Pair<Int, Int> {
         val dimensions = resolveDimensions(entry, requestedWidth, requestedHeight)
         val intent = Intent(context, BackendService::class.java).apply {
@@ -47,6 +49,11 @@ class BackendRuntimeCoordinator(private val context: Context) {
                 BackendService.EXTRA_REQUEST_OWNER,
                 BackendService.REQUEST_OWNER_OPENAI_API,
             )
+            presetEngineConfig?.let { config ->
+                putExtra(BackendService.EXTRA_SDXL_LOW_RAM, config.sdxlLowRam)
+                putExtra(BackendService.EXTRA_ANIMA_LOW_RAM, config.animaLowRam)
+                putExtra(BackendService.EXTRA_ANIMA_SEQUENTIAL_DIT, config.animaSequentialDit)
+            }
         }
         context.startService(intent)
         awaitReady(

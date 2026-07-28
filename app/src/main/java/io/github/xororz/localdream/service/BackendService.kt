@@ -12,8 +12,13 @@ import io.github.xororz.localdream.data.Model
 import io.github.xororz.localdream.data.ModelMetadataStore
 import io.github.xororz.localdream.data.ModelUsageRanking
 import io.github.xororz.localdream.data.RuntimeCompatibilityEvaluator
+import io.github.xororz.localdream.data.RuntimeProbe
+import io.github.xororz.localdream.data.RuntimeProbeEvaluator
+import io.github.xororz.localdream.data.RuntimeProbeInput
 import java.io.File
 import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -82,7 +87,10 @@ class BackendService : Service() {
         // reuse/latency, never correctness: a slower re-entry just starts fresh.
         private const val IDLE_GRACE_MS = 1500L
         private const val FORCE_STOP_TIMEOUT_SECONDS = 5L
+        private const val RUNTIME_READY_POLL_MS = 250L
+        private const val RUNTIME_READY_ATTEMPTS = 240
         private val TILE_PROGRESS_REGEX = Regex("""Processed tile (\d+)/(\d+)""")
+        private val PROCESS_PID_REGEX = Regex("""pid=(\d+)""")
 
         const val ACTION_STOP = "io.github.xororz.localdream.STOP_GENERATION"
         const val ACTION_RESTART = "io.github.xororz.localdream.RESTART_BACKEND"
@@ -97,6 +105,9 @@ class BackendService : Service() {
             "io.github.xororz.localdream.PREPARE_OPENAI_GATEWAY"
         const val EXTRA_REQUEST_OWNER = "request_owner"
         const val EXTRA_IMAGE_INPUT_ENABLED = "image_input_enabled"
+        const val EXTRA_SDXL_LOW_RAM = "sdxl_low_ram"
+        const val EXTRA_ANIMA_LOW_RAM = "anima_low_ram"
+        const val EXTRA_ANIMA_SEQUENTIAL_DIT = "anima_sequential_dit"
         const val EXTRA_EXPECTED_MODEL_ID = "expected_model_id"
         const val REQUEST_OWNER_OPENAI_API = "openai_api"
 
@@ -141,6 +152,7 @@ class BackendService : Service() {
             val _commandResult = MutableStateFlow(BackendCommandResult())
             val _currentLog = MutableStateFlow("")
             val _tileProgress = MutableStateFlow<TileProgress?>(null)
+            val _runtimeProbe = MutableStateFlow(RuntimeProbe(status = io.github.xororz.localdream.data.RuntimeProbeStatus.UNAVAILABLE))
         }
 
         val backendState: StateFlow<BackendState> = StateHolder._backendState
@@ -158,6 +170,7 @@ class BackendService : Service() {
         val currentLog: StateFlow<String> = StateHolder._currentLog
 
         val tileProgress: StateFlow<TileProgress?> = StateHolder._tileProgress
+        val runtimeProbe: StateFlow<RuntimeProbe> = StateHolder._runtimeProbe
 
         private fun updateState(state: BackendState) {
             StateHolder._backendState.value = state
@@ -226,6 +239,9 @@ class BackendService : Service() {
         val height: Int,
         val listenOnAll: Boolean,
         val imageInputEnabled: Boolean,
+        val sdxlLowRam: Boolean,
+        val animaLowRam: Boolean,
+        val animaSequentialDit: Boolean,
     )
 
     override fun onCreate() {
@@ -342,6 +358,7 @@ class BackendService : Service() {
         val imageInputEnabled = backendType != BACKEND_TYPE_UPSCALER &&
             imageInputRequested &&
             hasImageEncoder(modelId, backendType)
+        val preferences = getSharedPreferences("app_prefs", MODE_PRIVATE)
         return BackendConfig(
             modelId = modelId,
             backendType = backendType,
@@ -349,6 +366,15 @@ class BackendService : Service() {
             height = height,
             listenOnAll = listenOnAll,
             imageInputEnabled = imageInputEnabled,
+            sdxlLowRam = intent.takeIf { it.hasExtra(EXTRA_SDXL_LOW_RAM) }
+                ?.getBooleanExtra(EXTRA_SDXL_LOW_RAM, true)
+                ?: preferences.getBoolean("sdxl_lowram", true),
+            animaLowRam = intent.takeIf { it.hasExtra(EXTRA_ANIMA_LOW_RAM) }
+                ?.getBooleanExtra(EXTRA_ANIMA_LOW_RAM, true)
+                ?: preferences.getBoolean("anima_lowram", true),
+            animaSequentialDit = intent.takeIf { it.hasExtra(EXTRA_ANIMA_SEQUENTIAL_DIT) }
+                ?.getBooleanExtra(EXTRA_ANIMA_SEQUENTIAL_DIT, false)
+                ?: preferences.getBoolean("anima_seq_dit", false),
         )
     }
 
@@ -623,20 +649,44 @@ class BackendService : Service() {
                 return false
             }
 
+            val contextFingerprint = File(modelsDir, "unet.bin")
+                .takeIf(File::isFile)
+                ?.let(RuntimeCompatibilityEvaluator::sha256)
+            val manifestJson = runCatching {
+                assets.open(RUNTIME_MANIFEST_ASSET).bufferedReader().use { it.readText() }
+            }.getOrNull()
             val compatibility = RuntimeCompatibilityEvaluator().evaluate(
-                manifestJson = runCatching {
-                    assets.open(RUNTIME_MANIFEST_ASSET).bufferedReader().use { it.readText() }
-                }.getOrNull(),
+                manifestJson = manifestJson,
                 runtimeDirectory = runtimeDir,
                 coreFile = executableFile,
                 metadata = ModelMetadataStore.read(modelsDir),
                 deviceAbi = Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown",
                 htpTarget = HTP_TARGET,
-                contextFingerprint = File(modelsDir, "unet.bin")
-                    .takeIf(File::isFile)
-                    ?.let(RuntimeCompatibilityEvaluator::sha256),
+                contextFingerprint = contextFingerprint,
             )
+            val runtimeManifest = manifestJson?.let { raw ->
+                runCatching { io.github.xororz.localdream.data.RuntimeManifest.fromJsonString(raw) }.getOrNull()
+            }
+            fun publishRuntimeProbe(nativeReady: Boolean?, loadedLibraryFingerprints: Map<String, String> = emptyMap()) {
+                StateHolder._runtimeProbe.value = RuntimeProbeEvaluator.evaluate(
+                    RuntimeProbeInput(
+                        deviceModel = Build.MODEL,
+                        soc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else null,
+                        abi = Build.SUPPORTED_ABIS.firstOrNull(),
+                        qairtVersion = runtimeManifest?.qairtVersion,
+                        htpTarget = HTP_TARGET,
+                        contextFingerprint = contextFingerprint,
+                        // Static manifest files only prove what the APK prepared.
+                        // VERIFIED is published later from /proc/<pid>/maps after
+                        // the process has answered /health.
+                        loadedLibraryFingerprints = loadedLibraryFingerprints,
+                        compatibility = compatibility,
+                        nativeReady = nativeReady,
+                    ),
+                )
+            }
             if (!compatibility.isCompatible) {
+                publishRuntimeProbe(nativeReady = false)
                 val detail = compatibility.rejections.joinToString(",")
                 Log.e(TAG, "RUNTIME_FINGERPRINT_MISMATCH: $detail")
                 updateState(
@@ -648,7 +698,6 @@ class BackendService : Service() {
                 Log.w(TAG, "Model has no runtime metadata; using compatibility fallback")
             }
 
-            val preferences = this.getSharedPreferences("app_prefs", MODE_PRIVATE)
             val usesUnifiedCli = supportsUnifiedNativeCli(executableFile)
             val command = NativeBackendCommandFactory.build(
                 executableFile = executableFile,
@@ -661,9 +710,9 @@ class BackendService : Service() {
                     height = config.height,
                     listenOnAll = config.listenOnAll,
                     imageInputEnabled = config.imageInputEnabled,
-                    sdxlLowRam = preferences.getBoolean("sdxl_lowram", true),
-                    animaLowRam = preferences.getBoolean("anima_lowram", true),
-                    animaSequentialDit = preferences.getBoolean("anima_seq_dit", false),
+                    sdxlLowRam = config.sdxlLowRam,
+                    animaLowRam = config.animaLowRam,
+                    animaSequentialDit = config.animaSequentialDit,
                 ),
                 usesUnifiedCli = usesUnifiedCli,
             )
@@ -719,11 +768,16 @@ class BackendService : Service() {
 
             val proc = processBuilder.start()
             process = proc
+            publishRuntimeProbe(nativeReady = null)
+            awaitRuntimeEvidence(proc, runtimeDir) { ready, fingerprints ->
+                if (process === proc) publishRuntimeProbe(ready, fingerprints)
+            }
 
             startMonitorThread(proc)
 
             return true
         } catch (e: Exception) {
+            StateHolder._runtimeProbe.value = RuntimeProbe(status = io.github.xororz.localdream.data.RuntimeProbeStatus.UNAVAILABLE)
             Log.e(TAG, "backend start failed", e)
             updateState(BackendState.Error("backend start failed: ${e.message}", config.modelId))
             return false
@@ -752,6 +806,69 @@ class BackendService : Service() {
         }
         unifiedNativeCli = unified
         return unified
+    }
+
+    /**
+     * A successful ProcessBuilder call is not runtime readiness. Wait for the
+     * native listener, then derive library evidence from this exact child's
+     * mapped files; absent evidence deliberately remains UNAVAILABLE.
+     */
+    private fun awaitRuntimeEvidence(
+        proc: Process,
+        runtimeDirectory: File,
+        publish: (Boolean?, Map<String, String>) -> Unit,
+    ) {
+        Thread {
+            repeat(RUNTIME_READY_ATTEMPTS) {
+                if (process !== proc || !proc.isAlive) {
+                    publish(null, emptyMap())
+                    return@Thread
+                }
+                if (nativeHealthReady()) {
+                    val fingerprints = runtimeLibraryFingerprints(proc, runtimeDirectory)
+                    publish(if (fingerprints.isNotEmpty()) true else null, fingerprints)
+                    return@Thread
+                }
+                Thread.sleep(RUNTIME_READY_POLL_MS)
+            }
+            if (process === proc) publish(null, emptyMap())
+        }.apply {
+            isDaemon = true
+            name = "runtime-evidence"
+            start()
+        }
+    }
+
+    private fun nativeHealthReady(): Boolean = runCatching {
+        val connection = URL("http://127.0.0.1:8081/health").openConnection() as HttpURLConnection
+        try {
+            connection.connectTimeout = RUNTIME_READY_POLL_MS.toInt()
+            connection.readTimeout = RUNTIME_READY_POLL_MS.toInt()
+            connection.requestMethod = "GET"
+            connection.responseCode in 200..299
+        } finally {
+            connection.disconnect()
+        }
+    }.getOrDefault(false)
+
+    private fun runtimeLibraryFingerprints(proc: Process, runtimeDirectory: File): Map<String, String> = runCatching {
+        val root = runtimeDirectory.canonicalFile
+        val pid = PROCESS_PID_REGEX.find(proc.toString())?.groupValues?.get(1)
+            ?: return@runCatching emptyMap()
+        File("/proc/$pid/maps").useLines { lines ->
+            lines.mapNotNull { line ->
+                val mappedPath = line.substringAfterLast(' ', missingDelimiterValue = "")
+                    .removeSuffix(" (deleted)")
+                File(mappedPath).takeIf { file ->
+                    file.isFile && file.canonicalPath.startsWith("${root.path}/")
+                }
+            }.distinctBy { file -> file.canonicalFile.path }.associate { file ->
+                file.name to RuntimeCompatibilityEvaluator.sha256(file)
+            }
+        }
+    }.getOrElse {
+        Log.w(TAG, "Unable to read actual native library mappings", it)
+        emptyMap()
     }
 
     private fun startMonitorThread(proc: Process) {
@@ -792,6 +909,9 @@ class BackendService : Service() {
             // we didn't intentionally stop it; a torn-down or superseded process
             // exiting is expected and must not poison the shared backendState.
             if (isLiveCrash(proc)) {
+                StateHolder._runtimeProbe.value = RuntimeProbe(
+                    status = io.github.xororz.localdream.data.RuntimeProbeStatus.UNAVAILABLE,
+                )
                 updateState(
                     BackendState.Error(
                         "Backend process exited with code: $exitCode",
@@ -863,6 +983,9 @@ class BackendService : Service() {
             }
         }
         if (process?.isAlive == true) return false
+        StateHolder._runtimeProbe.value = RuntimeProbe(
+            status = io.github.xororz.localdream.data.RuntimeProbeStatus.UNAVAILABLE,
+        )
         serving = null
         updateServing(null)
         StateHolder._currentLog.value = ""

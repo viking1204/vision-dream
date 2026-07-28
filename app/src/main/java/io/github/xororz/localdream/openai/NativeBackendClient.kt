@@ -32,6 +32,7 @@ class NativeBackendClient {
         parameters: ImageRequestParameters,
         width: Int,
         height: Int,
+        onDiffusionStep: ((step: Int, totalSteps: Int) -> Unit)? = null,
     ): GeneratedImage {
         val payload = JSONObject().apply {
             put("prompt", parameters.prompt)
@@ -42,7 +43,10 @@ class NativeBackendClient {
             put("height", height)
             put("denoise_strength", parameters.denoiseStrength)
             put("scheduler", parameters.scheduler)
-            put("show_diffusion_process", false)
+            // The native SSE sends one progress message per diffusion step even
+            // when previews are unavailable. MCP consumes those messages to
+            // expose real progress; ordinary /v1 callers retain the old mode.
+            put("show_diffusion_process", onDiffusionStep != null)
             put("output_format", "png")
             parameters.seed?.let { put("seed", it) }
             parameters.sourceImage?.let {
@@ -71,6 +75,14 @@ class NativeBackendClient {
                 if (data == "[DONE]") break
                 val event = JSONObject(data)
                 when (event.optString("type")) {
+                    "progress" -> {
+                        val step = event.optInt("step")
+                        val totalSteps = event.optInt("total_steps")
+                        if (step > 0 && totalSteps > 0 && step <= totalSteps) {
+                            onDiffusionStep?.invoke(step, totalSteps)
+                        }
+                    }
+
                     "complete" -> {
                         val image = event.optString("image")
                         if (image.isBlank()) {

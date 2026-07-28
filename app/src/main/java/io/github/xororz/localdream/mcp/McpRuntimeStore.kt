@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import io.github.xororz.localdream.inference.InferenceDispatcher
 import io.github.xororz.localdream.service.BackendService
+import io.github.xororz.localdream.data.RuntimeProbeProjection
+import io.github.xororz.localdream.data.RuntimeProbeStatus
+import io.github.xororz.localdream.data.toProtectedProjection
 
 /**
  * MCP projection of the product runtime lifecycle.  It intentionally exposes
@@ -15,7 +18,13 @@ interface McpRuntimeStore {
     fun unload(runtimeId: String): McpRuntimeUnloadResult
 
     object Unavailable : McpRuntimeStore {
-        override fun status() = McpRuntimeStatus(McpRuntimeState.IDLE, null, 0, false)
+        override fun status() = McpRuntimeStatus(
+            state = McpRuntimeState.IDLE,
+            runtimeId = null,
+            queuedTaskCount = 0,
+            hasActiveTask = false,
+            runtimeProbe = RuntimeProbeProjection(RuntimeProbeStatus.UNAVAILABLE, emptyList()),
+        )
         override fun unload(runtimeId: String) = McpRuntimeUnloadResult.NOT_LOADED
     }
 }
@@ -25,6 +34,7 @@ data class McpRuntimeStatus(
     val runtimeId: String?,
     val queuedTaskCount: Int,
     val hasActiveTask: Boolean,
+    val runtimeProbe: RuntimeProbeProjection,
 )
 
 enum class McpRuntimeState(val wireValue: String) {
@@ -59,6 +69,7 @@ class AndroidMcpRuntimeStore(
         runtimeId = BackendService.servingModelId.value,
         queuedTaskCount = dispatcher.queuedTaskCount,
         hasActiveTask = dispatcher.hasActiveTask,
+        runtimeProbe = BackendService.runtimeProbe.value.toProtectedProjection(),
     )
 
     override fun unload(runtimeId: String): McpRuntimeUnloadResult = dispatcher.tryRunRuntimeTransition {

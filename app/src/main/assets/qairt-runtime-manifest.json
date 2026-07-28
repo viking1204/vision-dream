@@ -7,8 +7,8 @@
   },
   "precompiledCore": {
     "name": "libstable_diffusion_core.so",
-    "bytes": 11512944,
-    "sha256": "783a35b5101260ea9a73e6fbeca62adb08157fc30b97644e5c140da13b41f905"
+    "bytes": 11517408,
+    "sha256": "fba96b3cf395b0d47d3c7151f33850a037d35ecd34b25903d01927c16d5f0924"
   },
   "packagedRuntime": [
     {

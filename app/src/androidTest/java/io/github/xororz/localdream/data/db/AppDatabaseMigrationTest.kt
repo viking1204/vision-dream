@@ -38,7 +38,7 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migrationFrom3To5PreservesHistoryAndCreatesV5Structures() {
+    fun migrationFrom3To6PreservesHistoryAndCreatesPresetBindingStructure() {
         createVersion3Database()
 
         val migrated = Room.databaseBuilder(
@@ -46,7 +46,7 @@ class AppDatabaseMigrationTest {
             AppDatabase::class.java,
             DATABASE_NAME,
         )
-            .addMigrations(AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5)
+            .addMigrations(AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6)
             .allowMainThreadQueries()
             .build()
         roomDatabase = migrated
@@ -80,6 +80,19 @@ class AppDatabaseMigrationTest {
             assertTrue(cursor.isNull(6))
             assertTrue(cursor.isNull(7))
             assertTrue(cursor.isNull(8))
+        }
+
+        runBlocking {
+            migrated.performancePresetBindingDao().save(
+                PerformancePresetBindingEntity(
+                    bindingKey = "DEFAULT",
+                    presetId = "00000000-0000-4000-8000-000000000000",
+                    updatedAt = 70,
+                ),
+            )
+            val binding = migrated.performancePresetBindingDao().get("DEFAULT")
+            assertEquals("00000000-0000-4000-8000-000000000000", binding?.presetId)
+            assertEquals(70L, binding?.updatedAt)
         }
 
         runBlocking {
