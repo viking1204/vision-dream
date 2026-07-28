@@ -4,12 +4,28 @@ project(libstable_diffusion_core.so C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# QNN SDK PATH
+# QAIRT/QNN SDK path. Keep the default aligned with the precompiled artifact
+# checked into this repository, and fail closed when a different SDK is used.
+set(EXPECTED_QAIRT_VERSION "2.48.40")
+set(EXPECTED_QAIRT_BUILD_ID "260702151143")
 set(DEFAULT_QNN_SDK_ROOT "$ENV{QNN_SDK_ROOT}")
 if(DEFAULT_QNN_SDK_ROOT STREQUAL "")
-    set(DEFAULT_QNN_SDK_ROOT "$ENV{HOME}/Library/Android/qairt/2.44.0.260225")
+    set(DEFAULT_QNN_SDK_ROOT "$ENV{HOME}/Library/Android/qairt/2.48.40.260702")
 endif()
 set(QNN_SDK_ROOT "${DEFAULT_QNN_SDK_ROOT}" CACHE PATH "QAIRT/QNN SDK root path")
+
+set(QAIRT_SDK_MANIFEST "${QNN_SDK_ROOT}/sdk.yaml")
+if(NOT EXISTS "${QAIRT_SDK_MANIFEST}")
+    message(FATAL_ERROR "QAIRT sdk.yaml not found under QNN_SDK_ROOT=${QNN_SDK_ROOT}")
+endif()
+file(READ "${QAIRT_SDK_MANIFEST}" QAIRT_SDK_MANIFEST_CONTENT)
+string(FIND "${QAIRT_SDK_MANIFEST_CONTENT}" "version: ${EXPECTED_QAIRT_VERSION}" QAIRT_VERSION_MATCH)
+string(FIND "${QAIRT_SDK_MANIFEST_CONTENT}" "build_id: ${EXPECTED_QAIRT_BUILD_ID}" QAIRT_BUILD_MATCH)
+if(QAIRT_VERSION_MATCH EQUAL -1 OR QAIRT_BUILD_MATCH EQUAL -1)
+    message(FATAL_ERROR
+        "Unsupported QAIRT SDK at ${QNN_SDK_ROOT}; expected "
+        "${EXPECTED_QAIRT_VERSION} build ${EXPECTED_QAIRT_BUILD_ID}")
+endif()
 
 file(COPY ${QNN_SDK_ROOT}/examples/QNN/SampleApp/SampleApp/
     DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/SampleApp)

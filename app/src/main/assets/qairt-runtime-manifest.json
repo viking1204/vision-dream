@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "qairt": {
+    "version": "2.48.40",
+    "buildId": "260702151143",
+    "qnnBackendApiVersion": "2.18.0"
+  },
+  "precompiledCore": {
+    "name": "libstable_diffusion_core.so",
+    "bytes": 11512944,
+    "sha256": "783a35b5101260ea9a73e6fbeca62adb08157fc30b97644e5c140da13b41f905"
+  },
+  "packagedRuntime": [
+    {
+      "name": "libQnnHtp.so",
+      "bytes": 3760136,
+      "sha256": "6e6da5284060ca4369bb6fd3c6f2b661a9cebabb2cf4cf695cd77f558082265f"
+    },
+    {
+      "name": "libQnnHtpV68.so",
+      "bytes": 10628804,
+      "sha256": "59eca16457b125e684e950cba1692a0a6eebd0b953f58c6f9def706db10f8792"
+    },
+    {
+      "name": "libQnnHtpV68Skel.so",
+      "bytes": 10240928,
+      "sha256": "722426cbc5c74a2f9deff6e80c9e313071a8e32f4cd97a5c1df4404b2e597958"
+    },
+    {
+      "name": "libQnnHtpV68Stub.so",
+      "bytes": 747048,
+      "sha256": "731527f32191a7fc5f94529f32afe55117819f12ea4fdccdc99b13e167d45bfe"
+    },
+    {
+      "name": "libQnnHtpV69.so",
+      "bytes": 11926340,
+      "sha256": "ea9edee1462b3674116690c7870129f9552f8334968d9173c1dadf8368a10249"
+    },
+    {
+      "name": "libQnnHtpV69Skel.so",
+      "bytes": 11530400,
+      "sha256": "30e08fc4ea142ad6b7c1e5ffc9600f03f0671331344ff7bfdb65ca213e88dbf6"
+    },
+    {
+      "name": "libQnnHtpV69Stub.so",
+      "bytes": 747592,
+      "sha256": "20586a32c80c3592b838a97c82f46eab8d86d4db335d22f6787e34bed779e143"
+    },
+    {
+      "name": "libQnnHtpV73.so",
+      "bytes": 11904248,
+      "sha256": "1543ac4de6e0d09c7abbdf61410b5912d6cb1965cdbb91bc1ed5095311943bc5"
+    },
+    {
+      "name": "libQnnHtpV73Skel.so",
+      "bytes": 11531512,
+      "sha256": "44f49cafe1926d414103390ebf7ebeb783daa0b9f89416085fea626745e34289"
+    },
+    {
+      "name": "libQnnHtpV73Stub.so",
+      "bytes": 754480,
+      "sha256": "24c406e40bc0537a9ad8da220cdedc3ea81f64a9f04e54c7ae1d006e39a03b17"
+    },
+    {
+      "name": "libQnnHtpV75.so",
+      "bytes": 11912440,
+      "sha256": "7f1c8f9eb5343ebd12d61b735e5fe0f1e020c3db5e69bea53d04143a40c326bb"
+    },
+    {
+      "name": "libQnnHtpV75Skel.so",
+      "bytes": 11535612,
+      "sha256": "94f1084222a63fe05e8e68421bedd727e71a882b82f3299d4081cf2c9dfed846"
+    },
+    {
+      "name": "libQnnHtpV75Stub.so",
+      "bytes": 754480,
+      "sha256": "06a2af5d5145899c7f687669cb7c120710db8935aa9ac93b821ecff1a8142891"
+    },
+    {
+      "name": "libQnnHtpV79.so",
+      "bytes": 12077688,
+      "sha256": "c9774f311f4318c0ed72e0fe4f69baffb61e432767d54831718d03c3d72b8d3e"
+    },
+    {
+      "name": "libQnnHtpV79Skel.so",
+      "bytes": 11702104,
+      "sha256": "974583f0cdc3d42de7a0633c9b987b160ad033a4cd53be30f9b5480b7e5a3213"
+    },
+    {
+      "name": "libQnnHtpV79Stub.so",
+      "bytes": 754480,
+      "sha256": "b3b4cca02e1f2cb5778ef9f18850814358d62a0b90123b25bb2806731a6af8b3"
+    },
+    {
+      "name": "libQnnHtpV81.so",
+      "bytes": 12973784,
+      "sha256": "a9b19b5e72fce9222c866e6d4ad44a739ad38bff001fc8499d7033da39759c70"
+    },
+    {
+      "name": "libQnnHtpV81Skel.so",
+      "bytes": 12606648,
+      "sha256": "a0b9750d900a0afbba240e3506ba63ba91ec0e7f1b3a44de9afbb6818a665a32"
+    },
+    {
+      "name": "libQnnHtpV81Stub.so",
+      "bytes": 777848,
+      "sha256": "16188365d86ef09a9067e8e04b7fa1c604729d1870219b1bbf04ee904e6c3ffa"
+    },
+    {
+      "name": "libQnnSystem.so",
+      "bytes": 4052904,
+      "sha256": "4cd077547a939b131c4733391545d64bdc4f9d0c86de78793335ddd18348789e"
+    }
+  ],
+  "distribution": {
+    "precompiledCore": "tracked-in-repository",
+    "qualcommRuntime": "packaged-in-application-only",
+    "sdkArchive": "not-distributed"
+  }
+}

@@ -21,6 +21,12 @@ class ModelMetadataTest {
                 revision = "a".repeat(40),
                 artifactKind = "local_dream_directory",
             ),
+            runtimeCompatibility = ModelRuntimeCompatibility(
+                qairtVersion = "2.48.40",
+                abi = "arm64-v8a",
+                htpTarget = "v79",
+                contextFingerprint = "a".repeat(64),
+            ),
         )
 
         ModelMetadataStore.write(directory, expected)
@@ -34,9 +40,19 @@ class ModelMetadataTest {
         assertEquals(null, ModelMetadataStore.read(directory))
 
         directory.resolve(ModelMetadataStore.FILE_NAME).writeText(
-            """{"schema_version":2,"content_rating":"nsfw"}""",
+            """{"schema_version":3,"content_rating":"nsfw"}""",
         )
         assertEquals(null, ModelMetadataStore.read(directory))
+    }
+
+    @Test
+    fun v1MetadataRemainsReadableWithUnknownRuntimeCompatibility() {
+        val metadata = ModelMetadata.fromJsonString(
+            """{"schema_version":1,"content_rating":"sfw"}""",
+        )
+
+        assertEquals(ModelContentRating.SFW, metadata.contentRating)
+        assertEquals(null, metadata.runtimeCompatibility)
     }
 
     @Test

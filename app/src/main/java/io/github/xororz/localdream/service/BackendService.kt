@@ -9,7 +9,9 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.Model
+import io.github.xororz.localdream.data.ModelMetadataStore
 import io.github.xororz.localdream.data.ModelUsageRanking
+import io.github.xororz.localdream.data.RuntimeCompatibilityEvaluator
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.Executors
@@ -67,6 +69,8 @@ class BackendService : Service() {
         private const val TAG = "BackendService"
         private const val EXECUTABLE_NAME = "libstable_diffusion_core.so"
         private const val RUNTIME_DIR = "runtime_libs"
+        private const val RUNTIME_MANIFEST_ASSET = "qairt-runtime-manifest.json"
+        private const val HTP_TARGET = "v79"
         private const val NOTIFICATION_ID = 2
         private const val CHANNEL_ID = "backend_service_channel"
 
@@ -617,6 +621,31 @@ class BackendService : Service() {
             if (!executableFile.exists()) {
                 Log.e(TAG, "error: executable does not exist: ${executableFile.absolutePath}")
                 return false
+            }
+
+            val compatibility = RuntimeCompatibilityEvaluator().evaluate(
+                manifestJson = runCatching {
+                    assets.open(RUNTIME_MANIFEST_ASSET).bufferedReader().use { it.readText() }
+                }.getOrNull(),
+                runtimeDirectory = runtimeDir,
+                coreFile = executableFile,
+                metadata = ModelMetadataStore.read(modelsDir),
+                deviceAbi = Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown",
+                htpTarget = HTP_TARGET,
+                contextFingerprint = File(modelsDir, "unet.bin")
+                    .takeIf(File::isFile)
+                    ?.let(RuntimeCompatibilityEvaluator::sha256),
+            )
+            if (!compatibility.isCompatible) {
+                val detail = compatibility.rejections.joinToString(",")
+                Log.e(TAG, "RUNTIME_FINGERPRINT_MISMATCH: $detail")
+                updateState(
+                    BackendState.Error("RUNTIME_FINGERPRINT_MISMATCH: $detail", config.modelId),
+                )
+                return false
+            }
+            if (compatibility.requiresCompatibilityFallback) {
+                Log.w(TAG, "Model has no runtime metadata; using compatibility fallback")
             }
 
             val preferences = this.getSharedPreferences("app_prefs", MODE_PRIVATE)

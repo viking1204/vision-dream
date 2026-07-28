@@ -70,6 +70,18 @@ data class ModelSourceMetadata(
 )
 
 /**
+ * A model's explicit contract with the packaged NPU runtime.  These values
+ * come from the model build/validation input; they are deliberately not
+ * inferred from a directory name or a runtime library filename.
+ */
+data class ModelRuntimeCompatibility(
+    val qairtVersion: String,
+    val abi: String,
+    val htpTarget: String,
+    val contextFingerprint: String,
+)
+
+/**
  * Versioned metadata owned by Vision Dream, separate from model-provided
  * generation defaults in config.json.
  */
@@ -78,6 +90,7 @@ data class ModelMetadata(
     val ratingSource: ModelRatingSource? = null,
     val ratingEvidence: Set<String> = emptySet(),
     val source: ModelSourceMetadata? = null,
+    val runtimeCompatibility: ModelRuntimeCompatibility? = null,
 ) {
     fun toJsonString(): String = JSONObject().apply {
         put(KEY_SCHEMA_VERSION, SCHEMA_VERSION)
@@ -99,10 +112,21 @@ data class ModelMetadata(
                 },
             )
         }
+        runtimeCompatibility?.let {
+            put(
+                KEY_RUNTIME_COMPATIBILITY,
+                JSONObject().apply {
+                    put(KEY_QAIRT_VERSION, it.qairtVersion)
+                    put(KEY_ABI, it.abi)
+                    put(KEY_HTP_TARGET, it.htpTarget)
+                    put(KEY_CONTEXT_FINGERPRINT, it.contextFingerprint)
+                },
+            )
+        }
     }.toString()
 
     companion object {
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
 
         private const val KEY_SCHEMA_VERSION = "schema_version"
         private const val KEY_CONTENT_RATING = "content_rating"
@@ -112,10 +136,16 @@ data class ModelMetadata(
         private const val KEY_REPOSITORY_ID = "repository_id"
         private const val KEY_REVISION = "revision"
         private const val KEY_ARTIFACT_KIND = "artifact_kind"
+        private const val KEY_RUNTIME_COMPATIBILITY = "runtime_compatibility"
+        private const val KEY_QAIRT_VERSION = "qairt_version"
+        private const val KEY_ABI = "abi"
+        private const val KEY_HTP_TARGET = "htp_target"
+        private const val KEY_CONTEXT_FINGERPRINT = "context_fingerprint"
 
         fun fromJsonString(rawJson: String): ModelMetadata {
             val json = JSONObject(rawJson)
-            require(json.optInt(KEY_SCHEMA_VERSION, -1) == SCHEMA_VERSION) {
+            val schemaVersion = json.optInt(KEY_SCHEMA_VERSION, -1)
+            require(schemaVersion in 1..SCHEMA_VERSION) {
                 "Unsupported model metadata schema"
             }
             val sourceJson = json.optJSONObject(KEY_SOURCE)
@@ -138,6 +168,25 @@ data class ModelMetadata(
                     values.optString(index).trim().takeIf(String::isNotEmpty)?.let(::add)
                 }
             }
+            val runtimeCompatibility = json.optJSONObject(KEY_RUNTIME_COMPATIBILITY)?.let {
+                val qairtVersion = it.optString(KEY_QAIRT_VERSION).trim()
+                val abi = it.optString(KEY_ABI).trim()
+                val htpTarget = it.optString(KEY_HTP_TARGET).trim()
+                val contextFingerprint = it.optString(KEY_CONTEXT_FINGERPRINT).trim()
+                if (
+                    qairtVersion.isEmpty() || abi.isEmpty() || htpTarget.isEmpty() ||
+                    contextFingerprint.isEmpty()
+                ) {
+                    null
+                } else {
+                    ModelRuntimeCompatibility(
+                        qairtVersion = qairtVersion,
+                        abi = abi,
+                        htpTarget = htpTarget,
+                        contextFingerprint = contextFingerprint,
+                    )
+                }
+            }
             return ModelMetadata(
                 contentRating = ModelContentRating.fromSerialized(
                     json.optString(KEY_CONTENT_RATING),
@@ -147,6 +196,7 @@ data class ModelMetadata(
                 ),
                 ratingEvidence = evidence,
                 source = source,
+                runtimeCompatibility = runtimeCompatibility,
             )
         }
     }

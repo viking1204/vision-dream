@@ -92,6 +92,10 @@ android {
         }
         jniLibs {
             useLegacyPackaging = true
+            // The release native build already strips this executable. Keep
+            // Gradle from rewriting it so the packaged bytes continue to match
+            // qairt-runtime-manifest.json.
+            keepDebugSymbols += "**/libstable_diffusion_core.so"
         }
     }
 }
