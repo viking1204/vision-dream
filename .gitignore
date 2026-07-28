@@ -34,3 +34,8 @@ app/src/main/assets/qnnlibs
 
 # Kotlin compiler session artifacts
 .kotlin/
+
+# Local development loop ledgers and Python caches
+docs/loop-records/
+__pycache__/
+*.py[cod]
