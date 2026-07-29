@@ -1,6 +1,7 @@
 package io.github.xororz.localdream.mcp
 
 import android.util.Log
+import io.github.xororz.localdream.openai.OpenAiApiPreferences
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.IOException
@@ -13,8 +14,6 @@ import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-import io.github.xororz.localdream.openai.OpenAiApiPreferences
 import org.json.JSONObject
 
 /**
@@ -27,13 +26,12 @@ class McpHttpServer(
     private val credentialStore: McpClientCredentialStore,
     private val sessions: McpSessionRegistry = McpSessionRegistry(),
     private val allowedLanHosts: () -> Set<String> = { emptySet() },
-    private val imageCapabilities: McpImageCapabilityStore = McpImageCapabilityStore(),
     private val imageResolver: McpImageContentResolver = McpImageContentResolver { null },
     private val auditSink: McpAuditSink = McpAuditSink.None,
     private val toolRegistry: McpToolRegistry = McpToolRegistry(),
-    private val confirmationStore: McpConfirmationStore = McpConfirmationStore(),
     private val toolGateway: McpToolGateway = McpToolGateway.Unavailable,
     private val guards: McpTransportGuards = McpTransportGuards(),
+    private val mutationReplays: McpMutationReplayStore = McpMutationReplayStore(),
     private val sseEvents: McpSseEventStore = McpSseEventStore(),
     private val bindAddress: String? = null,
 ) {
@@ -48,6 +46,7 @@ class McpHttpServer(
     }
     private val clients = ConcurrentHashMap.newKeySet<Socket>()
     private val taskEvents = McpTaskEventBus.subscribe { event ->
+        sseEvents.pruneExpired()
         sessions.sessionsFor(event.clientId, transport).forEach { session ->
             sseEvents.publish(session.id, if (event.isDiffusionProgress) "progress" else "task", taskEvent(event))
         }
@@ -82,6 +81,7 @@ class McpHttpServer(
         workers.shutdownNow()
         sseWorkers.shutdownNow()
         taskEvents.close()
+        sseEvents.closeAll()
     }
 
     private fun acceptLoop(serverSocket: ServerSocket) {
@@ -126,7 +126,7 @@ class McpHttpServer(
         val client = credentialStore.authenticate(request.bearerToken(), transport)
             ?: return HttpResponse.unauthorized()
         val startedAt = System.currentTimeMillis()
-        val response = if (request.path.startsWith(McpProtocol.IMAGE_PATH_PREFIX)) {
+        val response = if (request.path.startsWith(McpProtocol.ASSET_PATH_PREFIX)) {
             image(request, client)
         } else if (request.path != McpProtocol.PATH) {
             HttpResponse.notFound()
@@ -136,8 +136,11 @@ class McpHttpServer(
                     val retryAfter = guards.takeRpc(client.clientId)
                     if (retryAfter == null) post(request, client) else HttpResponse.rateLimited(retryAfter)
                 }
+
                 "GET" -> get(request, client)
+
                 "DELETE" -> delete(request, client)
+
                 else -> HttpResponse.methodNotAllowed()
             }
         }
@@ -178,7 +181,7 @@ class McpHttpServer(
     )
 
     private fun auditMethod(request: HttpRequest): String = when {
-        request.path.startsWith(McpProtocol.IMAGE_PATH_PREFIX) -> "images.get"
+        request.path.startsWith(McpProtocol.ASSET_PATH_PREFIX) -> "assets.get"
 
         request.method == "GET" -> "sse.get"
 
@@ -205,23 +208,19 @@ class McpHttpServer(
     }.getOrNull() ?: "OK"
 
     /**
-     * A successful response consumes the capability before writing bytes, so a
-     * second request cannot replay it. The resolver receives only the opaque
-     * asset id held by the server-side capability, never a client file path.
+     * Asset links are stable and authenticated by the same MCP bearer token as
+     * RPC calls. The resolver receives only a validated asset id, never a
+     * client-supplied file path.
      */
     private fun image(request: HttpRequest, client: McpAuthenticatedClient): HttpResponse {
         if (request.method != "GET") return HttpResponse.methodNotAllowed("GET")
-        val pathParts = request.path.removePrefix(McpProtocol.IMAGE_PATH_PREFIX).split('/')
-        if (pathParts.size != 2 || pathParts.any(String::isBlank)) return HttpResponse.notFound()
-        val (jobId, token) = pathParts
-        val candidate = imageCapabilities.peek(token, client.clientId, jobId, client.transport)
+        if (ASSETS_READ_SCOPE !in client.scopes) return HttpResponse.forbidden("SCOPE_DENIED")
+        val assetId = request.path.removePrefix(McpProtocol.ASSET_PATH_PREFIX)
+        if (assetId.isBlank() || '/' in assetId) return HttpResponse.notFound()
+        val content = imageResolver.resolve(assetId)
+            ?.takeIf { it.bytes.isNotEmpty() }
             ?: return HttpResponse.notFound()
-        val content = imageResolver.resolve(candidate)
-            ?.takeIf { it.mimeType == candidate.mimeType && it.bytes.isNotEmpty() }
-            ?: return HttpResponse.notFound()
-        val consumed = imageCapabilities.consume(token, client.clientId, jobId, client.transport)
-            ?: return HttpResponse.notFound()
-        return HttpResponse.bytes(200, consumed.mimeType, content.bytes)
+        return HttpResponse.bytes(200, content.mimeType, content.bytes)
     }
 
     private fun post(request: HttpRequest, client: McpAuthenticatedClient): HttpResponse {
@@ -251,8 +250,11 @@ class McpHttpServer(
                 // MCP ping succeeds with an empty result object.  Extra fields break
                 // the protocol schema and must not become an undocumented contract.
                 "ping" -> HttpResponse.json(McpProtocol.result(id, JSONObject()).toString())
+
                 "tools/list" -> toolsList(id)
+
                 "tools/call" -> toolsCall(id, json.optJSONObject("params"), client)
+
                 else -> jsonError(id, -32601, "METHOD_NOT_FOUND", "Method is not enabled")
             }
         }
@@ -290,9 +292,9 @@ class McpHttpServer(
     }
 
     /**
-     * Confirmation id is deliberately outside Tool arguments.  It is transport
-     * authorization metadata, not a domain parameter and therefore cannot
-     * bypass the registry's no-extra-fields rule.
+     * A valid client Token plus the Tool scope is the complete authorization
+     * boundary. Destructive calls do not have a second local-confirmation
+     * protocol.
      */
     private fun toolsCall(id: Any?, params: JSONObject?, client: McpAuthenticatedClient): HttpResponse {
         if (params == null || !params.keys().asSequence().all(TOOL_CALL_PARAM_KEYS::contains)) {
@@ -311,32 +313,44 @@ class McpHttpServer(
             risk = invocation.definition.risk.name.lowercase(Locale.ROOT),
             parameterDigest = invocation.parameterDigest,
         )
-        if (invocation.definition.risk == McpToolRisk.DESTRUCTIVE) {
-            val confirmationId = params.optString("confirmationId")
-            val confirmation = McpConfirmationRequest(
-                clientId = client.clientId,
-                tokenGeneration = client.tokenGeneration,
-                action = invocation.definition.name,
-                parameterDigest = invocation.parameterDigest,
-                targetIds = invocation.targetIds,
-                scopes = client.scopes,
-            )
-            if (confirmationId.isBlank()) {
-                confirmationStore.requestUiConfirmation(confirmation)
-                return toolRejected(id, "CONFIRMATION_REQUIRED", audit)
-            }
-            if (confirmationStore.consume(confirmationId, confirmation) != McpConfirmationResult.APPROVED) {
-                return toolRejected(id, "CONFIRMATION_INVALID", audit)
+        val dryRun = arguments.opt(McpToolRegistry.DRY_RUN) as? Boolean
+        val idempotencyKey = arguments.optString(McpToolRegistry.IDEMPOTENCY_KEY)
+        if (invocation.definition.risk != McpToolRisk.READ && dryRun != true) {
+            mutationReplays.replay(client, invocation, idempotencyKey)?.let { replayed ->
+                return toolExecution(id, replayed, audit)
             }
         }
-        return when (val execution = toolGateway.execute(client, invocation, arguments)) {
-            is McpToolGatewayResult.Completed -> HttpResponse.json(
-                McpProtocol.result(id, execution.result).toString(),
-                audit = audit.copy(jobId = execution.jobId),
+        val execution = when {
+            invocation.definition.risk == McpToolRisk.DESTRUCTIVE && dryRun == true -> McpToolGatewayResult.Completed(
+                JSONObject()
+                    .put("dryRun", true)
+                    .put("action", invocation.definition.name)
+                    .put("targetIds", org.json.JSONArray(invocation.targetIds.sorted())),
             )
 
-            is McpToolGatewayResult.Rejected -> toolRejected(id, execution.code, audit)
+            invocation.definition.risk == McpToolRisk.READ -> toolGateway.execute(client, invocation, arguments)
+
+            else -> mutationReplays.execute(
+                client = client,
+                invocation = invocation,
+                idempotencyKey = idempotencyKey,
+            ) { toolGateway.execute(client, invocation, arguments) }
         }
+        if (execution is McpToolGatewayResult.Completed && invocation.definition.name in CLIENT_LIFECYCLE_TOOLS) {
+            val affectedClientId = arguments.optString("clientId")
+            sessions.sessionIdsForClient(affectedClientId).forEach(sseEvents::close)
+            sessions.invalidateClient(affectedClientId)
+        }
+        return toolExecution(id, execution, audit)
+    }
+
+    private fun toolExecution(id: Any?, execution: McpToolGatewayResult, audit: McpToolAudit): HttpResponse = when (execution) {
+        is McpToolGatewayResult.Completed -> HttpResponse.json(
+            McpProtocol.result(id, execution.result).toString(),
+            audit = audit.copy(jobId = execution.jobId),
+        )
+
+        is McpToolGatewayResult.Rejected -> toolRejected(id, execution.code, audit)
     }
 
     private fun toolRejected(id: Any?, code: String, audit: McpToolAudit? = null): HttpResponse = HttpResponse.json(
@@ -377,6 +391,12 @@ class McpHttpServer(
         client: McpAuthenticatedClient,
     ): McpSession? = request.headers[McpProtocol.SESSION_HEADER]?.let { sessionId ->
         sessions.validate(sessionId, client.clientId, client.tokenGeneration, client.transport)
+            ?: run {
+                // Validation removes an idle/revoked session. Its replay buffer
+                // must disappear in the same lifecycle transition.
+                sseEvents.close(sessionId)
+                null
+            }
     }
 
     private fun jsonError(
@@ -462,14 +482,22 @@ class McpHttpServer(
             stream.subscription.initial.forEach { writeSseEvent(output, it) }
             output.flush()
             while (running) {
-                if (!sessions.isActive(stream.sessionId, stream.clientId, stream.tokenGeneration, transport)) return
+                if (!sessions.isActive(stream.sessionId, stream.clientId, stream.tokenGeneration, transport)) {
+                    sseEvents.close(stream.sessionId)
+                    return
+                }
                 val event = try {
                     stream.subscription.poll(SSE_HEARTBEAT_MILLIS)
                 } catch (_: InterruptedException) {
                     return
                 }
                 if (event === McpSseEventStore.CLOSED_EVENT) return
-                if (event == null) output.write(": keepalive\n\n".toByteArray(StandardCharsets.US_ASCII)) else writeSseEvent(output, event)
+                if (event == null) {
+                    output.write(": keepalive\n\n".toByteArray(StandardCharsets.US_ASCII))
+                } else {
+                    writeSseEvent(output, event)
+                    if (event === McpSseEventStore.SUBSCRIBER_OVERFLOW_EVENT) return
+                }
                 output.flush()
             }
         } catch (_: IOException) {
@@ -554,6 +582,7 @@ class McpHttpServer(
 
     companion object {
         const val DEFAULT_PORT = 8810
+        private const val ASSETS_READ_SCOPE = "assets.read"
         private const val LOOPBACK = "127.0.0.1"
         private const val WILDCARD = "0.0.0.0"
         private const val BACKLOG = 16
@@ -567,7 +596,8 @@ class McpHttpServer(
         private const val SSE_HEARTBEAT_MILLIS = 15_000L
         private const val TAG = "McpHttpServer"
         private val AUDITED_RPC_METHODS = setOf("initialize", "ping", "tools/list", "tools/call")
-        private val TOOL_CALL_PARAM_KEYS = setOf("name", "arguments", "confirmationId")
+        private val TOOL_CALL_PARAM_KEYS = setOf("name", "arguments")
+        private val CLIENT_LIFECYCLE_TOOLS = setOf("client.revoke", "token.rotate")
 
         /**
          * HTTP Host uses brackets around an IPv6 literal.  Splitting on the

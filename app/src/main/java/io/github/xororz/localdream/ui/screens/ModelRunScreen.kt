@@ -138,10 +138,10 @@ import io.github.xororz.localdream.data.HistoryFilter
 import io.github.xororz.localdream.data.HistoryItem
 import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.data.ModelRepository
+import io.github.xororz.localdream.data.PatchScanner
 import io.github.xororz.localdream.data.PerformancePresetConfig
 import io.github.xororz.localdream.data.PerformancePresetEngineConfig
 import io.github.xororz.localdream.data.PresetSnapshot
-import io.github.xororz.localdream.data.PatchScanner
 import io.github.xororz.localdream.data.RemoteRepository
 import io.github.xororz.localdream.data.Resolution
 import io.github.xororz.localdream.data.TagAutocompleteRepository

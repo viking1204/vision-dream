@@ -2,11 +2,11 @@ package io.github.xororz.localdream.mcp
 
 import android.content.Context
 import android.content.Intent
-import io.github.xororz.localdream.inference.InferenceDispatcher
-import io.github.xororz.localdream.service.BackendService
 import io.github.xororz.localdream.data.RuntimeProbeProjection
 import io.github.xororz.localdream.data.RuntimeProbeStatus
 import io.github.xororz.localdream.data.toProtectedProjection
+import io.github.xororz.localdream.inference.InferenceDispatcher
+import io.github.xororz.localdream.service.BackendService
 
 /**
  * MCP projection of the product runtime lifecycle.  It intentionally exposes

@@ -1,6 +1,7 @@
 package io.github.xororz.localdream.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -35,12 +36,22 @@ class ModelMetadataTest {
     }
 
     @Test
+    fun forgedPublicAttestationIsIgnored() {
+        val parsed = ModelMetadata.fromJsonString(
+            """{"schema_version":3,"content_rating":"sfw","native_runtime_attestation":{"device_model":"PJZ110"}}""",
+        )
+
+        assertEquals(ModelContentRating.SFW, parsed.contentRating)
+        assertFalse(parsed.toJsonString().contains("native_runtime_attestation"))
+    }
+
+    @Test
     fun missingOrUnsupportedMetadataStaysUnknown() {
         val directory = temporaryFolder.newFolder("legacy")
         assertEquals(null, ModelMetadataStore.read(directory))
 
         directory.resolve(ModelMetadataStore.FILE_NAME).writeText(
-            """{"schema_version":3,"content_rating":"nsfw"}""",
+            """{"schema_version":4,"content_rating":"nsfw"}""",
         )
         assertEquals(null, ModelMetadataStore.read(directory))
     }

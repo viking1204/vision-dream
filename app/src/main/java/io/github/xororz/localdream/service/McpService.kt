@@ -13,32 +13,29 @@ import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.db.AppDatabase
 import io.github.xororz.localdream.inference.BackendRuntimeLeaseManager
 import io.github.xororz.localdream.inference.InferenceDispatcher
+import io.github.xororz.localdream.mcp.AndroidMcpAssetStore
+import io.github.xororz.localdream.mcp.AndroidMcpClientManagementStore
 import io.github.xororz.localdream.mcp.AndroidMcpDownloadStore
 import io.github.xororz.localdream.mcp.AndroidMcpGenerationScheduler
 import io.github.xororz.localdream.mcp.AndroidMcpInstalledModelCatalog
-import io.github.xororz.localdream.mcp.AndroidMcpAssetStore
-import io.github.xororz.localdream.mcp.AndroidMcpClientManagementStore
 import io.github.xororz.localdream.mcp.AndroidMcpPresetStore
 import io.github.xororz.localdream.mcp.AndroidMcpPromptStore
 import io.github.xororz.localdream.mcp.AndroidMcpRuntimeStore
 import io.github.xororz.localdream.mcp.McpClientCredentialStore
-import io.github.xororz.localdream.mcp.McpConfirmationStore
-import io.github.xororz.localdream.mcp.McpPendingConfirmation
 import io.github.xororz.localdream.mcp.McpGenerationGateway
 import io.github.xororz.localdream.mcp.McpHistoryImageContentResolver
 import io.github.xororz.localdream.mcp.McpHttpServer
-import io.github.xororz.localdream.mcp.McpImageCapabilityStore
 import io.github.xororz.localdream.mcp.McpLanHostAllowlist
 import io.github.xororz.localdream.mcp.McpSessionRegistry
 import io.github.xororz.localdream.mcp.McpSseEventStore
 import io.github.xororz.localdream.mcp.McpTransport
 import io.github.xororz.localdream.mcp.RoomMcpAuditSink
 import io.github.xororz.localdream.mcp.RoomMcpJobStore
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.concurrent.CompletableFuture
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Independently controlled MCP foreground service. It owns only its listener,
@@ -79,14 +76,12 @@ class McpService : Service() {
         try {
             val database = AppDatabase.get(applicationContext)
             val lanHostAllowlist = McpLanHostAllowlist(applicationContext)
-            val imageCapabilities = McpImageCapabilityStore()
             val sseEvents = McpSseEventStore()
             val jobs = RoomMcpJobStore(database)
             val generationScheduler = AndroidMcpGenerationScheduler(applicationContext, InferenceDispatcher.process, jobs)
             val gateway = McpGenerationGateway(
                 jobs = jobs,
                 scheduler = generationScheduler,
-                capabilities = imageCapabilities,
                 models = AndroidMcpInstalledModelCatalog(applicationContext),
                 prompts = AndroidMcpPromptStore(applicationContext),
                 presets = AndroidMcpPresetStore(applicationContext),
@@ -105,9 +100,7 @@ class McpService : Service() {
                 credentialStore = McpClientCredentialStore(applicationContext),
                 sessions = sessions,
                 allowedLanHosts = lanHostAllowlist::hosts,
-                confirmationStore = confirmations,
                 auditSink = RoomMcpAuditSink(database.mcpAuditEventDao()),
-                imageCapabilities = imageCapabilities,
                 imageResolver = McpHistoryImageContentResolver(applicationContext, database.historyDao()),
                 toolGateway = gateway,
                 sseEvents = sseEvents,
@@ -115,7 +108,7 @@ class McpService : Service() {
             listener.start()
             loopbackServer = listener
             scheduler = generationScheduler
-            lanInputs = LanInputs(gateway, imageCapabilities, database, generationScheduler, sseEvents)
+            lanInputs = LanInputs(gateway, database, generationScheduler, sseEvents)
             runtimeLease = InferenceDispatcher.process.acquireServiceLease(DISPATCH_OWNER)
             val lanError = runCatching { configureLan(lanEnabled, port, lanInputs) }.exceptionOrNull()
             updateStatus(Status(running = true, ready = true, port = port, transport = McpTransport.LOOPBACK, error = lanError?.message))
@@ -140,9 +133,12 @@ class McpService : Service() {
         lanInputs = null
         // The service lease must outlive an interrupted native call. Job leases
         // also remain held by the dispatcher until the same barriers complete.
-        if (completion.isEmpty()) lease?.close() else CompletableFuture.allOf(*completion.toTypedArray())
-            .whenComplete { _, _ -> lease?.close() }
-        confirmations.clear()
+        if (completion.isEmpty()) {
+            lease?.close()
+        } else {
+            CompletableFuture.allOf(*completion.toTypedArray())
+                .whenComplete { _, _ -> lease?.close() }
+        }
         updateStatus(Status())
         super.onDestroy()
     }
@@ -167,9 +163,7 @@ class McpService : Service() {
             credentialStore = McpClientCredentialStore(applicationContext),
             sessions = sessions,
             allowedLanHosts = McpLanHostAllowlist(applicationContext)::hosts,
-            confirmationStore = confirmations,
             auditSink = RoomMcpAuditSink(activeInputs.database.mcpAuditEventDao()),
-            imageCapabilities = activeInputs.capabilities,
             imageResolver = McpHistoryImageContentResolver(applicationContext, activeInputs.database.historyDao()),
             toolGateway = activeInputs.gateway,
             sseEvents = activeInputs.sseEvents,
@@ -186,7 +180,6 @@ class McpService : Service() {
 
     private data class LanInputs(
         val gateway: McpGenerationGateway,
-        val capabilities: McpImageCapabilityStore,
         val database: AppDatabase,
         val scheduler: AndroidMcpGenerationScheduler,
         val sseEvents: McpSseEventStore,
@@ -228,8 +221,6 @@ class McpService : Service() {
         private const val DISPATCH_OWNER = "mcp"
         private val _status = MutableStateFlow(Status())
         val status: StateFlow<Status> = _status
-        private val confirmations = McpConfirmationStore()
-        val confirmationRequests: StateFlow<List<McpPendingConfirmation>> = confirmations.uiRequests
 
         fun start(context: Context, port: Int = McpHttpServer.DEFAULT_PORT, lanEnabled: Boolean = false) {
             context.startForegroundService(
@@ -241,13 +232,6 @@ class McpService : Service() {
 
         fun stop(context: Context) {
             context.startService(Intent(context, McpService::class.java).setAction(ACTION_STOP))
-        }
-
-        /** UI-local approval only; caller must render the action and target before invoking this. */
-        fun approveConfirmation(requestId: String): String? = confirmations.approveUiRequest(requestId)
-
-        fun rejectConfirmation(requestId: String) {
-            confirmations.rejectUiRequest(requestId)
         }
 
         private fun updateStatus(status: Status) {

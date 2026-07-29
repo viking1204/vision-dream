@@ -7,7 +7,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from localdream_perf_harness import validate_scenario
-from localdream_perf_protocol import MCP_PROTOCOL_VERSION, HttpResult, ProtocolExecutionError, SseEvent, protocol_parity
+from localdream_perf_protocol import (
+    MCP_PROTOCOL_VERSION,
+    HttpResult,
+    ProtocolExecutionError,
+    SseEvent,
+    protocol_parity,
+    scheduler_api_id,
+)
 
 
 class FixtureTransport:
@@ -31,6 +38,9 @@ class FixtureTransport:
         if payload.get("method") == "tools/call":
             tool = payload["params"]["name"]
             if tool == "generation.create":
+                arguments = payload["params"]["arguments"]
+                if not arguments.get("idempotencyKey", "").startswith("w7:W7:1:"):
+                    return HttpResult(200, {}, b'{"error":{"data":{"code":"INVALID_PARAMS"}}}')
                 self.creations += 1
                 return HttpResult(
                     200,
@@ -41,6 +51,7 @@ class FixtureTransport:
                 )
             if tool == "jobs.get":
                 job_id = payload["params"]["arguments"]["jobId"]
+                image_path = "/assets/history:1"
                 return HttpResult(
                     200,
                     {},
@@ -49,37 +60,41 @@ class FixtureTransport:
                             "result": {
                                 "jobId": job_id,
                                 "task": "succeeded",
-                                "image": f"/mcp/images/{job_id}/capability",
-                                "content": [{"type": "resource_link", "uri": f"/mcp/images/{job_id}/capability", "mimeType": "image/png"}],
+                                "image": image_path,
+                                "content": [{"type": "resource_link", "uri": image_path, "mimeType": "image/png"}],
                             },
                         },
                     ).encode(),
                 )
             if tool == "jobs.cancel":
-                job_id = payload["params"]["arguments"]["jobId"]
-                confirmation_id = payload["params"].get("confirmationId")
-                if confirmation_id is None:
-                    return HttpResult(
-                        200,
-                        {},
-                        json.dumps({"error": {"data": {"code": "CONFIRMATION_REQUIRED"}}}).encode(),
-                    )
-                if confirmation_id != "approved-cancel" or getattr(self, "confirmation_consumed", False):
-                    return HttpResult(
-                        200,
-                        {},
-                        json.dumps({"error": {"data": {"code": "CONFIRMATION_INVALID"}}}).encode(),
-                    )
-                self.confirmation_consumed = True
+                arguments = payload["params"]["arguments"]
+                job_id = arguments["jobId"]
+                if arguments.get("dryRun") is not False or not arguments.get("idempotencyKey"):
+                    return HttpResult(200, {}, b'{"error":{"data":{"code":"INVALID_PARAMS"}}}')
+                if getattr(self, "cancel_arguments", arguments) != arguments:
+                    return HttpResult(200, {}, b'{"error":{"data":{"code":"IDEMPOTENCY_KEY_CONFLICT"}}}')
+                self.cancel_arguments = arguments
                 return HttpResult(200, {}, json.dumps({"result": {"jobId": job_id, "task": "cancelled"}}).encode())
-        if method == "GET" and path.startswith("/mcp/images/"):
+        if method == "GET" and path.startswith("/assets/"):
             return HttpResult(200, {"content-type": "image/png"}, b"png-bytes")
         return HttpResult(200, {}, b'{"data":[{"url":"/v1/images/files/image-1"}]}')
 
     def open_sse(self, path, headers, timeout_ms):
         self.calls.append(("GET", path, {}, headers))
         self.assert_sse_request(path, headers)
-        return FixtureSseResponse([SseEvent(None, "ready", "{}"), SseEvent(10, "task", '{"jobId":"job-1","task":"working"}')])
+        return FixtureSseResponse(
+            [SseEvent(None, "ready", "{}")]
+            + [SseEvent(1, "task", '{"jobId":"job-1","task":"working"}')]
+            + [
+                SseEvent(
+                    step + 1,
+                    "progress",
+                    f'{{"jobId":"job-1","task":"working","step":{step},"totalSteps":20}}',
+                )
+                for step in range(1, 21)
+            ]
+            + [SseEvent(22, "task", '{"jobId":"job-1","task":"completed"}')],
+        )
 
     def assert_sse_request(self, path, headers):
         if path != "/mcp" or headers.get("Mcp-Session-Id") != "session-1":
@@ -108,7 +123,7 @@ class ProtocolParityTest(unittest.TestCase):
     def test_w7_uses_the_same_fixed_inputs_for_v1_and_mcp(self):
         v1 = FixtureTransport()
         mcp = FixtureTransport()
-        result = protocol_parity(v1, mcp, self.scenario, confirmation_id_supplier=lambda: "approved-cancel")
+        result = protocol_parity(v1, mcp, self.scenario)
 
         self.assertEqual("/v1/images/generations", v1.calls[0][1])
         self.assertEqual("initialize", mcp.calls[0][2]["method"])
@@ -120,34 +135,52 @@ class ProtocolParityTest(unittest.TestCase):
         self.assertEqual(self.scenario["fixtures"]["seed"], creation[2]["params"]["arguments"]["seed"])
         self.assertEqual(self.scenario["request"]["width"], creation[2]["params"]["arguments"]["width"])
         self.assertEqual(self.scenario["request"]["height"], creation[2]["params"]["arguments"]["height"])
-        self.assertEqual(self.scenario["request"]["scheduler"], creation[2]["params"]["arguments"]["scheduler"])
+        expected_scheduler = scheduler_api_id(self.scenario["request"]["scheduler"])
+        self.assertEqual(expected_scheduler, v1.calls[0][2]["scheduler"])
+        self.assertEqual(expected_scheduler, creation[2]["params"]["arguments"]["scheduler"])
         self.assertEqual(self.scenario["request"]["steps"], creation[2]["params"]["arguments"]["steps"])
         self.assertEqual(self.scenario["request"]["cfg"], creation[2]["params"]["arguments"]["cfg"])
+        self.assertEqual("w7:W7:1:fixture:primary-generation", creation[2]["params"]["arguments"]["idempotencyKey"])
         self.assertTrue(result["parity"]["sharedModel"])
         self.assertTrue(result["parity"]["fixtureParity"])
 
-    def test_w7_exercises_lifecycle_reconnect_capability_download_and_confirmed_cancel(self):
+    def test_scheduler_display_names_translate_to_the_openai_api_ids(self):
+        self.assertEqual("euler_a", scheduler_api_id("Euler A"))
+        self.assertEqual("euler", scheduler_api_id("Euler"))
+        with self.assertRaisesRegex(ProtocolExecutionError, "unsupported scheduler label"):
+            scheduler_api_id("Euler ancestral")
+
+    def test_w7_exercises_lifecycle_reconnect_stable_asset_download_and_token_authorized_cancel(self):
         v1 = FixtureTransport()
         mcp = FixtureTransport()
 
-        result = protocol_parity(v1, mcp, self.scenario, confirmation_id_supplier=lambda: "approved-cancel")
+        result = protocol_parity(v1, mcp, self.scenario)
 
         tools = [call[2]["params"]["name"] for call in mcp.calls if call[2].get("method") == "tools/call"]
-        self.assertEqual(["generation.create", "jobs.get", "generation.create", "jobs.cancel", "jobs.cancel", "jobs.cancel", "jobs.get"], tools)
+        self.assertEqual(["generation.create", "jobs.get", "generation.create", "jobs.cancel", "jobs.cancel", "jobs.get"], tools)
+        creations = [call for call in mcp.calls if call[2].get("params", {}).get("name") == "generation.create"]
+        self.assertEqual(self.scenario["request"]["steps"], creations[0][2]["params"]["arguments"]["steps"])
+        self.assertEqual(50, creations[1][2]["params"]["arguments"]["steps"])
         self.assertEqual(2, mcp.initializations)
         cancels = [call for call in mcp.calls if call[2].get("params", {}).get("name") == "jobs.cancel"]
-        required, cancel, replay = cancels
+        cancel, replay = cancels
         reconnect = [call for call in mcp.calls if call[2].get("params", {}).get("name") == "jobs.get"][-1]
-        self.assertNotIn("confirmationId", required[2]["params"])
-        self.assertEqual("approved-cancel", cancel[2]["params"]["confirmationId"])
-        self.assertEqual("approved-cancel", replay[2]["params"]["confirmationId"])
+        self.assertEqual(cancel[2]["params"]["arguments"], replay[2]["params"]["arguments"])
+        self.assertNotIn("confirmationId", cancel[2]["params"])
+        self.assertNotIn("confirmationId", replay[2]["params"])
+        self.assertFalse(cancel[2]["params"]["arguments"]["dryRun"])
+        self.assertEqual("w7:W7:1:fixture:cancel:job-2", cancel[2]["params"]["arguments"]["idempotencyKey"])
+        self.assertEqual({"jobId", "dryRun", "idempotencyKey"}, set(cancel[2]["params"]["arguments"]))
         self.assertEqual("session-2", reconnect[3]["Mcp-Session-Id"])
         stream_calls = [call for call in mcp.calls if call[0] == "GET" and call[1] == "/mcp"]
         self.assertEqual(2, len(stream_calls))
         self.assertEqual({"Mcp-Session-Id": "session-1"}, stream_calls[0][3])
-        self.assertEqual({"Mcp-Session-Id": "session-1", "Last-Event-ID": "9"}, stream_calls[1][3])
-        self.assertIn(("GET", "/mcp/images/job-1/capability", {}, {}), mcp.calls)
+        self.assertEqual({"Mcp-Session-Id": "session-1", "Last-Event-ID": "1"}, stream_calls[1][3])
+        self.assertIn(("GET", "/assets/history:1", {}, {}), mcp.calls)
         self.assertEqual(b"png-bytes", result["mcp"]["download"])
+        self.assertEqual(20, len(result["mcp"]["progressEvents"]))
+        self.assertEqual({"eventId": 2, "jobId": "job-1", "step": 1, "totalSteps": 20}, result["mcp"]["progressEvents"][0])
+        self.assertEqual({"eventId": 21, "jobId": "job-1", "step": 20, "totalSteps": 20}, result["mcp"]["progressEvents"][-1])
         self.assertTrue(all(result["parity"].values()))
 
     def test_w7_rejects_legacy_image_field_without_standard_resource_link(self):
@@ -162,18 +195,44 @@ class ProtocolParityTest(unittest.TestCase):
                 return result
 
         with self.assertRaisesRegex(ProtocolExecutionError, "resource_link"):
-            protocol_parity(FixtureTransport(), LegacyImageOnly(), self.scenario, confirmation_id_supplier=lambda: "approved-cancel")
+            protocol_parity(FixtureTransport(), LegacyImageOnly(), self.scenario)
 
-    def test_w7_requires_cancel_confirmation_and_task_event(self):
-        with self.assertRaisesRegex(ProtocolExecutionError, "confirmation"):
-            protocol_parity(FixtureTransport(), FixtureTransport(), self.scenario)
-
+    def test_w7_requires_completed_task_event(self):
         class MissingTaskEvent(FixtureTransport):
             def open_sse(self, path, headers, timeout_ms):
-                return FixtureSseResponse([SseEvent(None, "ready", "{}")])
+                return FixtureSseResponse(
+                    [
+                        SseEvent(step, "progress", f'{{"jobId":"job-1","step":{step},"totalSteps":20}}')
+                        for step in range(1, 21)
+                    ],
+                )
 
         with self.assertRaisesRegex(ProtocolExecutionError, "task event"):
-            protocol_parity(FixtureTransport(), MissingTaskEvent(), self.scenario, confirmation_id_supplier=lambda: "approved-cancel")
+            protocol_parity(FixtureTransport(), MissingTaskEvent(), self.scenario)
+
+    def test_w7_rejects_a_task_only_stream_without_diffusion_progress(self):
+        class MissingProgressEvent(FixtureTransport):
+            def open_sse(self, path, headers, timeout_ms):
+                return FixtureSseResponse([SseEvent(10, "task", '{"jobId":"job-1","task":"working"}')])
+
+        with self.assertRaisesRegex(ProtocolExecutionError, "diffusion-step progress"):
+            protocol_parity(FixtureTransport(), MissingProgressEvent(), self.scenario)
+
+    def test_w7_rejects_progress_with_invalid_step_contract(self):
+        class InvalidProgressEvent(FixtureTransport):
+            def open_sse(self, path, headers, timeout_ms):
+                return FixtureSseResponse([SseEvent(9, "progress", '{"jobId":"job-1","step":21,"totalSteps":20}')])
+
+        with self.assertRaisesRegex(ProtocolExecutionError, "does not match"):
+            protocol_parity(FixtureTransport(), InvalidProgressEvent(), self.scenario)
+
+    def test_w7_rejects_partial_diffusion_step_progress(self):
+        class PartialProgressEvent(FixtureTransport):
+            def open_sse(self, path, headers, timeout_ms):
+                return FixtureSseResponse([SseEvent(1, "progress", '{"jobId":"job-1","step":1,"totalSteps":20}')])
+
+        with self.assertRaisesRegex(ProtocolExecutionError, "not fully observed"):
+            protocol_parity(FixtureTransport(), PartialProgressEvent(), self.scenario)
 
     def test_w7_rejects_an_unsupported_mcp_protocol_version(self):
         class OldVersion(FixtureTransport):
@@ -183,7 +242,7 @@ class ProtocolParityTest(unittest.TestCase):
                 return super().request(method, path, body, headers, timeout_ms)
 
         with self.assertRaisesRegex(ProtocolExecutionError, "unsupported protocol version"):
-            protocol_parity(FixtureTransport(), OldVersion(), self.scenario, confirmation_id_supplier=lambda: "approved-cancel")
+            protocol_parity(FixtureTransport(), OldVersion(), self.scenario)
 
     def test_w7_accepts_case_insensitive_http_response_headers(self):
         class CanonicalHttpHeaders(FixtureTransport):
@@ -199,7 +258,6 @@ class ProtocolParityTest(unittest.TestCase):
             FixtureTransport(),
             CanonicalHttpHeaders(),
             self.scenario,
-            confirmation_id_supplier=lambda: "approved-cancel",
         )
 
         self.assertTrue(result["parity"]["taskEvent"])

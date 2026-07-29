@@ -88,6 +88,7 @@ import io.github.xororz.localdream.openai.InferenceArbiter
 import io.github.xororz.localdream.openai.InstalledModelCatalog
 import io.github.xororz.localdream.openai.NativeBackendClient
 import io.github.xororz.localdream.service.BackendService
+import io.github.xororz.localdream.service.NativeRuntimeAttestationRecorder
 import io.github.xororz.localdream.ui.components.NegativePromptToggle
 import io.github.xororz.localdream.ui.components.PromptPickerDialog
 import io.github.xororz.localdream.ui.components.RevealableImage
@@ -134,6 +135,16 @@ private data class ChatGenerationSettings(
     val seed: Long?,
     val scheduler: String,
 )
+
+/** Runs the success-only side effect after a Chat native image is returned. */
+internal fun <T> completeChatNativeGeneration(
+    generate: () -> T,
+    onNativeGenerationSuccess: () -> Unit,
+): T {
+    val generated = generate()
+    onNativeGenerationSuccess()
+    return generated
+}
 
 /**
  * A focused conversation-style entry point for local text-to-image generation.
@@ -285,20 +296,29 @@ fun ChatGenerationScreen(
                             requestedHeight = settings.height,
                         )
                         val image = withContext(Dispatchers.IO) {
-                            backendClient.generate(
-                                parameters = ImageRequestParameters(
-                                    modelId = entry.id,
-                                    prompt = submittedPrompt,
-                                    negativePrompt = submittedNegativePrompt,
-                                    width = dimensions.first,
-                                    height = dimensions.second,
-                                    steps = settings.steps,
-                                    cfg = settings.cfg,
-                                    seed = settings.seed,
-                                    scheduler = settings.scheduler,
-                                ),
-                                width = dimensions.first,
-                                height = dimensions.second,
+                            completeChatNativeGeneration(
+                                generate = {
+                                    backendClient.generate(
+                                        parameters = ImageRequestParameters(
+                                            modelId = entry.id,
+                                            prompt = submittedPrompt,
+                                            negativePrompt = submittedNegativePrompt,
+                                            width = dimensions.first,
+                                            height = dimensions.second,
+                                            steps = settings.steps,
+                                            cfg = settings.cfg,
+                                            seed = settings.seed,
+                                            scheduler = settings.scheduler,
+                                        ),
+                                        width = dimensions.first,
+                                        height = dimensions.second,
+                                    )
+                                },
+                                // A returned native image is the only success boundary. Exceptions
+                                // and coroutine cancellation escape before this callback is reached.
+                                onNativeGenerationSuccess = {
+                                    NativeRuntimeAttestationRecorder.record(context, entry.id)
+                                },
                             )
                         }
                         val generationTime = (

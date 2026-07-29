@@ -7,10 +7,10 @@ import org.json.JSONObject
 object McpProtocol {
     const val VERSION = "2025-11-25"
     const val PATH = "/mcp"
-    const val IMAGE_PATH_PREFIX = "$PATH/images/"
+    const val ASSET_PATH_PREFIX = "/assets/"
     const val SESSION_HEADER = "mcp-session-id"
 
-    fun imagePath(jobId: String, token: String): String = "$IMAGE_PATH_PREFIX$jobId/$token"
+    fun assetPath(assetId: String): String = "$ASSET_PATH_PREFIX$assetId"
 
     fun result(id: Any?, result: JSONObject): JSONObject = JSONObject()
         .put("jsonrpc", "2.0")
@@ -36,9 +36,9 @@ object McpProtocol {
         .put("instructions", "Use authenticated Streamable HTTP at /mcp.")
 
     fun sseReadyJson(): String = JSONObject()
-            .put("protocolVersion", VERSION)
-            .put("events", JSONArray())
-            .toString()
+        .put("protocolVersion", VERSION)
+        .put("events", JSONArray())
+        .toString()
 }
 
 data class McpAuthenticatedClient(

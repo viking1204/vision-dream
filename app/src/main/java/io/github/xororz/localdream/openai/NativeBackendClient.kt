@@ -33,29 +33,15 @@ class NativeBackendClient {
         width: Int,
         height: Int,
         onDiffusionStep: ((step: Int, totalSteps: Int) -> Unit)? = null,
+        requestDiffusionPreviews: Boolean = false,
     ): GeneratedImage {
-        val payload = JSONObject().apply {
-            put("prompt", parameters.prompt)
-            put("negative_prompt", parameters.negativePrompt)
-            put("steps", parameters.steps)
-            put("cfg", parameters.cfg)
-            put("width", width)
-            put("height", height)
-            put("denoise_strength", parameters.denoiseStrength)
-            put("scheduler", parameters.scheduler)
-            // The native SSE sends one progress message per diffusion step even
-            // when previews are unavailable. MCP consumes those messages to
-            // expose real progress; ordinary /v1 callers retain the old mode.
-            put("show_diffusion_process", onDiffusionStep != null)
-            put("output_format", "png")
-            parameters.seed?.let { put("seed", it) }
-            parameters.sourceImage?.let {
-                put("image", Base64.getEncoder().encodeToString(it))
-            }
-            parameters.maskImage?.let {
-                put("mask", Base64.getEncoder().encodeToString(it))
-            }
+        val progressNormalizer = onDiffusionStep?.let {
+            DiffusionProgressNormalizer(parameters.steps)
         }
+        // Progress messages do not require previews: the native SSE always
+        // emits a step event, while previews trigger an additional VAE decode.
+        // In particular, MCP's protocol progress must not change inference work.
+        val payload = nativeGenerationPayload(parameters, width, height, requestDiffusionPreviews)
         val request = Request.Builder()
             .url("$BACKEND_URL/generate")
             .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
@@ -79,7 +65,9 @@ class NativeBackendClient {
                         val step = event.optInt("step")
                         val totalSteps = event.optInt("total_steps")
                         if (step > 0 && totalSteps > 0 && step <= totalSteps) {
-                            onDiffusionStep?.invoke(step, totalSteps)
+                            progressNormalizer?.accept(step, totalSteps)?.let { normalized ->
+                                onDiffusionStep.invoke(normalized.first, normalized.second)
+                            }
                         }
                     }
 
@@ -218,13 +206,9 @@ class NativeBackendClient {
                 if (!response.isSuccessful) {
                     throw IOException("Native upscale failed with HTTP ${response.code}")
                 }
-                val jpeg = response.body?.bytes()
+                val encoded = response.body?.bytes()
                     ?: throw IOException("Native upscale returned an empty response")
-                return GeneratedImage(
-                    bytes = jpeg,
-                    mimeType = "image/jpeg",
-                    seed = null,
-                )
+                return normalizeUpscaledImageForResponse(encoded)
             }
         } finally {
             bitmap.recycle()
@@ -236,5 +220,96 @@ class NativeBackendClient {
         private const val SSE_DATA_PREFIX = "data: "
         private val JSON_MEDIA_TYPE = "application/json".toMediaType()
         private val BINARY_MEDIA_TYPE = "application/octet-stream".toMediaType()
+    }
+}
+
+/**
+ * The native upscaler emits JPEG bytes, while the public OpenAI-compatible
+ * contract explicitly accepts only `output_format=png`. Re-encode at this
+ * boundary so URL, binary, history and MCP callers all observe the same PNG.
+ */
+internal fun normalizeUpscaledImageForResponse(encodedImage: ByteArray): GeneratedImage {
+    val bitmap = BitmapFactory.decodeByteArray(encodedImage, 0, encodedImage.size)
+        ?: throw IOException("Native upscale returned an invalid image")
+    return try {
+        val output = ByteArrayOutputStream()
+        if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+            throw IOException("Failed to encode native upscale result as PNG")
+        }
+        GeneratedImage(
+            bytes = output.toByteArray(),
+            mimeType = "image/png",
+            seed = null,
+        )
+    } finally {
+        bitmap.recycle()
+    }
+}
+
+internal fun nativeGenerationPayload(
+    parameters: ImageRequestParameters,
+    width: Int,
+    height: Int,
+    requestDiffusionPreviews: Boolean,
+): JSONObject = JSONObject().apply {
+    put("prompt", parameters.prompt)
+    put("negative_prompt", parameters.negativePrompt)
+    put("steps", parameters.steps)
+    put("cfg", parameters.cfg)
+    put("width", width)
+    put("height", height)
+    put("denoise_strength", parameters.denoiseStrength)
+    put("scheduler", parameters.scheduler)
+    put("show_diffusion_process", requestDiffusionPreviews)
+    put("output_format", "png")
+    parameters.seed?.let { put("seed", it) }
+    parameters.sourceImage?.let {
+        put("image", Base64.getEncoder().encodeToString(it))
+    }
+    parameters.maskImage?.let {
+        put("mask", Base64.getEncoder().encodeToString(it))
+    }
+}
+
+/**
+ * Converts the native pipeline-wide progress stream into the diffusion-only
+ * contract exposed by MCP. The native stream currently counts CLIP and VAE
+ * stages as well, and the first diffusion step repeats the preceding raw step.
+ * Keeping this compatibility logic at the native-client boundary prevents
+ * transport code from depending on backend-specific pipeline bookkeeping.
+ */
+internal class DiffusionProgressNormalizer(
+    private val expectedSteps: Int,
+) {
+    private var previousRawStep: Int? = null
+    private var diffusionRawStart: Int? = null
+    private var lastEmittedStep = 0
+
+    init {
+        require(expectedSteps > 0)
+    }
+
+    fun accept(rawStep: Int, rawTotalSteps: Int): Pair<Int, Int>? {
+        if (rawStep !in 1..rawTotalSteps) return null
+        if (rawTotalSteps == expectedSteps) {
+            return emit(rawStep)
+        }
+
+        val start = diffusionRawStart
+        if (start == null) {
+            val previous = previousRawStep
+            previousRawStep = rawStep
+            if (previous == null || rawStep > previous) return null
+            diffusionRawStart = rawStep
+        }
+
+        val diffusionStep = rawStep - requireNotNull(diffusionRawStart) + 1
+        return emit(diffusionStep)
+    }
+
+    private fun emit(diffusionStep: Int): Pair<Int, Int>? {
+        if (diffusionStep !in 1..expectedSteps || diffusionStep <= lastEmittedStep) return null
+        lastEmittedStep = diffusionStep
+        return diffusionStep to expectedSteps
     }
 }

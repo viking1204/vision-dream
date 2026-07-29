@@ -9,8 +9,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.Model
-import io.github.xororz.localdream.data.ModelMetadataStore
 import io.github.xororz.localdream.data.ModelUsageRanking
+import io.github.xororz.localdream.data.NativeRuntimeAttestationStore
 import io.github.xororz.localdream.data.RuntimeCompatibilityEvaluator
 import io.github.xororz.localdream.data.RuntimeProbe
 import io.github.xororz.localdream.data.RuntimeProbeEvaluator
@@ -30,6 +30,20 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
+internal object BackendServiceStateHolder {
+    val backendState = MutableStateFlow<BackendService.BackendState>(BackendService.BackendState.Idle)
+    val servingModelId = MutableStateFlow<String?>(null)
+    val servingResolution = MutableStateFlow<Pair<Int, Int>?>(null)
+    val servingImageInputEnabled = MutableStateFlow<Boolean?>(null)
+    val openAiPreparation = MutableStateFlow(BackendService.OpenAiPreparation())
+    val commandResult = MutableStateFlow(BackendService.BackendCommandResult())
+    val currentLog = MutableStateFlow("")
+    val tileProgress = MutableStateFlow<BackendService.TileProgress?>(null)
+    val runtimeProbe =
+        MutableStateFlow(RuntimeProbe(status = io.github.xororz.localdream.data.RuntimeProbeStatus.UNAVAILABLE))
+}
+
+@Suppress("LargeClass") // Native process lifecycle is legacy-cohesive; split only with dedicated lifecycle regression coverage.
 class BackendService : Service() {
     @Volatile
     private var process: Process? = null
@@ -88,7 +102,6 @@ class BackendService : Service() {
         private const val IDLE_GRACE_MS = 1500L
         private const val FORCE_STOP_TIMEOUT_SECONDS = 5L
         private const val RUNTIME_READY_POLL_MS = 250L
-        private const val RUNTIME_READY_ATTEMPTS = 240
         private val TILE_PROGRESS_REGEX = Regex("""Processed tile (\d+)/(\d+)""")
         private val PROCESS_PID_REGEX = Regex("""pid=(\d+)""")
 
@@ -131,63 +144,39 @@ class BackendService : Service() {
             explicitOverride ?: localPreference
         }
 
-        private object StateHolder {
-            val _backendState = MutableStateFlow<BackendState>(BackendState.Idle)
+        val backendState: StateFlow<BackendState> = BackendServiceStateHolder.backendState
 
-            // modelId the live process is serving (null when none). Process-wide
-            // so a screen can tell whether 8081 is already serving *its* model
-            // vs. a previous model still alive in the stop grace window.
-            val _servingModelId = MutableStateFlow<String?>(null)
+        val servingModelId: StateFlow<String?> = BackendServiceStateHolder.servingModelId
 
-            // Resolution the live process was started for. Reported through
-            // host mode's /status so a controller only declares Ready once the
-            // backend matches its full config, not just the model id.
-            val _servingResolution = MutableStateFlow<Pair<Int, Int>?>(null)
-            val _servingImageInputEnabled = MutableStateFlow<Boolean?>(null)
-
-            // Monotonic acknowledgement for API startup. Waiting for a new
-            // value prevents port 8809 from opening while an old native
-            // process is still bound to 0.0.0.0.
-            val _openAiPreparation = MutableStateFlow(OpenAiPreparation())
-            val _commandResult = MutableStateFlow(BackendCommandResult())
-            val _currentLog = MutableStateFlow("")
-            val _tileProgress = MutableStateFlow<TileProgress?>(null)
-            val _runtimeProbe = MutableStateFlow(RuntimeProbe(status = io.github.xororz.localdream.data.RuntimeProbeStatus.UNAVAILABLE))
-        }
-
-        val backendState: StateFlow<BackendState> = StateHolder._backendState
-
-        val servingModelId: StateFlow<String?> = StateHolder._servingModelId
-
-        val servingResolution: StateFlow<Pair<Int, Int>?> = StateHolder._servingResolution
+        val servingResolution: StateFlow<Pair<Int, Int>?> = BackendServiceStateHolder.servingResolution
 
         val servingImageInputEnabled: StateFlow<Boolean?> =
-            StateHolder._servingImageInputEnabled
+            BackendServiceStateHolder.servingImageInputEnabled
 
-        val openAiPreparation: StateFlow<OpenAiPreparation> = StateHolder._openAiPreparation
-        val commandResult: StateFlow<BackendCommandResult> = StateHolder._commandResult
+        val openAiPreparation: StateFlow<OpenAiPreparation> = BackendServiceStateHolder.openAiPreparation
+        val commandResult: StateFlow<BackendCommandResult> = BackendServiceStateHolder.commandResult
 
-        val currentLog: StateFlow<String> = StateHolder._currentLog
+        val currentLog: StateFlow<String> = BackendServiceStateHolder.currentLog
 
-        val tileProgress: StateFlow<TileProgress?> = StateHolder._tileProgress
-        val runtimeProbe: StateFlow<RuntimeProbe> = StateHolder._runtimeProbe
+        val tileProgress: StateFlow<TileProgress?> = BackendServiceStateHolder.tileProgress
+        val runtimeProbe: StateFlow<RuntimeProbe> = BackendServiceStateHolder.runtimeProbe
 
         private fun updateState(state: BackendState) {
-            StateHolder._backendState.value = state
+            BackendServiceStateHolder.backendState.value = state
         }
 
         private fun updateServing(config: BackendConfig?) {
-            StateHolder._servingModelId.value = config?.modelId
-            StateHolder._servingResolution.value = config?.let { Pair(it.width, it.height) }
-            StateHolder._servingImageInputEnabled.value = config?.imageInputEnabled
+            BackendServiceStateHolder.servingModelId.value = config?.modelId
+            BackendServiceStateHolder.servingResolution.value = config?.let { Pair(it.width, it.height) }
+            BackendServiceStateHolder.servingImageInputEnabled.value = config?.imageInputEnabled
         }
 
         private fun publishCommandResult(
             modelId: String?,
             error: String?,
         ) {
-            val previous = StateHolder._commandResult.value
-            StateHolder._commandResult.value = BackendCommandResult(
+            val previous = BackendServiceStateHolder.commandResult.value
+            BackendServiceStateHolder.commandResult.value = BackendCommandResult(
                 version = previous.version + 1L,
                 modelId = modelId,
                 error = error,
@@ -195,8 +184,8 @@ class BackendService : Service() {
         }
 
         fun clearProgress() {
-            StateHolder._currentLog.value = ""
-            StateHolder._tileProgress.value = null
+            BackendServiceStateHolder.currentLog.value = ""
+            BackendServiceStateHolder.tileProgress.value = null
         }
     }
 
@@ -422,8 +411,8 @@ class BackendService : Service() {
         if (stopped && process?.isAlive != true && runtimeDirReady) {
             updateState(BackendState.Idle)
         }
-        val previous = StateHolder._openAiPreparation.value
-        StateHolder._openAiPreparation.value = OpenAiPreparation(
+        val previous = BackendServiceStateHolder.openAiPreparation.value
+        BackendServiceStateHolder.openAiPreparation.value = OpenAiPreparation(
             version = previous.version + 1L,
             succeeded = stopped,
             error = if (stopped) null else "Native backend did not stop",
@@ -635,8 +624,8 @@ class BackendService : Service() {
         // crash reporting for the process we are about to start.
         stopping = false
         updateState(BackendState.Starting)
-        StateHolder._currentLog.value = ""
-        StateHolder._tileProgress.value = null
+        BackendServiceStateHolder.currentLog.value = ""
+        BackendServiceStateHolder.tileProgress.value = null
 
         try {
             val nativeDir = applicationInfo.nativeLibraryDir
@@ -659,7 +648,7 @@ class BackendService : Service() {
                 manifestJson = manifestJson,
                 runtimeDirectory = runtimeDir,
                 coreFile = executableFile,
-                metadata = ModelMetadataStore.read(modelsDir),
+                attestation = NativeRuntimeAttestationStore.read(this, modelId),
                 deviceAbi = Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown",
                 htpTarget = HTP_TARGET,
                 contextFingerprint = contextFingerprint,
@@ -667,8 +656,11 @@ class BackendService : Service() {
             val runtimeManifest = manifestJson?.let { raw ->
                 runCatching { io.github.xororz.localdream.data.RuntimeManifest.fromJsonString(raw) }.getOrNull()
             }
+            val requiredV79Libraries = runtimeManifest?.let { manifest ->
+                RuntimeProbeEvaluator.requiredV79Libraries(manifest.runtimeFiles)
+            }.orEmpty()
             fun publishRuntimeProbe(nativeReady: Boolean?, loadedLibraryFingerprints: Map<String, String> = emptyMap()) {
-                StateHolder._runtimeProbe.value = RuntimeProbeEvaluator.evaluate(
+                BackendServiceStateHolder.runtimeProbe.value = RuntimeProbeEvaluator.evaluate(
                     RuntimeProbeInput(
                         deviceModel = Build.MODEL,
                         soc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else null,
@@ -680,6 +672,7 @@ class BackendService : Service() {
                         // VERIFIED is published later from /proc/<pid>/maps after
                         // the process has answered /health.
                         loadedLibraryFingerprints = loadedLibraryFingerprints,
+                        requiredV79LibraryFingerprints = requiredV79Libraries,
                         compatibility = compatibility,
                         nativeReady = nativeReady,
                     ),
@@ -769,7 +762,7 @@ class BackendService : Service() {
             val proc = processBuilder.start()
             process = proc
             publishRuntimeProbe(nativeReady = null)
-            awaitRuntimeEvidence(proc, runtimeDir) { ready, fingerprints ->
+            awaitRuntimeEvidence(proc, runtimeDir, requiredV79Libraries) { ready, fingerprints ->
                 if (process === proc) publishRuntimeProbe(ready, fingerprints)
             }
 
@@ -777,7 +770,8 @@ class BackendService : Service() {
 
             return true
         } catch (e: Exception) {
-            StateHolder._runtimeProbe.value = RuntimeProbe(status = io.github.xororz.localdream.data.RuntimeProbeStatus.UNAVAILABLE)
+            BackendServiceStateHolder.runtimeProbe.value =
+                RuntimeProbe(status = io.github.xororz.localdream.data.RuntimeProbeStatus.UNAVAILABLE)
             Log.e(TAG, "backend start failed", e)
             updateState(BackendState.Error("backend start failed: ${e.message}", config.modelId))
             return false
@@ -816,18 +810,21 @@ class BackendService : Service() {
     private fun awaitRuntimeEvidence(
         proc: Process,
         runtimeDirectory: File,
+        requiredLibraryFingerprints: Map<String, String>,
         publish: (Boolean?, Map<String, String>) -> Unit,
     ) {
         Thread {
-            repeat(RUNTIME_READY_ATTEMPTS) {
-                if (process !== proc || !proc.isAlive) {
-                    publish(null, emptyMap())
-                    return@Thread
-                }
-                if (nativeHealthReady()) {
-                    val fingerprints = runtimeLibraryFingerprints(proc, runtimeDirectory)
-                    publish(if (fingerprints.isNotEmpty()) true else null, fingerprints)
-                    return@Thread
+            val evidence = RuntimeLibraryEvidenceAccumulator(requiredLibraryFingerprints)
+            var ready = false
+            while (process === proc && proc.isAlive) {
+                if (!ready) ready = nativeHealthReady()
+                if (ready) {
+                    val snapshot = evidence.observe(runtimeLibraryFingerprints(proc, runtimeDirectory))
+                    publish(true, snapshot.loadedLibraryFingerprints)
+                    if (snapshot.requiredLibrariesObserved) {
+                        Log.i(TAG, "Observed all required runtime library mappings")
+                        return@Thread
+                    }
                 }
                 Thread.sleep(RUNTIME_READY_POLL_MS)
             }
@@ -884,12 +881,12 @@ class BackendService : Service() {
                         // Publish only logs belonging to the currently tracked
                         // process so stale tiles cannot overwrite the new run.
                         if (process === proc) {
-                            StateHolder._currentLog.value = logLine
+                            BackendServiceStateHolder.currentLog.value = logLine
                             TILE_PROGRESS_REGEX.find(logLine)?.let { match ->
                                 val current = match.groupValues[1].toIntOrNull()
                                 val total = match.groupValues[2].toIntOrNull()
                                 if (current != null && total != null && total > 0) {
-                                    StateHolder._tileProgress.value =
+                                    BackendServiceStateHolder.tileProgress.value =
                                         TileProgress(current, total)
                                 }
                             }
@@ -909,7 +906,7 @@ class BackendService : Service() {
             // we didn't intentionally stop it; a torn-down or superseded process
             // exiting is expected and must not poison the shared backendState.
             if (isLiveCrash(proc)) {
-                StateHolder._runtimeProbe.value = RuntimeProbe(
+                BackendServiceStateHolder.runtimeProbe.value = RuntimeProbe(
                     status = io.github.xororz.localdream.data.RuntimeProbeStatus.UNAVAILABLE,
                 )
                 updateState(
@@ -983,13 +980,13 @@ class BackendService : Service() {
             }
         }
         if (process?.isAlive == true) return false
-        StateHolder._runtimeProbe.value = RuntimeProbe(
+        BackendServiceStateHolder.runtimeProbe.value = RuntimeProbe(
             status = io.github.xororz.localdream.data.RuntimeProbeStatus.UNAVAILABLE,
         )
         serving = null
         updateServing(null)
-        StateHolder._currentLog.value = ""
-        StateHolder._tileProgress.value = null
+        BackendServiceStateHolder.currentLog.value = ""
+        BackendServiceStateHolder.tileProgress.value = null
         return true
     }
 }

@@ -12,13 +12,17 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import time
-from typing import Callable, Iterator, Protocol
+from typing import Iterator, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
+# The parity sample remains frozen at the scenario step count. Cancellation is
+# exercised on a separate long-running probe so the Job cannot naturally
+# complete before the cancel reaches the scheduler.
+CANCELLATION_PROBE_STEPS = 50
 
 
 @dataclass(frozen=True)
@@ -147,6 +151,29 @@ class ProtocolExecutionError(RuntimeError):
     pass
 
 
+SCHEDULER_API_IDS = {
+    "Euler": "euler",
+    "Euler A": "euler_a",
+    "dpm": "dpm",
+    "dpm_karras": "dpm_karras",
+    "dpm_sde": "dpm_sde",
+    "dpm_sde_karras": "dpm_sde_karras",
+    "euler": "euler",
+    "euler_karras": "euler_karras",
+    "euler_a": "euler_a",
+    "euler_a_karras": "euler_a_karras",
+    "lcm": "lcm",
+}
+
+
+def scheduler_api_id(display_name: str) -> str:
+    """Translate a frozen scheduler label to the OpenAI API's internal ID."""
+    try:
+        return SCHEDULER_API_IDS[display_name]
+    except KeyError as error:
+        raise ProtocolExecutionError(f"unsupported scheduler label: {display_name}") from error
+
+
 @dataclass(frozen=True)
 class ProtocolExecution:
     endpoint: str
@@ -167,7 +194,7 @@ def openai_payload(scenario: dict) -> dict:
         "negative_prompt": fixtures.get("negativePrompt", ""),
         "seed": fixtures.get("seed"),
         "size": f"{request['width']}x{request['height']}",
-        "scheduler": request["scheduler"],
+        "scheduler": scheduler_api_id(request["scheduler"]),
         "steps": request["steps"],
         "cfg": request["cfg"],
         "denoise_strength": request.get("strength", 1.0),
@@ -204,6 +231,9 @@ def execute_mcp_generation(
     *,
     session_id: str,
     request_id: int = 1,
+    operation: str = "generation",
+    steps_override: int | None = None,
+    mutation_namespace: str = "fixture",
 ) -> ProtocolExecution:
     started = time.monotonic_ns()
     payload = openai_payload(scenario)
@@ -215,9 +245,10 @@ def execute_mcp_generation(
         "width": scenario["request"]["width"],
         "height": scenario["request"]["height"],
         "scheduler": payload["scheduler"],
-        "steps": payload["steps"],
+        "steps": steps_override if steps_override is not None else payload["steps"],
         "cfg": payload["cfg"],
         "denoiseStrength": payload["denoise_strength"],
+        "idempotencyKey": _w7_idempotency_key(scenario, operation, mutation_namespace),
     }
     result = _mcp_call(transport, session_id, request_id, "generation.create", arguments, scenario["timeoutMs"])
     body = _json(result, "MCP generation.create")
@@ -255,25 +286,40 @@ def protocol_parity_with_cancel(
     transport_mcp: HttpTransport,
     scenario: dict,
     *,
-    confirmation_id_supplier: Callable[[], str] | None,
+    mutation_namespace: str,
 ) -> dict:
     """Run all W7-observable operations without treating a queued job as success.
 
-    ``jobs.cancel`` is a destructive MCP tool.  The driver first verifies that
-    the server asks the product UI for confirmation, then obtains the approved
-    id through a caller-owned UI bridge and proves the id cannot be replayed.
+    ``jobs.cancel`` is authenticated by the MCP bearer Token and Tool scope.
+    The driver proves both direct execution and idempotent replay.
     """
     session_id = initialize_mcp(transport_mcp, scenario["timeoutMs"])
     v1 = execute_v1_generation(transport_v1, scenario)
-    mcp = execute_mcp_generation(transport_mcp, scenario, session_id=session_id, request_id=2)
-    task_event = _observe_task_event(transport_mcp, session_id, mcp.evidence["jobId"], scenario["timeoutMs"])
-    replayed_task_event = _observe_task_event(
+    mcp = execute_mcp_generation(
+        transport_mcp,
+        scenario,
+        session_id=session_id,
+        request_id=2,
+        operation="primary-generation",
+        mutation_namespace=mutation_namespace,
+    )
+    progress_events, task_event = _observe_job_events(
         transport_mcp,
         session_id,
         mcp.evidence["jobId"],
         scenario["timeoutMs"],
-        last_event_id=task_event.event_id - 1,
+        expected_total_steps=scenario["request"]["steps"],
     )
+    replayed_progress_events, replayed_task_event = _observe_job_events(
+        transport_mcp,
+        session_id,
+        mcp.evidence["jobId"],
+        scenario["timeoutMs"],
+        expected_total_steps=scenario["request"]["steps"],
+        last_event_id=min(progress_events[0].event_id, task_event.event_id) - 1,
+    )
+    if [event.event_id for event in replayed_progress_events] != [event.event_id for event in progress_events]:
+        raise ProtocolExecutionError("MCP progress replay did not preserve the event ids")
     if replayed_task_event.event_id != task_event.event_id:
         raise ProtocolExecutionError("MCP task replay did not preserve the event id")
     completed = _mcp_tool(
@@ -286,57 +332,51 @@ def protocol_parity_with_cancel(
     )
     image_path = _required_resource_link(completed, mcp.evidence["jobId"])
 
-    cancelled = execute_mcp_generation(transport_mcp, scenario, session_id=session_id, request_id=4)
-    confirmation_required = _mcp_error_code(
-        _mcp_call(
-            transport_mcp,
-            session_id,
-            5,
-            "jobs.cancel",
-            {"jobId": cancelled.evidence["jobId"]},
-            scenario["timeoutMs"],
-        ),
-        "jobs.cancel without confirmation",
+    cancelled = execute_mcp_generation(
+        transport_mcp,
+        scenario,
+        session_id=session_id,
+        request_id=4,
+        operation="cancel-generation",
+        steps_override=CANCELLATION_PROBE_STEPS,
+        mutation_namespace=mutation_namespace,
     )
-    if confirmation_required != "CONFIRMATION_REQUIRED":
-        raise ProtocolExecutionError("MCP jobs.cancel did not require confirmation")
-    if confirmation_id_supplier is None:
-        raise ProtocolExecutionError("W7 jobs.cancel requires a confirmation UI approval bridge")
-    confirmation_id = confirmation_id_supplier()
-    if not confirmation_id:
-        raise ProtocolExecutionError("W7 UI approval bridge did not return a confirmation id")
+    cancel_arguments = {
+        "jobId": cancelled.evidence["jobId"],
+        "dryRun": False,
+        "idempotencyKey": _w7_idempotency_key(
+            scenario,
+            f"cancel:{cancelled.evidence['jobId']}",
+            mutation_namespace,
+        ),
+    }
     cancel = _mcp_tool(
         transport_mcp,
         session_id,
-        6,
+        5,
         "jobs.cancel",
-        {"jobId": cancelled.evidence["jobId"]},
+        cancel_arguments,
         scenario["timeoutMs"],
-        confirmation_id=confirmation_id,
     )
     cancel_task = cancel.get("task")
     if cancel_task != "cancelled":
         raise ProtocolExecutionError("MCP jobs.cancel did not return cancelled")
-    confirmation_replay = _mcp_error_code(
-        _mcp_call(
-            transport_mcp,
-            session_id,
-            7,
-            "jobs.cancel",
-            {"jobId": cancelled.evidence["jobId"]},
-            scenario["timeoutMs"],
-            confirmation_id=confirmation_id,
-        ),
-        "MCP jobs.cancel confirmation replay",
+    cancel_replay = _mcp_tool(
+        transport_mcp,
+        session_id,
+        6,
+        "jobs.cancel",
+        cancel_arguments,
+        scenario["timeoutMs"],
     )
-    if confirmation_replay != "CONFIRMATION_INVALID":
-        raise ProtocolExecutionError("MCP jobs.cancel confirmation id was not one-time")
+    if cancel_replay.get("task") != "cancelled":
+        raise ProtocolExecutionError("MCP jobs.cancel idempotency replay did not preserve cancelled result")
 
     reconnect_session_id = initialize_mcp(transport_mcp, scenario["timeoutMs"])
     reconnected = _mcp_tool(
         transport_mcp,
         reconnect_session_id,
-        8,
+        7,
         "jobs.get",
         {"jobId": mcp.evidence["jobId"]},
         scenario["timeoutMs"],
@@ -344,17 +384,18 @@ def protocol_parity_with_cancel(
     reconnect_image_path = _required_resource_link(reconnected, mcp.evidence["jobId"])
     download = transport_mcp.request("GET", reconnect_image_path, timeout_ms=scenario["timeoutMs"])
     if download.status != 200 or not download.body:
-        raise ProtocolExecutionError("MCP image capability download failed")
+        raise ProtocolExecutionError("MCP asset download failed")
     return {
         "v1": v1,
         "mcp": {
             "generation": mcp,
+            "progressEvents": [event.as_dict() for event in progress_events],
+            "progressReplay": [event.as_dict() for event in replayed_progress_events],
             "taskEvent": task_event.as_dict(),
             "taskReplay": replayed_task_event.as_dict(),
             "completed": completed,
             "cancel": cancel,
-            "confirmationRequired": confirmation_required,
-            "confirmationReplay": confirmation_replay,
+            "cancelReplay": cancel_replay,
             "reconnected": reconnected,
             "download": download.body,
         },
@@ -362,11 +403,12 @@ def protocol_parity_with_cancel(
             "tool": mcp.evidence["tool"] == "generation.create",
             "v1Output": bool(v1.output_url or v1.output_bytes),
             "mcpJob": bool(mcp.evidence["jobId"]),
+            "progress": [event.step for event in progress_events] == list(range(1, scenario["request"]["steps"] + 1)),
+            "progressReplay": [event.event_id for event in replayed_progress_events] == [event.event_id for event in progress_events],
             "taskEvent": task_event.job_id == mcp.evidence["jobId"],
             "replay": replayed_task_event.event_id == task_event.event_id,
             "cancel": cancel_task == "cancelled",
-            "confirmationRequired": confirmation_required == "CONFIRMATION_REQUIRED",
-            "confirmationOneTime": confirmation_replay == "CONFIRMATION_INVALID",
+            "cancelReplay": cancel_replay.get("task") == "cancelled",
             "reconnect": reconnected.get("jobId") == mcp.evidence["jobId"],
             "resourceLink": image_path == reconnect_image_path,
             "download": bool(download.body),
@@ -381,15 +423,20 @@ def protocol_parity(
     transport_mcp: HttpTransport,
     scenario: dict,
     *,
-    confirmation_id_supplier: Callable[[], str] | None = None,
+    mutation_namespace: str = "fixture",
 ) -> dict:
     """Exercise the complete observable W7 contract for `/v1` and MCP."""
     return protocol_parity_with_cancel(
         transport_v1,
         transport_mcp,
         scenario,
-        confirmation_id_supplier=confirmation_id_supplier,
+        mutation_namespace=mutation_namespace,
     )
+
+
+def _w7_idempotency_key(scenario: dict, operation: str, mutation_namespace: str) -> str:
+    """Stable within one run while preventing stale Jobs from poisoning later runs."""
+    return f"w7:{scenario['scenarioId']}:{scenario['scenarioVersion']}:{mutation_namespace}:{operation}"
 
 
 def _mcp_call(
@@ -399,11 +446,8 @@ def _mcp_call(
     tool: str,
     arguments: dict,
     timeout_ms: int,
-    confirmation_id: str | None = None,
 ) -> HttpResult:
     params = {"name": tool, "arguments": arguments}
-    if confirmation_id:
-        params["confirmationId"] = confirmation_id
     payload = json.dumps(
         {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": params},
         separators=(",", ":"),
@@ -424,8 +468,6 @@ def _mcp_tool(
     tool: str,
     arguments: dict,
     timeout_ms: int,
-    *,
-    confirmation_id: str | None = None,
 ) -> dict:
     result = _mcp_call(
         transport,
@@ -434,7 +476,6 @@ def _mcp_tool(
         tool,
         arguments,
         timeout_ms,
-        confirmation_id,
     )
     body = _json(result, f"MCP {tool}")
     value = body.get("result")
@@ -451,17 +492,6 @@ def _mcp_error_code(result: HttpResult, operation: str) -> str:
     return code
 
 
-def _observe_task_event(
-    transport: McpSseTransport,
-    session_id: str,
-    job_id: str,
-    timeout_ms: int,
-    *,
-    last_event_id: int | None = None,
-) -> "ObservedTaskEvent":
-    return _observe_task_event_after(transport, session_id, job_id, timeout_ms, last_event_id=last_event_id)
-
-
 @dataclass(frozen=True)
 class ObservedTaskEvent:
     event_id: int
@@ -472,14 +502,37 @@ class ObservedTaskEvent:
         return {"eventId": self.event_id, "jobId": self.job_id, "task": self.task}
 
 
-def _observe_task_event_after(
+@dataclass(frozen=True)
+class ObservedProgressEvent:
+    event_id: int
+    job_id: str
+    step: int
+    total_steps: int
+
+    def as_dict(self) -> dict[str, str | int]:
+        return {
+            "eventId": self.event_id,
+            "jobId": self.job_id,
+            "step": self.step,
+            "totalSteps": self.total_steps,
+        }
+
+
+def _observe_job_events(
     transport: McpSseTransport,
     session_id: str,
     job_id: str,
     timeout_ms: int,
     *,
-    last_event_id: int | None,
-) -> ObservedTaskEvent:
+    expected_total_steps: int,
+    last_event_id: int | None = None,
+) -> tuple[tuple[ObservedProgressEvent, ...], ObservedTaskEvent]:
+    """Observe one Job on one SSE stream, including its progress and task state.
+
+    MCP clients are expected to keep a stream open. Opening a fresh stream for
+    every event category creates a disconnect-detection race and can exhaust a
+    server's bounded SSE slots even though the client closed each response.
+    """
     headers = {"Mcp-Session-Id": session_id}
     if last_event_id is not None:
         headers["Last-Event-ID"] = str(last_event_id)
@@ -487,22 +540,46 @@ def _observe_task_event_after(
     content_type = _header(response.headers, "content-type") or ""
     if response.status != 200 or not content_type.startswith("text/event-stream"):
         response.close()
-        raise ProtocolExecutionError("MCP task stream is unavailable")
+        raise ProtocolExecutionError(f"MCP job stream is unavailable (HTTP {response.status})")
+    observed: list[ObservedProgressEvent] = []
+    task_event: ObservedTaskEvent | None = None
     try:
         for event in response.events():
             if event.event == "reset":
-                raise ProtocolExecutionError("MCP task stream reset before requested replay")
-            if event.event != "task" or event.event_id is None:
+                raise ProtocolExecutionError("MCP job stream reset before requested replay")
+            if event.event_id is None:
                 continue
             try:
                 value = json.loads(event.data)
             except json.JSONDecodeError:
                 continue
-            if value.get("jobId") == job_id and isinstance(value.get("task"), str):
-                return ObservedTaskEvent(event.event_id, job_id, value["task"])
+            if value.get("jobId") != job_id:
+                continue
+            if event.event == "progress":
+                step = value.get("step")
+                total_steps = value.get("totalSteps")
+                if not isinstance(step, int) or isinstance(step, bool) or not isinstance(total_steps, int) or isinstance(total_steps, bool):
+                    raise ProtocolExecutionError("MCP progress event has invalid step fields")
+                expected_step = len(observed) + 1
+                if total_steps != expected_total_steps or step != expected_step:
+                    raise ProtocolExecutionError(
+                        "MCP progress event does not match the generated job steps "
+                        f"(expected {expected_step}/{expected_total_steps}, observed {step}/{total_steps})",
+                    )
+                observed.append(ObservedProgressEvent(event.event_id, job_id, step, total_steps))
+            elif event.event == "task" and isinstance(value.get("task"), str):
+                task = value["task"]
+                if task in {"failed", "cancelled"}:
+                    raise ProtocolExecutionError(f"MCP generated job entered terminal state {task}")
+                if task == "completed":
+                    task_event = ObservedTaskEvent(event.event_id, job_id, task)
+            if len(observed) == expected_total_steps and task_event is not None:
+                return tuple(observed), task_event
     finally:
         response.close()
-    raise ProtocolExecutionError("MCP task event for the generated job was not observed")
+    if len(observed) != expected_total_steps:
+        raise ProtocolExecutionError("MCP diffusion-step progress for the generated job was not fully observed")
+    raise ProtocolExecutionError("MCP completed task event for the generated job was not observed")
 
 
 def _parse_sse_lines(lines) -> Iterator[SseEvent]:
@@ -537,9 +614,9 @@ def _required_resource_link(result: dict, job_id: str) -> str:
     if len(links) != 1:
         raise ProtocolExecutionError("MCP jobs.get must return exactly one resource_link content block")
     path = links[0].get("uri")
-    expected_prefix = f"/mcp/images/{job_id}/"
-    if not isinstance(path, str) or not path.startswith(expected_prefix):
-        raise ProtocolExecutionError("MCP resource_link did not return the job image capability URI")
+    expected_prefix = "/assets/"
+    if not isinstance(path, str) or not path.startswith(expected_prefix) or len(path) <= len(expected_prefix):
+        raise ProtocolExecutionError("MCP resource_link did not return a stable asset URI")
     return path
 
 
@@ -564,7 +641,7 @@ def _mcp_can_express_full_fixture(scenario: dict) -> bool:
         "seed": scenario["fixtures"].get("seed"),
         "width": scenario["request"]["width"],
         "height": scenario["request"]["height"],
-        "scheduler": scenario["request"]["scheduler"],
+        "scheduler": scheduler_api_id(scenario["request"]["scheduler"]),
         "steps": scenario["request"]["steps"],
         "cfg": scenario["request"]["cfg"],
         "denoiseStrength": scenario["request"].get("strength", 1.0),

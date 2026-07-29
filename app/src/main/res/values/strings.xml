@@ -24,13 +24,6 @@
     <string name="mcp_admin_configuration">MCP client configuration</string>
     <string name="mcp_admin_copy">Copy configuration</string>
     <string name="mcp_admin_config_copied">MCP configuration copied</string>
-    <string name="mcp_admin_confirmations">Destructive action confirmations</string>
-    <string name="mcp_admin_confirmation_detail">Client %1$s requests %2$s for: %3$s</string>
-    <string name="mcp_admin_confirmation_meta">Scopes: %1$s\nRequest digest: %2$s\nExpires in %3$d seconds</string>
-    <string name="mcp_admin_approve">Approve once</string>
-    <string name="mcp_admin_reject">Reject</string>
-    <string name="mcp_admin_confirmation_id">Confirmation ID</string>
-    <string name="mcp_admin_confirmation_id_hint">Send this single-use ID to the MCP client and retry the exact action:\n%1$s</string>
 
     <!-- Models -->
     <string name="anythingv5_description">Anime Image Generation</string>

@@ -229,15 +229,16 @@ class OpenAiHttpServerInstrumentedTest {
     fun temporaryImageCapabilityPathCanBypassBearerHeader() {
         val port = availableIpv4Port()
         val token = "0123456789abcdef0123456789abcdef"
-        val downloadPath = TemporaryImageStore.DOWNLOAD_PATH_PREFIX + token
+        val downloadPath = TemporaryImageStore.DOWNLOAD_PATH_PREFIX + "history:42"
+        val downloadTarget = "$downloadPath?token=$token"
         val server = OpenAiHttpServer(
             port = port,
-            isAuthorized = { method, path, authorization ->
+            isAuthorized = { method, requestTarget, authorization ->
                 authorization == "Bearer device-test" ||
-                    (method == "GET" && TemporaryImageStore.tokenFromPath(path) != null)
+                    (method == "GET" && TemporaryImageStore.capabilityFromTarget(requestTarget) != null)
             },
             handler = { request ->
-                if (request.path == downloadPath) {
+                if (request.path == downloadPath && request.query == "token=$token") {
                     HttpResponse.binary(200, byteArrayOf(1, 2, 3), "image/png")
                 } else {
                     HttpResponse.json(200, """{"status":"unexpected"}""")
@@ -255,7 +256,7 @@ class OpenAiHttpServerInstrumentedTest {
                 socket.soTimeout = SOCKET_TIMEOUT_MS
                 socket.getOutputStream().write(
                     (
-                        "GET $downloadPath HTTP/1.1\r\n" +
+                        "GET $downloadTarget HTTP/1.1\r\n" +
                             "Host: 127.0.0.1\r\n" +
                             "\r\n"
                         ).toByteArray(StandardCharsets.ISO_8859_1),

@@ -61,4 +61,40 @@ class McpTransportGuardsTest {
         assertEquals(McpSseEventStore.CLOSED_EVENT, subscription.poll(100))
         subscription.close()
     }
+
+    @Test
+    fun slowSubscriberReceivesResetThenIsDetachedAtBoundedQueueLimit() {
+        val store = McpSseEventStore()
+        val subscription = store.open("session", null)
+
+        repeat(McpSseEventStore.MAX_SUBSCRIBER_QUEUE_EVENTS + 1) {
+            store.publish("session", "task", "{\"sequence\":$it}")
+        }
+
+        try {
+            assertEquals(McpSseEventStore.SUBSCRIBER_OVERFLOW_EVENT, subscription.poll(100))
+            store.publish("session", "task", "{\"sequence\":\"after-overflow\"}")
+            assertNull(subscription.poll(0))
+        } finally {
+            subscription.close()
+        }
+    }
+
+    @Test
+    fun replayStateExpiresAndEvictsOldestSessionGlobally() {
+        var now = 0L
+        val store = McpSseEventStore(clock = { now }, maxSessions = 2, replayIdleMillis = 100)
+        val oldest = store.open("oldest", null)
+        store.open("middle", null).close()
+
+        store.publish("newest", "task", "{}")
+
+        assertEquals(McpSseEventStore.CLOSED_EVENT, oldest.poll(100))
+        val expiring = store.open("expiring", null)
+        now = 101L
+        store.pruneExpired()
+        assertEquals(McpSseEventStore.CLOSED_EVENT, expiring.poll(100))
+        oldest.close()
+        expiring.close()
+    }
 }

@@ -6,6 +6,7 @@ import android.util.Log
 import io.github.xororz.localdream.data.AssetOrigin
 import io.github.xororz.localdream.data.GenerationDefaults
 import io.github.xororz.localdream.data.GenerationMode
+import io.github.xororz.localdream.data.HistoryItem
 import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.data.InferenceHistoryAssociation
 import io.github.xororz.localdream.data.InferenceJobStatus
@@ -13,10 +14,11 @@ import io.github.xororz.localdream.data.Model
 import io.github.xororz.localdream.data.PerformancePresetConfig
 import io.github.xororz.localdream.data.PerformancePresetEngineConfig
 import io.github.xororz.localdream.data.RoomInferenceJobRepository
-import io.github.xororz.localdream.data.toProtectedProjection
 import io.github.xororz.localdream.data.db.AppDatabase
+import io.github.xororz.localdream.data.toProtectedProjection
 import io.github.xororz.localdream.inference.InferenceDispatcher
 import io.github.xororz.localdream.service.BackendService
+import io.github.xororz.localdream.service.NativeRuntimeAttestationRecorder
 import io.github.xororz.localdream.ui.screens.GenerationParameters
 import java.io.File
 import java.nio.charset.StandardCharsets
@@ -45,9 +47,10 @@ class OpenAiApiController(
 
     fun route(request: HttpRequest): HttpResponse {
         if (request.method == "GET" &&
-            TemporaryImageStore.tokenFromPath(request.path) != null
+            TemporaryImageStore.assetIdFromPath(request.path) != null &&
+            TemporaryImageStore.tokenFromQuery(request.query) != null
         ) {
-            return downloadImage(request.path)
+            return downloadImage(request.path, request.query)
         }
         if (!isAuthorized(request.header("Authorization"))) {
             return error(
@@ -219,6 +222,12 @@ class OpenAiApiController(
     private fun upscale(request: HttpRequest): HttpResponse {
         val form = multipartParser.parse(request.header("Content-Type"), request.body)
         validateUploadedImage(form.image.bytes, "image", UPSCALE_IMAGE_LIMITS)
+        validateCommonOutputOptions(
+            n = form.fields.intValue("n", 1),
+            outputFormat = form.fields["output_format"],
+            stream = form.fields.booleanValue("stream", false),
+            background = form.fields["background"],
+        )
         val modelId = form.fields.required("model")
         val responseFormat = parseResponseFormat(form.fields["response_format"])
         val entry = runBlocking { catalog.find(modelId) }
@@ -249,7 +258,7 @@ class OpenAiApiController(
             val image = backendClient.upscale(form.image.bytes, path)
             val dimensions = decodeImageDimensions(image.bytes)
             val requestId = UUID.randomUUID().toString()
-            persistAsset(
+            val asset = persistAsset(
                 entry = entry,
                 image = image,
                 parameters = GenerationParameters(
@@ -274,6 +283,7 @@ class OpenAiApiController(
                 image = image,
                 responseFormat = responseFormat,
                 requestId = requestId,
+                assetId = "history:${asset.id}",
                 responseHost = request.header("Host"),
             )
         }
@@ -316,13 +326,16 @@ class OpenAiApiController(
         }
         val startedAt = System.currentTimeMillis()
         val image = backendClient.generate(parameters, dimensions.first, dimensions.second)
+        // A valid image is the only point at which a legacy model can acquire
+        // runtime evidence. A failed request leaves compatibility fallback on.
+        NativeRuntimeAttestationRecorder.record(context, entry.id)
         val mode = when {
             parameters.maskImage != null -> GenerationMode.INPAINT
             parameters.sourceImage != null -> GenerationMode.IMG2IMG
             else -> GenerationMode.TXT2IMG
         }
         val requestId = UUID.randomUUID().toString()
-        persistAsset(
+        val asset = persistAsset(
             entry = entry,
             image = image,
             parameters = GenerationParameters(
@@ -348,6 +361,7 @@ class OpenAiApiController(
             image = image,
             responseFormat = parameters.responseFormat,
             requestId = requestId,
+            assetId = "history:${asset.id}",
             responseHost = responseHost,
         )
     }
@@ -360,7 +374,7 @@ class OpenAiApiController(
         requestId: String,
         upscalerId: String? = null,
         inferenceAssociation: InferenceHistoryAssociation,
-    ) {
+    ): HistoryItem {
         val saved = runBlocking {
             historyManager.saveEncodedImage(
                 modelId = entry.id,
@@ -382,6 +396,7 @@ class OpenAiApiController(
                 code = "asset_persistence_failed",
             )
         }
+        return saved
     }
 
     private fun submit(
@@ -491,6 +506,7 @@ class OpenAiApiController(
         image: GeneratedImage,
         responseFormat: ImageResponseFormat,
         requestId: String,
+        assetId: String,
         responseHost: String?,
     ): HttpResponse = when (responseFormat) {
         ImageResponseFormat.B64_JSON -> HttpResponse.json(
@@ -504,7 +520,7 @@ class OpenAiApiController(
 
         ImageResponseFormat.URL -> {
             val token = try {
-                temporaryImages.register(image, requestId)
+                temporaryImages.register(image, requestId, assetId)
             } catch (error: IllegalArgumentException) {
                 throw OpenAiRequestException(
                     statusCode = 500,
@@ -515,6 +531,7 @@ class OpenAiApiController(
             }
             val url = TemporaryImageStore.downloadUrl(
                 hostHeader = responseHost,
+                assetId = assetId,
                 token = token,
                 fallbackPort = OpenAiApiPreferences.PORT,
             )
@@ -536,10 +553,12 @@ class OpenAiApiController(
         )
     }
 
-    private fun downloadImage(path: String): HttpResponse {
-        val token = TemporaryImageStore.tokenFromPath(path)
+    private fun downloadImage(path: String, query: String?): HttpResponse {
+        val assetId = TemporaryImageStore.assetIdFromPath(path)
             ?: return error(404, "Image not found", code = "image_not_found")
-        val image = temporaryImages.get(token)
+        val token = TemporaryImageStore.tokenFromQuery(query)
+            ?: return error(404, "Image not found", code = "image_not_found")
+        val image = temporaryImages.get(assetId, token)
             ?: return error(404, "Image not found or expired", code = "image_not_found")
         return HttpResponse.binary(
             statusCode = 200,
@@ -591,11 +610,11 @@ class OpenAiApiController(
 
     fun isTransportAuthorized(
         method: String,
-        path: String,
+        requestTarget: String,
         authorization: String?,
     ): Boolean {
         val temporaryImageRequest = method == "GET" &&
-            TemporaryImageStore.tokenFromPath(path) != null
+            TemporaryImageStore.capabilityFromTarget(requestTarget) != null
         return temporaryImageRequest || isAuthorized(authorization)
     }
 

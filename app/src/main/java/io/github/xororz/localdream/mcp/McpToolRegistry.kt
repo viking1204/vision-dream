@@ -1,7 +1,9 @@
 package io.github.xororz.localdream.mcp
 
+import java.math.BigDecimal
 import java.security.MessageDigest
 import java.util.Locale
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -13,6 +15,18 @@ class McpToolRegistry {
         val definition = definitions[name] ?: return McpToolValidation.Rejected("TOOL_NOT_FOUND")
         val keys = arguments.keys().asSequence().toSet()
         if (!keys.all(definition.allowedArguments::contains) || !definition.requiredArguments.all(arguments::has)) {
+            return McpToolValidation.Rejected("INVALID_PARAMS")
+        }
+        if (!definition.argumentTypes.all { (key, type) -> !arguments.has(key) || matchesJsonType(arguments.opt(key), type) }) {
+            return McpToolValidation.Rejected("INVALID_PARAMS")
+        }
+        if (definition.risk != McpToolRisk.READ && arguments.opt(IDEMPOTENCY_KEY) !is String) {
+            return McpToolValidation.Rejected("INVALID_PARAMS")
+        }
+        if (definition.risk != McpToolRisk.READ && arguments.optString(IDEMPOTENCY_KEY).isBlank()) {
+            return McpToolValidation.Rejected("INVALID_PARAMS")
+        }
+        if (definition.risk == McpToolRisk.DESTRUCTIVE && arguments.opt(DRY_RUN) !is Boolean) {
             return McpToolValidation.Rejected("INVALID_PARAMS")
         }
         if (!grantedScopes.containsAll(definition.requiredScopes)) {
@@ -30,15 +44,57 @@ class McpToolRegistry {
     }
 
     private fun digest(arguments: JSONObject, allowedArguments: Set<String>): String {
-        val canonical = allowedArguments.sorted().filter(arguments::has).joinToString("&") { key ->
-            "$key=${arguments.opt(key)?.toString().orEmpty()}"
-        }
+        // Idempotency keys identify a retry, not a distinct domain request.
+        // Excluding them makes a reused key with different mutation arguments
+        // detectable by the transport's replay store.
+        val canonical = allowedArguments.sorted()
+            .filter { it != IDEMPOTENCY_KEY && arguments.has(it) }
+            .joinToString("&") { key -> "$key=${canonicalJson(arguments.opt(key))}" }
         return MessageDigest.getInstance("SHA-256")
             .digest(canonical.toByteArray(Charsets.UTF_8))
             .joinToString("") { byte -> "%02x".format(Locale.ROOT, byte) }
     }
 
+    /**
+     * Idempotency compares JSON values, not the insertion order used by a
+     * particular client.  Keep arrays ordered because their order is domain
+     * input, while recursively sorting object keys makes retry serialization
+     * stable at every nesting level.
+     */
+    private fun canonicalJson(value: Any?): String = when (value) {
+        null, JSONObject.NULL -> "null"
+
+        is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(prefix = "{", postfix = "}") { key ->
+            "${JSONObject.quote(key)}:${canonicalJson(value.opt(key))}"
+        }
+
+        is JSONArray -> (0 until value.length()).joinToString(prefix = "[", postfix = "]") { index ->
+            canonicalJson(value.opt(index))
+        }
+
+        is String -> JSONObject.quote(value)
+
+        is Boolean -> value.toString()
+
+        is Number -> BigDecimal(value.toString()).stripTrailingZeros().toPlainString()
+
+        else -> JSONObject.quote(value.toString())
+    }
+
+    private fun matchesJsonType(value: Any?, type: String): Boolean = when (type) {
+        "string" -> value is String
+        "boolean" -> value is Boolean
+        "integer" -> value is Number && value.toDouble().isFinite() && value.toDouble() % 1.0 == 0.0
+        "number" -> value is Number && value.toDouble().isFinite()
+        "array" -> value is JSONArray
+        "object" -> value is JSONObject
+        else -> false
+    }
+
     companion object {
+        const val IDEMPOTENCY_KEY = "idempotencyKey"
+        const val DRY_RUN = "dryRun"
+
         val definitions: Map<String, McpToolDefinition> = listOf(
             definition("models.list", setOf("models.read"), McpToolRisk.READ),
             definition("models.get", setOf("models.read"), McpToolRisk.READ, setOf("modelId"), setOf("modelId")),
@@ -47,8 +103,8 @@ class McpToolRegistry {
                 "generation.create",
                 setOf("generation.run"),
                 McpToolRisk.MUTATE,
-                setOf("modelId", "presetId", "prompt", "negativePrompt", "seed", "width", "height", "scheduler", "steps", "cfg", "denoiseStrength"),
                 setOf("modelId", "prompt"),
+                setOf("modelId", "presetId", "prompt", "negativePrompt", "seed", "width", "height", "scheduler", "steps", "cfg", "denoiseStrength"),
                 argumentTypes = mapOf(
                     "seed" to "integer",
                     "width" to "integer",
@@ -63,10 +119,17 @@ class McpToolRegistry {
             definition("presets.list", setOf("presets.read"), McpToolRisk.READ),
             definition("presets.get", setOf("presets.read"), McpToolRisk.READ, setOf("presetId"), setOf("presetId")),
             definition("presets.create", setOf("presets.write"), McpToolRisk.MUTATE, setOf("name", "selector", "configJson"), setOf("name", "selector", "configJson")),
-            definition("presets.update", setOf("presets.write"), McpToolRisk.MUTATE, setOf("presetId", "revision"), setOf("presetId", "name", "selector", "configJson", "revision")),
-            definition("presets.reorder", setOf("presets.write"), McpToolRisk.MUTATE, setOf("presetIds"), setOf("presetIds")),
+            definition(
+                "presets.update",
+                setOf("presets.write"),
+                McpToolRisk.MUTATE,
+                setOf("presetId", "revision"),
+                setOf("presetId", "name", "selector", "configJson", "revision"),
+                argumentTypes = mapOf("revision" to "integer"),
+            ),
+            definition("presets.reorder", setOf("presets.write"), McpToolRisk.MUTATE, setOf("presetIds"), setOf("presetIds"), argumentTypes = mapOf("presetIds" to "array")),
             definition("presets.export", setOf("presets.read"), McpToolRisk.READ),
-            definition("presets.import", setOf("presets.write"), McpToolRisk.MUTATE, setOf("envelope"), setOf("envelope")),
+            definition("presets.import", setOf("presets.write"), McpToolRisk.MUTATE, setOf("envelope"), setOf("envelope"), argumentTypes = mapOf("envelope" to "object")),
             definition("prompts.list", setOf("prompts.read"), McpToolRisk.READ),
             definition("prompts.get", setOf("prompts.read"), McpToolRisk.READ, setOf("promptId"), setOf("promptId")),
             definition("prompts.create", setOf("prompts.write"), McpToolRisk.MUTATE, setOf("title", "prompt"), setOf("title", "prompt", "negativePrompt")),
@@ -92,15 +155,23 @@ class McpToolRegistry {
             required: Set<String> = emptySet(),
             allowed: Set<String> = emptySet(),
             argumentTypes: Map<String, String> = emptyMap(),
-        ) = McpToolDefinition(name, scopes, risk, required, allowed, argumentTypes = argumentTypes)
+        ) = McpToolDefinition(
+            name = name,
+            requiredScopes = scopes,
+            risk = risk,
+            requiredArguments = if (risk == McpToolRisk.MUTATE) required + IDEMPOTENCY_KEY else required,
+            allowedArguments = if (risk == McpToolRisk.MUTATE) allowed + IDEMPOTENCY_KEY else allowed,
+            argumentTypes = allowed.associateWith { "string" } + argumentTypes + if (risk == McpToolRisk.MUTATE) mapOf(IDEMPOTENCY_KEY to "string") else emptyMap(),
+        )
 
         private fun destructive(name: String, scope: String, target: String) = McpToolDefinition(
             name = name,
             requiredScopes = setOf(scope),
             risk = McpToolRisk.DESTRUCTIVE,
-            requiredArguments = setOf(target),
-            allowedArguments = setOf(target),
+            requiredArguments = setOf(target, IDEMPOTENCY_KEY, DRY_RUN),
+            allowedArguments = setOf(target, IDEMPOTENCY_KEY, DRY_RUN),
             targetArgument = target,
+            argumentTypes = mapOf(target to "string", IDEMPOTENCY_KEY to "string", DRY_RUN to "boolean"),
         )
     }
 }

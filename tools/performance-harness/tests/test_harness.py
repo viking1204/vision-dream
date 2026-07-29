@@ -3,11 +3,20 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from localdream_perf_harness import canonical_digest, command_run, command_verify, validate_scenarios
+from localdream_perf_harness import (
+    canonical_digest,
+    command_run,
+    command_run_w7,
+    command_verify,
+    resolve_bearer_token,
+    validate_scenarios,
+)
+from localdream_perf_protocol import ProtocolExecution, ProtocolExecutionError
 from localdream_perf_models import ColdState, GroupKey, Outcome, RuntimeProbe, RuntimeProbeStatus, Sample, report, report_gate, statistics
 
 
@@ -94,7 +103,10 @@ class ArtifactProtocolTest(unittest.TestCase):
                     "fixture_dir": str(root / "fixtures"),
                     "output_dir": str(root / "output"),
                     "preset_snapshot_sha256": "accepted-snapshot",
+                    "run_context_file": str(write_run_context(root)),
                     "bearer_token": None,
+                    "bearer_token_file": None,
+                    "bearer_token_env": None,
                     "scenario_ids": None,
                     "iterations": 1,
                     "run_id": "run-unavailable",
@@ -127,6 +139,36 @@ class ArtifactProtocolTest(unittest.TestCase):
             manifest = json.loads((root / "output" / "run-manifest.json").read_text())
             self.assertEqual("NOT_ACCEPTED_FOR_ONEPLUS13", report_file["conclusion"])
             self.assertEqual("REJECTED", manifest["runtimeProbe"]["status"])
+            self.assertFalse(manifest["replayable"])
+            self.assertIn("presetSnapshotSha256", manifest["missingReplayFacts"])
+
+    def test_run_writes_complete_manifest_before_the_first_device_request(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            probe_path = root / "probe.json"
+            write_verified_probe(probe_path)
+            output_dir = root / "output"
+
+            def assert_manifest_then_interrupt(_scenario_id):
+                manifest = json.loads((output_dir / "run-manifest.json").read_text())
+                self.assertTrue(manifest["replayable"])
+                self.assertEqual(2, manifest["manifestVersion"])
+                self.assertEqual("preset-v1", manifest["presetSnapshotSha256"])
+                self.assertEqual(7, len(manifest["scenarioContracts"]))
+                raise ProtocolExecutionError("interrupted after manifest")
+
+            args = type("Args", (), {
+                "scenario_dir": ROOT / "scenarios" / "v2", "runtime_probe_file": str(probe_path),
+                "base_url": "http://127.0.0.1:1", "fixture_dir": str(root / "fixtures"),
+                "output_dir": str(output_dir), "preset_snapshot_sha256": "preset-v1",
+                "run_context_file": str(write_run_context(root)), "bearer_token": None,
+                "bearer_token_file": None, "bearer_token_env": "LOCALDREAM_API_KEY",
+                "scenario_ids": "W1", "iterations": 1, "run_id": "manifest-first",
+            })()
+            with patch.dict("os.environ", {"LOCALDREAM_API_KEY": "token"}, clear=True), patch(
+                "localdream_perf_harness.DeviceScenarioExecutor.execute", side_effect=assert_manifest_then_interrupt,
+            ):
+                self.assertEqual(2, command_run(args))
 
     def test_report_requires_complete_probe_and_final_acceptance_evidence(self):
         key = GroupKey("scenario", "preset", "runtime", ColdState.PROCESS_COLD, "v1")
@@ -136,6 +178,128 @@ class ArtifactProtocolTest(unittest.TestCase):
         self.assertNotIn("statistics", result)
         self.assertIn("INCOMPLETE_RUNTIME_PROBE", result["reasons"])
 
+    def test_bearer_token_uses_file_or_environment_never_argv(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            secret_file = Path(temporary) / "token"
+            secret_file.write_text("file-token\n")
+            self.assertEqual(
+                "file-token",
+                resolve_bearer_token(type("Args", (), {
+                    "bearer_token": None,
+                    "bearer_token_file": str(secret_file),
+                    "bearer_token_env": None,
+                })()),
+            )
+        with patch.dict("os.environ", {"LOCALDREAM_API_KEY": "env-token"}, clear=True):
+            self.assertEqual(
+                "env-token",
+                resolve_bearer_token(type("Args", (), {
+                    "bearer_token": None,
+                    "bearer_token_file": None,
+                    "bearer_token_env": "LOCALDREAM_API_KEY",
+                })()),
+            )
+        with self.assertRaisesRegex(ValueError, "not supported"):
+            resolve_bearer_token(type("Args", (), {
+                "bearer_token": "argv-secret",
+                "bearer_token_file": None,
+                "bearer_token_env": None,
+            })())
+
+    def test_w7_runner_uses_independent_secret_files_and_writes_a_redacted_report(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            v1_token = root / "v1-token"
+            mcp_token = root / "mcp-token"
+            v1_token.write_text("v1-secret")
+            mcp_token.write_text("mcp-secret")
+            probe_path = root / "probe.json"
+            write_verified_probe(probe_path)
+            execution = ProtocolExecution("/endpoint", 12.5, 200, "/image", 0, {"jobId": "job-1"})
+            parity_result = {
+                "v1": execution,
+                "mcp": {
+                    "generation": execution,
+                    "progressEvents": [{"step": 1}],
+                    "progressReplay": [{"step": 1}],
+                    "taskEvent": {"task": "succeeded"},
+                    "taskReplay": {"task": "succeeded"},
+                    "cancelReplay": {"task": "cancelled"},
+                    "download": b"png",
+                },
+                "parity": {"tool": True, "download": True},
+            }
+            args = type("Args", (), {
+                "scenario_file": ROOT / "scenarios" / "v2" / "W7.json",
+                "v1_base_url": "http://127.0.0.1:8809",
+                "mcp_base_url": "http://127.0.0.1:8810",
+                "output_dir": root / "output",
+                "runtime_probe_file": probe_path,
+                "run_context_file": write_run_context(root),
+                "v1_bearer_token_file": v1_token,
+                "v1_bearer_token_env": None,
+                "mcp_bearer_token_file": mcp_token,
+                "mcp_bearer_token_env": None,
+                "run_id": "w7-run",
+            })()
+            with patch("localdream_perf_harness.protocol_parity", return_value=parity_result) as parity:
+                self.assertEqual(0, command_run_w7(args))
+
+            self.assertEqual("v1-secret", parity.call_args.args[0].bearer_token)
+            self.assertEqual("mcp-secret", parity.call_args.args[1].bearer_token)
+            self.assertEqual("w7-run", parity.call_args.kwargs["mutation_namespace"])
+            report_value = json.loads((root / "output" / "w7-report.json").read_text())
+            self.assertEqual("W7_PROTOCOL_PARITY_PASSED", report_value["conclusion"])
+            self.assertNotIn("secret", json.dumps(report_value))
+            self.assertEqual("VERIFIED", json.loads((root / "output" / "run-manifest.json").read_text())["runtimeProbe"]["status"])
+
+    def test_w7_rejects_non_verified_or_incomplete_runtime_before_contacting_device(self):
+        for status in ("UNAVAILABLE", "REJECTED", "VERIFIED"):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                probe_path = root / "probe.json"
+                probe_path.write_text(json.dumps({"status": status}))
+                args = type("Args", (), {
+                    "scenario_file": ROOT / "scenarios" / "v2" / "W7.json", "runtime_probe_file": probe_path,
+                    "run_context_file": write_run_context(root), "v1_base_url": "http://127.0.0.1:1",
+                    "mcp_base_url": "http://127.0.0.1:1", "output_dir": root / "output",
+                    "v1_bearer_token_file": None, "v1_bearer_token_env": "LOCALDREAM_V1_TOKEN",
+                    "mcp_bearer_token_file": None, "mcp_bearer_token_env": "LOCALDREAM_MCP_TOKEN", "run_id": f"w7-{status.lower()}",
+                })()
+                with patch("localdream_perf_harness.protocol_parity") as parity:
+                    self.assertEqual(2, command_run_w7(args))
+                parity.assert_not_called()
+                report = json.loads((root / "output" / "w7-report.json").read_text())
+                self.assertEqual("NOT_ACCEPTED_FOR_ONEPLUS13", report["conclusion"])
+                self.assertEqual(status, json.loads((root / "output" / "run-manifest.json").read_text())["runtimeProbe"]["status"])
+
+
+def write_run_context(root: Path) -> Path:
+    path = root / "run-context.json"
+    path.write_text(json.dumps({
+        "presetSnapshotSha256": "preset-v1",
+        "appBuild": "debug-1",
+        "androidVersion": "15",
+        "network": {"type": "wifi"},
+        "battery": {"percent": 80},
+        "screen": {"brightness": 50},
+        "ambientTemperatureC": 25.0,
+    }))
+    return path
+
+
+def write_verified_probe(path: Path) -> None:
+    path.write_text(json.dumps({
+        "status": "VERIFIED",
+        "deviceModel": "PJZ110",
+        "soc": "SM8750",
+        "abi": "arm64-v8a",
+        "qairtVersion": "2.48.40",
+        "htpTarget": "v79",
+        "contextFingerprint": "a" * 64,
+        "loadedLibraryFingerprints": {"libQnnHtpV79.so": "b" * 64},
+        "nativeReady": True,
+    }))
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,7 @@ import org.json.JSONObject
 /**
  * 已通过协议安全边界的 MCP Tool 领域入口。
  *
- * HTTP 层负责认证、会话、schema、scope 和 confirmation；实现方只会收到已
+ * HTTP 层负责认证、会话、schema 和 scope；实现方只会收到已
  * 规范化的 invocation，不能接收客户端提供的任意命令、文件路径或 Token。
  */
 fun interface McpToolGateway {

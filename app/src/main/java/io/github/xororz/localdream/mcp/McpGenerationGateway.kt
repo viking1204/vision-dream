@@ -4,18 +4,18 @@ import android.content.Context
 import io.github.xororz.localdream.data.AssetOrigin
 import io.github.xororz.localdream.data.GenerationDefaults
 import io.github.xororz.localdream.data.GenerationMode
-import io.github.xororz.localdream.data.HistoryManager
-import io.github.xororz.localdream.data.HistoryItem
 import io.github.xororz.localdream.data.HistoryFilter
+import io.github.xororz.localdream.data.HistoryItem
+import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.data.InferenceHistoryAssociation
 import io.github.xororz.localdream.data.InferenceJobStatus
 import io.github.xororz.localdream.data.PerformancePresetConfig
 import io.github.xororz.localdream.data.PerformancePresetRepository
-import io.github.xororz.localdream.data.requireExecutableSnapshot
 import io.github.xororz.localdream.data.PromptRepository
 import io.github.xororz.localdream.data.RoomInferenceJobRepository
 import io.github.xororz.localdream.data.db.AppDatabase
 import io.github.xororz.localdream.data.db.HistoryDao
+import io.github.xororz.localdream.data.requireExecutableSnapshot
 import io.github.xororz.localdream.inference.InferenceDispatcher
 import io.github.xororz.localdream.openai.BackendRuntimeCoordinator
 import io.github.xororz.localdream.openai.BoundedSerialExecutor
@@ -23,6 +23,7 @@ import io.github.xororz.localdream.openai.ImageRequestParameters
 import io.github.xororz.localdream.openai.InstalledModelCatalog
 import io.github.xororz.localdream.openai.NativeBackendClient
 import io.github.xororz.localdream.openai.validateParameters
+import io.github.xororz.localdream.service.NativeRuntimeAttestationRecorder
 import io.github.xororz.localdream.ui.screens.GenerationParameters
 import java.io.File
 import java.util.concurrent.CompletableFuture
@@ -38,7 +39,6 @@ import org.json.JSONObject
 class McpGenerationGateway(
     private val jobs: McpJobStore,
     private val scheduler: McpGenerationScheduler,
-    private val capabilities: McpImageCapabilityStore,
     private val models: McpInstalledModelCatalog = McpInstalledModelCatalog.Unavailable,
     private val prompts: McpPromptStore = McpPromptStore.Unavailable,
     private val presets: McpPresetStore = McpPresetStore.Unavailable,
@@ -180,11 +180,9 @@ class McpGenerationGateway(
             .put("task", McpTaskProjection.from(job.status).wireValue)
         if (job.status == InferenceJobStatus.SUCCEEDED) {
             val asset = jobs.historyAssetFor(job.id) ?: return McpToolGatewayResult.Rejected("INFERENCE_FAILED")
-            val capability = capabilities.create(client.clientId, job.id, client.transport, asset.mimeType, asset.assetId)
-            val imagePath = McpProtocol.imagePath(job.id, capability.token)
-            // Keep the established image field for existing clients while exposing
-            // the MCP-standard link form. The opaque capability still binds this
-            // one download to the authenticated client, job and transport.
+            val imagePath = McpProtocol.assetPath(asset.assetId)
+            // Jobs expose a stable authenticated asset resource. The Job id
+            // remains task metadata and never becomes part of the asset route.
             result.put("image", imagePath)
             result.put(
                 "content",
@@ -417,6 +415,7 @@ class McpGenerationGateway(
         McpDownloadCreateResult.ACCEPTED -> McpToolGatewayResult.Completed(
             JSONObject().put("downloadId", arguments.getString("modelId")).put("status", "queued"),
         )
+
         else -> McpToolGatewayResult.Rejected(result.code)
     }
 
@@ -460,7 +459,9 @@ class McpGenerationGateway(
             McpRuntimeUnloadResult.REQUESTED -> McpToolGatewayResult.Completed(
                 JSONObject().put("runtimeId", runtimeId).put("unloadRequested", true),
             )
+
             McpRuntimeUnloadResult.NOT_LOADED -> McpToolGatewayResult.Rejected("RUNTIME_NOT_LOADED")
+
             McpRuntimeUnloadResult.BUSY -> McpToolGatewayResult.Rejected("RUNTIME_BUSY")
         }
     }
@@ -483,8 +484,8 @@ class McpGenerationGateway(
         )
     }
 
-    private companion object {
-        val SUPPORTED_TOOLS = setOf(
+    companion object {
+        private val SUPPORTED_TOOLS = setOf(
             "models.list",
             "models.get",
             "generation.create",
@@ -514,15 +515,39 @@ class McpGenerationGateway(
             "token.rotate",
         )
 
-        const val HISTORY_ASSET_PREFIX = "history:"
+        /**
+         * New local credentials intentionally use a reviewed, version-stable
+         * scope template. Do not derive this from [SUPPORTED_TOOLS] or the
+         * registry: registering a future tool must not silently expand the
+         * authority granted to later credentials.
+         */
+        val DEFAULT_CLIENT_SCOPES: Set<String> = setOf(
+            "models.read",
+            "generation.run",
+            "jobs.read",
+            "jobs.write",
+            "presets.read",
+            "presets.write",
+            "prompts.read",
+            "prompts.write",
+            "assets.read",
+            "assets.write",
+            "downloads.read",
+            "downloads.write",
+            "diagnostics.read",
+            "diagnostics.write",
+            "clients.write",
+        )
 
-        val ASSET_TOOLS = setOf("assets.list", "assets.delete")
+        private const val HISTORY_ASSET_PREFIX = "history:"
 
-        val DOWNLOAD_TOOLS = setOf("downloads.list", "downloads.create", "downloads.cancel")
+        private val ASSET_TOOLS = setOf("assets.list", "assets.delete")
 
-        val RUNTIME_TOOLS = setOf("runtime.status", "runtime.unload")
+        private val DOWNLOAD_TOOLS = setOf("downloads.list", "downloads.create", "downloads.cancel")
 
-        val CLIENT_TOOLS = setOf("client.revoke", "token.rotate")
+        private val RUNTIME_TOOLS = setOf("runtime.status", "runtime.unload")
+
+        private val CLIENT_TOOLS = setOf("client.revoke", "token.rotate")
     }
 
     private fun promptId(arguments: JSONObject): String? = arguments.optString("promptId").takeIf(String::isNotBlank)
@@ -772,99 +797,103 @@ class AndroidMcpGenerationScheduler(
     private val savedAssets = ConcurrentHashMap<String, HistoryItem>()
     private val schedulerMonitor = Any()
     private var stopping = false
+
     @Volatile private var activeJobId: String? = null
 
     override fun submit(request: McpGenerationRequest): McpGenerationScheduleResult {
         val submission = synchronized(schedulerMonitor) {
             if (stopping) return McpGenerationScheduleResult.PIPELINE_BUSY
             dispatcher.submit(request.job.id, request.modelId) {
-            activeJobId = request.job.id
-            jobs.updateStatus(request.job.id, InferenceJobStatus.RUNNING)
-            McpTaskEventBus.publish(McpTaskEventBus.Event(request.job.ownerId, request.job.id, InferenceJobStatus.RUNNING))
-            try {
-                val entry = runBlocking { catalog.find(request.modelId) }
-                    ?.takeIf { it.kind == InstalledModelCatalog.Kind.GENERATION }
-                    ?: throw IllegalArgumentException("Requested model is not installed")
-                val presetConfig = PerformancePresetConfig.parse(request.job.presetConfigJson)
-                val presetEngineConfig = presetConfig.requireExecutableSnapshot(
-                    request.job.presetId == PerformancePresetRepository.COMPATIBILITY_FALLBACK_ID,
-                )
-                val dimensions = runBlocking {
-                    coordinator.ensureReady(entry, request.width, request.height, presetEngineConfig)
-                }
-                val negativePrompt = request.negativePrompt.ifBlank { GenerationDefaults.DEFAULT_NEGATIVE_PROMPT }
-                val generated = backend.generate(
-                    request.parameters.copy(modelId = entry.id, negativePrompt = negativePrompt),
-                    dimensions.first,
-                    dimensions.second,
-                    onDiffusionStep = { step, totalSteps ->
-                        if (request.job.id !in cancelledJobs) {
-                            McpTaskEventBus.publish(
-                                McpTaskEventBus.Event(
-                                    clientId = request.job.ownerId,
-                                    jobId = request.job.id,
-                                    status = InferenceJobStatus.RUNNING,
-                                    diffusionStep = step,
-                                    totalDiffusionSteps = totalSteps,
-                                ),
-                            )
-                        }
-                    },
-                )
-                // Cancellation may race native completion. Never materialize a
-                // historical asset after the Job has been cancelled.
-                if (request.job.id in cancelledJobs || jobs.get(request.job.id)?.status == InferenceJobStatus.CANCELLED) {
-                    return@submit Unit
-                }
-                val saved = runBlocking {
-                    history.saveEncodedImage(
-                        modelId = entry.id,
-                        encodedImage = generated.bytes,
-                        mimeType = generated.mimeType,
-                        params = GenerationParameters(
-                            steps = request.steps,
-                            cfg = request.cfg,
-                            seed = generated.seed,
-                            prompt = request.prompt,
-                            negativePrompt = negativePrompt,
-                            generationTime = null,
-                            width = dimensions.first,
-                            height = dimensions.second,
-                            runOnCpu = entry.model?.runOnCpu == true,
-                            denoiseStrength = request.denoiseStrength,
-                            useOpenCL = false,
-                            scheduler = request.scheduler,
-                            mode = GenerationMode.TXT2IMG,
-                        ),
-                        mode = GenerationMode.TXT2IMG,
-                        origin = AssetOrigin.MCP,
-                        inferenceAssociation = InferenceHistoryAssociation(
-                            request.job.id,
-                            request.job.presetId,
-                            request.job.presetRevision,
-                        ),
+                activeJobId = request.job.id
+                jobs.updateStatus(request.job.id, InferenceJobStatus.RUNNING)
+                McpTaskEventBus.publish(McpTaskEventBus.Event(request.job.ownerId, request.job.id, InferenceJobStatus.RUNNING))
+                try {
+                    val entry = runBlocking { catalog.find(request.modelId) }
+                        ?.takeIf { it.kind == InstalledModelCatalog.Kind.GENERATION }
+                        ?: throw IllegalArgumentException("Requested model is not installed")
+                    val presetConfig = PerformancePresetConfig.parse(request.job.presetConfigJson)
+                    val presetEngineConfig = presetConfig.requireExecutableSnapshot(
+                        request.job.presetId == PerformancePresetRepository.COMPATIBILITY_FALLBACK_ID,
                     )
+                    val dimensions = runBlocking {
+                        coordinator.ensureReady(entry, request.width, request.height, presetEngineConfig)
+                    }
+                    val negativePrompt = request.negativePrompt.ifBlank { GenerationDefaults.DEFAULT_NEGATIVE_PROMPT }
+                    val generated = backend.generate(
+                        request.parameters.copy(modelId = entry.id, negativePrompt = negativePrompt),
+                        dimensions.first,
+                        dimensions.second,
+                        onDiffusionStep = { step, totalSteps ->
+                            if (request.job.id !in cancelledJobs) {
+                                McpTaskEventBus.publish(
+                                    McpTaskEventBus.Event(
+                                        clientId = request.job.ownerId,
+                                        jobId = request.job.id,
+                                        status = InferenceJobStatus.RUNNING,
+                                        diffusionStep = step,
+                                        totalDiffusionSteps = totalSteps,
+                                    ),
+                                )
+                            }
+                        },
+                    )
+                    // MCP is an independent native inference entrypoint. Its
+                    // completed image is equally valid attestation evidence.
+                    NativeRuntimeAttestationRecorder.record(context, entry.id)
+                    // Cancellation may race native completion. Never materialize a
+                    // historical asset after the Job has been cancelled.
+                    if (request.job.id in cancelledJobs || jobs.get(request.job.id)?.status == InferenceJobStatus.CANCELLED) {
+                        return@submit Unit
+                    }
+                    val saved = runBlocking {
+                        history.saveEncodedImage(
+                            modelId = entry.id,
+                            encodedImage = generated.bytes,
+                            mimeType = generated.mimeType,
+                            params = GenerationParameters(
+                                steps = request.steps,
+                                cfg = request.cfg,
+                                seed = generated.seed,
+                                prompt = request.prompt,
+                                negativePrompt = negativePrompt,
+                                generationTime = null,
+                                width = dimensions.first,
+                                height = dimensions.second,
+                                runOnCpu = entry.model?.runOnCpu == true,
+                                denoiseStrength = request.denoiseStrength,
+                                useOpenCL = false,
+                                scheduler = request.scheduler,
+                                mode = GenerationMode.TXT2IMG,
+                            ),
+                            mode = GenerationMode.TXT2IMG,
+                            origin = AssetOrigin.MCP,
+                            inferenceAssociation = InferenceHistoryAssociation(
+                                request.job.id,
+                                request.job.presetId,
+                                request.job.presetRevision,
+                            ),
+                        )
+                    }
+                    checkNotNull(saved) { "Generated image could not be saved" }
+                    savedAssets[request.job.id] = saved
+                    if (request.job.id in cancelledJobs || jobs.get(request.job.id)?.status == InferenceJobStatus.CANCELLED) {
+                        discardSavedAsset(request.job.id)
+                        return@submit Unit
+                    }
+                    if (jobs.get(request.job.id)?.status != InferenceJobStatus.CANCELLED) {
+                        jobs.updateStatus(request.job.id, InferenceJobStatus.SUCCEEDED)
+                        McpTaskEventBus.publish(McpTaskEventBus.Event(request.job.ownerId, request.job.id, InferenceJobStatus.SUCCEEDED))
+                        savedAssets.remove(request.job.id)
+                    }
+                } catch (error: Throwable) {
+                    if (jobs.get(request.job.id)?.status != InferenceJobStatus.CANCELLED) {
+                        jobs.updateStatus(request.job.id, InferenceJobStatus.FAILED)
+                        McpTaskEventBus.publish(McpTaskEventBus.Event(request.job.ownerId, request.job.id, InferenceJobStatus.FAILED))
+                    }
+                    throw error
+                } finally {
+                    activeJobId = null
                 }
-                checkNotNull(saved) { "Generated image could not be saved" }
-                savedAssets[request.job.id] = saved
-                if (request.job.id in cancelledJobs || jobs.get(request.job.id)?.status == InferenceJobStatus.CANCELLED) {
-                    discardSavedAsset(request.job.id)
-                    return@submit Unit
-                }
-                if (jobs.get(request.job.id)?.status != InferenceJobStatus.CANCELLED) {
-                    jobs.updateStatus(request.job.id, InferenceJobStatus.SUCCEEDED)
-                    McpTaskEventBus.publish(McpTaskEventBus.Event(request.job.ownerId, request.job.id, InferenceJobStatus.SUCCEEDED))
-                    savedAssets.remove(request.job.id)
-                }
-            } catch (error: Throwable) {
-                if (jobs.get(request.job.id)?.status != InferenceJobStatus.CANCELLED) {
-                    jobs.updateStatus(request.job.id, InferenceJobStatus.FAILED)
-                    McpTaskEventBus.publish(McpTaskEventBus.Event(request.job.ownerId, request.job.id, InferenceJobStatus.FAILED))
-                }
-                throw error
-            } finally {
-                activeJobId = null
-            }
             }.also { admitted ->
                 if (admitted is BoundedSerialExecutor.Submission.Accepted) {
                     executionFinished[request.job.id] = admitted.executionFinished
@@ -910,16 +939,15 @@ class AndroidMcpGenerationScheduler(
     }
 }
 
-/** Reads only an asset selected by the server-side history row for this Job. */
+/** Reads only the history row selected by a validated public asset id. */
 class McpHistoryImageContentResolver(
     private val context: Context,
     private val history: HistoryDao,
 ) : McpImageContentResolver {
-    override fun resolve(capability: McpImageCapability): McpImageContent? = runBlocking {
-        val historyId = capability.assetId.removePrefix("history:").toLongOrNull() ?: return@runBlocking null
-        val entity = history.getByJobId(capability.jobId)
-            ?.takeIf { it.id == historyId && it.mimeType == capability.mimeType }
-            ?: return@runBlocking null
+    override fun resolve(assetId: String): McpImageContent? = runBlocking {
+        if (!assetId.startsWith("history:")) return@runBlocking null
+        val historyId = assetId.removePrefix("history:").toLongOrNull() ?: return@runBlocking null
+        val entity = history.getById(historyId) ?: return@runBlocking null
         val root = File(context.filesDir, "history").canonicalFile
         val image = File(context.filesDir, entity.imagePath).canonicalFile
         if (

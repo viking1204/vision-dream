@@ -24,13 +24,6 @@
     <string name="mcp_admin_configuration">MCP 客户端配置</string>
     <string name="mcp_admin_copy">复制配置</string>
     <string name="mcp_admin_config_copied">MCP 配置已复制</string>
-    <string name="mcp_admin_confirmations">破坏性操作确认</string>
-    <string name="mcp_admin_confirmation_detail">客户端 %1$s 请求执行 %2$s，目标：%3$s</string>
-    <string name="mcp_admin_confirmation_meta">权限：%1$s\n请求摘要：%2$s\n将在 %3$d 秒后过期</string>
-    <string name="mcp_admin_approve">仅批准一次</string>
-    <string name="mcp_admin_reject">拒绝</string>
-    <string name="mcp_admin_confirmation_id">确认 ID</string>
-    <string name="mcp_admin_confirmation_id_hint">将这个一次性 ID 提供给 MCP 客户端，并重试完全相同的操作：\n%1$s</string>
 
     <!-- Models -->
     <string name="anythingv5_description">动漫图像生成模型</string>

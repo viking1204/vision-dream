@@ -82,6 +82,22 @@ data class ModelRuntimeCompatibility(
 )
 
 /**
+ * App-owned evidence that this exact model context completed native inference.
+ * This type is intentionally kept separate from public model metadata: only
+ * [NativeRuntimeAttestationStore] can persist it in app-private storage.
+ */
+data class NativeRuntimeAttestation(
+    val deviceModel: String,
+    val soc: String,
+    val qairtVersion: String,
+    val abi: String,
+    val htpTarget: String,
+    val contextFingerprint: String,
+    val loadedLibraryFingerprints: Map<String, String>,
+    val observedAtEpochMillis: Long,
+)
+
+/**
  * Versioned metadata owned by Vision Dream, separate from model-provided
  * generation defaults in config.json.
  */
@@ -126,7 +142,7 @@ data class ModelMetadata(
     }.toString()
 
     companion object {
-        const val SCHEMA_VERSION = 2
+        const val SCHEMA_VERSION = 3
 
         private const val KEY_SCHEMA_VERSION = "schema_version"
         private const val KEY_CONTENT_RATING = "content_rating"
@@ -199,6 +215,31 @@ data class ModelMetadata(
                 runtimeCompatibility = runtimeCompatibility,
             )
         }
+    }
+}
+
+/** Builds a persisted attestation only from a completed native generation. */
+object NativeRuntimeAttestor {
+    private const val FALLBACK_REASON = "COMPATIBILITY_FALLBACK_REQUIRED"
+
+    fun attest(
+        probe: RuntimeProbe,
+        observedAtEpochMillis: Long,
+    ): NativeRuntimeAttestation? {
+        val compatibility = RuntimeProbeEvaluator.targetCompatibility(probe) ?: return null
+        if ((probe.rejectionReasons - FALLBACK_REASON).isNotEmpty() || observedAtEpochMillis <= 0L) {
+            return null
+        }
+        return NativeRuntimeAttestation(
+            deviceModel = requireNotNull(probe.deviceModel),
+            soc = requireNotNull(probe.soc),
+            qairtVersion = compatibility.qairtVersion,
+            abi = compatibility.abi,
+            htpTarget = compatibility.htpTarget,
+            contextFingerprint = compatibility.contextFingerprint,
+            loadedLibraryFingerprints = probe.loadedLibraryFingerprints.toSortedMap(),
+            observedAtEpochMillis = observedAtEpochMillis,
+        )
     }
 }
 

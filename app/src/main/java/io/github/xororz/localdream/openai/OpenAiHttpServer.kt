@@ -330,7 +330,9 @@ class OpenAiHttpServer(
             return ParseResult.Failure(400, "Invalid request line", "invalid_http")
         }
         val method = parts[0].uppercase()
-        val path = parts[1].substringBefore('?')
+        val requestTarget = parts[1]
+        val path = requestTarget.substringBefore('?')
+        val query = requestTarget.substringAfter('?', "").takeIf(String::isNotEmpty)
         if (!path.startsWith('/')) {
             return ParseResult.Failure(400, "Invalid request target", "invalid_http")
         }
@@ -364,7 +366,7 @@ class OpenAiHttpServer(
         // before parsing Content-Length or allocating a request body. This
         // keeps unrelated unauthenticated LAN clients outside the memory
         // budget entirely.
-        if (!isAuthorized(method, path, headers["authorization"])) {
+        if (!isAuthorized(method, requestTarget, headers["authorization"])) {
             return ParseResult.Failure(
                 status = 401,
                 message = "Invalid or missing bearer token",
@@ -444,7 +446,7 @@ class OpenAiHttpServer(
             is BodyReadResult.Failure -> bodyResult.failure
 
             is BodyReadResult.Success -> ParseResult.Success(
-                request = HttpRequest(method, path, headers, bodyResult.body),
+                request = HttpRequest(method, path, headers, bodyResult.body, query),
                 reservedBodyBytes = bodyResult.reservedBodyBytes,
             )
         }

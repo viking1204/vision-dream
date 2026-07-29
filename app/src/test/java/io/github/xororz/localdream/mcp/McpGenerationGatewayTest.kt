@@ -4,9 +4,9 @@ import io.github.xororz.localdream.data.InferenceJobStatus
 import io.github.xororz.localdream.data.PerformancePreset
 import io.github.xororz.localdream.data.PerformancePresetBinding
 import io.github.xororz.localdream.data.PerformancePresetRepository
+import io.github.xororz.localdream.data.PresetDeleteResult
 import io.github.xororz.localdream.data.RuntimeProbeProjection
 import io.github.xororz.localdream.data.RuntimeProbeStatus
-import io.github.xororz.localdream.data.PresetDeleteResult
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -14,8 +14,8 @@ import org.junit.Test
 
 class McpGenerationGatewayTest {
     @Test
-    fun capabilityDiscoveryExposesOnlyToolsWithConcreteDomainHandlers() {
-        val gateway = McpGenerationGateway(FakeJobs(), RecordingScheduler(), McpImageCapabilityStore())
+    fun capabilityDiscoveryExposesOnlyToolsWithConcreteDomainHandlersAndUsesStableDefaultScopeTemplate() {
+        val gateway = McpGenerationGateway(FakeJobs(), RecordingScheduler())
 
         assertEquals(
             setOf(
@@ -28,14 +28,22 @@ class McpGenerationGatewayTest {
         assertTrue(!gateway.supports(requireNotNull(McpToolRegistry.definitions["assets.delete"])))
         assertTrue(!gateway.supports(requireNotNull(McpToolRegistry.definitions["downloads.create"])))
         assertTrue(!gateway.supports(requireNotNull(McpToolRegistry.definitions["presets.reorder"])))
+        assertEquals(
+            setOf(
+                "models.read", "generation.run", "jobs.read", "jobs.write",
+                "presets.read", "presets.write", "prompts.read", "prompts.write",
+                "assets.read", "assets.write", "downloads.read", "downloads.write",
+                "diagnostics.read", "diagnostics.write", "clients.write",
+            ),
+            McpGenerationGateway.DEFAULT_CLIENT_SCOPES,
+        )
     }
 
     @Test
-    fun generationCreatesDurableJobAndCompletedJobExposesOnlyMcpCapability() {
+    fun generationCreatesDurableJobAndCompletedJobExposesStableAssetLink() {
         val jobs = FakeJobs()
         val scheduler = RecordingScheduler()
-        val capabilities = McpImageCapabilityStore(tokenGenerator = { "capability-1" })
-        val gateway = McpGenerationGateway(jobs, scheduler, capabilities)
+        val gateway = McpGenerationGateway(jobs, scheduler)
         val client = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)
         val create = gateway.execute(
             client,
@@ -55,21 +63,17 @@ class McpGenerationGatewayTest {
             as McpToolGatewayResult.Completed
         val path = completed.result.getString("image")
         assertEquals("completed", completed.result.getString("task"))
-        assertTrue(path.endsWith("/capability-1"))
+        assertEquals("/assets/asset-1", path)
         val resourceLink = completed.result.getJSONArray("content").getJSONObject(0)
         assertEquals("resource_link", resourceLink.getString("type"))
         assertEquals(path, resourceLink.getString("uri"))
         assertEquals("image/png", resourceLink.getString("mimeType"))
-        assertEquals(
-            "asset-1",
-            capabilities.peek("capability-1", "client-a", "job-1", McpTransport.LOOPBACK)?.assetId,
-        )
     }
 
     @Test
     fun generationProjectsW7FixtureParametersIntoTheAcceptedRequest() {
         val scheduler = RecordingScheduler()
-        val gateway = McpGenerationGateway(FakeJobs(), scheduler, McpImageCapabilityStore())
+        val gateway = McpGenerationGateway(FakeJobs(), scheduler)
         val client = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)
 
         val result = gateway.execute(
@@ -102,7 +106,7 @@ class McpGenerationGatewayTest {
     @Test
     fun generationRejectsMalformedFixtureParametersBeforeScheduling() {
         val scheduler = RecordingScheduler()
-        val gateway = McpGenerationGateway(FakeJobs(), scheduler, McpImageCapabilityStore())
+        val gateway = McpGenerationGateway(FakeJobs(), scheduler)
         val client = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)
 
         val result = gateway.execute(
@@ -119,7 +123,7 @@ class McpGenerationGatewayTest {
     fun jobsNeverExposeOtherClientsAndRejectedSchedulingLeavesNoJob() {
         val jobs = FakeJobs()
         val scheduler = RecordingScheduler(McpGenerationScheduleResult.QUEUE_FULL)
-        val gateway = McpGenerationGateway(jobs, scheduler, McpImageCapabilityStore())
+        val gateway = McpGenerationGateway(jobs, scheduler)
         val owner = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)
         val other = McpAuthenticatedClient("client-b", 1, emptySet(), McpTransport.LOOPBACK)
 
@@ -147,7 +151,6 @@ class McpGenerationGatewayTest {
         val gateway = McpGenerationGateway(
             jobs = jobs,
             scheduler = RecordingScheduler(),
-            capabilities = McpImageCapabilityStore(),
             cancellations = cancellations,
         )
         val owner = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)
@@ -175,7 +178,6 @@ class McpGenerationGatewayTest {
         val gateway = McpGenerationGateway(
             jobs = jobs,
             scheduler = RecordingScheduler(),
-            capabilities = McpImageCapabilityStore(),
             models = FakeModels,
         )
         val client = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)
@@ -210,7 +212,6 @@ class McpGenerationGatewayTest {
         val gateway = McpGenerationGateway(
             jobs = FakeJobs(),
             scheduler = RecordingScheduler(),
-            capabilities = McpImageCapabilityStore(),
             prompts = prompts,
         )
         val client = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)
@@ -255,7 +256,6 @@ class McpGenerationGatewayTest {
         val gateway = McpGenerationGateway(
             jobs = FakeJobs(),
             scheduler = RecordingScheduler(),
-            capabilities = McpImageCapabilityStore(),
             assets = assets,
         )
         val client = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)
@@ -278,8 +278,10 @@ class McpGenerationGatewayTest {
         assertEquals(listOf("history:7"), assets.deleted)
         assertEquals(
             "ASSET_NOT_FOUND",
-            (gateway.execute(client, invocation("assets.delete"), JSONObject().put("assetId", "history:missing"))
-                as McpToolGatewayResult.Rejected).code,
+            (
+                gateway.execute(client, invocation("assets.delete"), JSONObject().put("assetId", "history:missing"))
+                    as McpToolGatewayResult.Rejected
+                ).code,
         )
     }
 
@@ -289,7 +291,6 @@ class McpGenerationGatewayTest {
         val gateway = McpGenerationGateway(
             jobs = FakeJobs(),
             scheduler = RecordingScheduler(),
-            capabilities = McpImageCapabilityStore(),
             downloads = downloads,
         )
         val client = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)
@@ -326,7 +327,6 @@ class McpGenerationGatewayTest {
         val gateway = McpGenerationGateway(
             jobs = FakeJobs(),
             scheduler = RecordingScheduler(),
-            capabilities = McpImageCapabilityStore(),
             runtime = runtime,
             clients = clients,
         )
@@ -381,7 +381,6 @@ class McpGenerationGatewayTest {
         val gateway = McpGenerationGateway(
             jobs = FakeJobs(),
             scheduler = RecordingScheduler(),
-            capabilities = McpImageCapabilityStore(),
             presets = presets,
         )
         val client = McpAuthenticatedClient("client-a", 1, emptySet(), McpTransport.LOOPBACK)

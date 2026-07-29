@@ -24,13 +24,6 @@
     <string name="mcp_admin_configuration">MCP 클라이언트 구성</string>
     <string name="mcp_admin_copy">구성 복사</string>
     <string name="mcp_admin_config_copied">MCP 구성을 복사했습니다</string>
-    <string name="mcp_admin_confirmations">파괴적 작업 확인</string>
-    <string name="mcp_admin_confirmation_detail">클라이언트 %1$s이(가) %2$s을(를) 요청했습니다. 대상: %3$s</string>
-    <string name="mcp_admin_confirmation_meta">범위: %1$s\n요청 다이제스트: %2$s\n%3$d초 후 만료됩니다</string>
-    <string name="mcp_admin_approve">이번 한 번만 승인</string>
-    <string name="mcp_admin_reject">거부</string>
-    <string name="mcp_admin_confirmation_id">확인 ID</string>
-    <string name="mcp_admin_confirmation_id_hint">이 일회용 ID를 MCP 클라이언트에 전달하고 정확히 같은 작업을 다시 시도하세요:\n%1$s</string>
 
     <!-- Models -->
     <string name="anythingv5_description">애니풍 이미지 생성</string>

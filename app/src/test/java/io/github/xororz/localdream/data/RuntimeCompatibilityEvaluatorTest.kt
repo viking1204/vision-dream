@@ -19,7 +19,7 @@ class RuntimeCompatibilityEvaluatorTest {
             manifestJson = fixture.manifestJson,
             runtimeDirectory = fixture.runtimeDirectory,
             coreFile = fixture.coreFile,
-            metadata = fixture.metadata,
+            attestation = fixture.attestation,
             deviceAbi = "arm64-v8a",
             htpTarget = "v79",
             contextFingerprint = fixture.contextFingerprint,
@@ -33,20 +33,18 @@ class RuntimeCompatibilityEvaluatorTest {
         val fixture = fixture()
         fixture.runtimeFile.delete()
         fixture.coreFile.writeText("mixed core")
-        val incompatibleMetadata = fixture.metadata.copy(
-            runtimeCompatibility = requireNotNull(fixture.metadata.runtimeCompatibility).copy(
-                qairtVersion = "2.44.0",
-                abi = "armeabi-v7a",
-                htpTarget = "v75",
-                contextFingerprint = "b".repeat(64),
-            ),
+        val incompatibleAttestation = fixture.attestation.copy(
+            qairtVersion = "2.44.0",
+            abi = "armeabi-v7a",
+            htpTarget = "v75",
+            contextFingerprint = "b".repeat(64),
         )
 
         val result = evaluator().evaluate(
             manifestJson = fixture.manifestJson,
             runtimeDirectory = fixture.runtimeDirectory,
             coreFile = fixture.coreFile,
-            metadata = incompatibleMetadata,
+            attestation = incompatibleAttestation,
             deviceAbi = "arm64-v8a",
             htpTarget = "v79",
             contextFingerprint = fixture.contextFingerprint,
@@ -69,7 +67,7 @@ class RuntimeCompatibilityEvaluatorTest {
             manifestJson = fixture.manifestJson,
             runtimeDirectory = fixture.runtimeDirectory,
             coreFile = fixture.coreFile,
-            metadata = null,
+            attestation = null,
             deviceAbi = "arm64-v8a",
             htpTarget = "v79",
             contextFingerprint = fixture.contextFingerprint,
@@ -77,6 +75,44 @@ class RuntimeCompatibilityEvaluatorTest {
 
         assertTrue(result.isCompatible)
         assertTrue(result.requiresCompatibilityFallback)
+    }
+
+    @Test
+    fun vm09RequiresSuccessfulNativeAttestationForImportedRuntimeMetadata() {
+        val fixture = fixture()
+        val result = evaluator().evaluate(
+            manifestJson = fixture.manifestJson,
+            runtimeDirectory = fixture.runtimeDirectory,
+            coreFile = fixture.coreFile,
+            attestation = null,
+            deviceAbi = "arm64-v8a",
+            htpTarget = "v79",
+            contextFingerprint = fixture.contextFingerprint,
+        )
+
+        assertTrue(result.isCompatible)
+        assertTrue(result.requiresCompatibilityFallback)
+    }
+
+    @Test
+    fun vm09RejectsAttestationWithoutMappedV79HostLibraries() {
+        val fixture = fixture()
+        val missingV79 = fixture.attestation.copy(
+            loadedLibraryFingerprints = mapOf("libQnnSystem.so" to "a".repeat(64)),
+        )
+
+        val result = evaluator().evaluate(
+            manifestJson = fixture.manifestJson,
+            runtimeDirectory = fixture.runtimeDirectory,
+            coreFile = fixture.coreFile,
+            attestation = missingV79,
+            deviceAbi = "arm64-v8a",
+            htpTarget = "v79",
+            contextFingerprint = fixture.contextFingerprint,
+        )
+
+        assertFalse(result.isCompatible)
+        assertTrue(RuntimeCompatibilityRejection.CONTEXT_FINGERPRINT_MISMATCH in result.rejections)
     }
 
     private fun evaluator() = RuntimeCompatibilityEvaluator()
@@ -87,7 +123,9 @@ class RuntimeCompatibilityEvaluatorTest {
         val runtimeDirectory = File(root, "runtime").apply {
             check(mkdirs())
         }
+        val htp = File(runtimeDirectory, "libQnnHtp.so").apply { writeText("htp") }
         val runtime = File(runtimeDirectory, "libQnnHtpV79.so").apply { writeText("runtime") }
+        val stub = File(runtimeDirectory, "libQnnHtpV79Stub.so").apply { writeText("stub") }
         val contextFingerprint = RuntimeCompatibilityEvaluator.sha256(
             File(root, "unet.bin").apply { writeText("context") },
         )
@@ -97,7 +135,9 @@ class RuntimeCompatibilityEvaluatorTest {
               "qairt": { "version": "2.48.40", "buildId": "260702151143" },
               "precompiledCore": { "name": "${core.name}", "sha256": "${RuntimeCompatibilityEvaluator.sha256(core)}" },
               "packagedRuntime": [
-                { "name": "${runtime.name}", "sha256": "${RuntimeCompatibilityEvaluator.sha256(runtime)}" }
+                { "name": "${htp.name}", "sha256": "${RuntimeCompatibilityEvaluator.sha256(htp)}" },
+                { "name": "${runtime.name}", "sha256": "${RuntimeCompatibilityEvaluator.sha256(runtime)}" },
+                { "name": "${stub.name}", "sha256": "${RuntimeCompatibilityEvaluator.sha256(stub)}" }
               ]
             }
         """.trimIndent()
@@ -107,13 +147,19 @@ class RuntimeCompatibilityEvaluatorTest {
             runtimeFile = runtime,
             coreFile = core,
             contextFingerprint = contextFingerprint,
-            metadata = ModelMetadata(
-                runtimeCompatibility = ModelRuntimeCompatibility(
-                    qairtVersion = "2.48.40",
-                    abi = "arm64-v8a",
-                    htpTarget = "v79",
-                    contextFingerprint = contextFingerprint,
+            attestation = NativeRuntimeAttestation(
+                deviceModel = "PJZ110",
+                soc = "SM8750",
+                qairtVersion = "2.48.40",
+                abi = "arm64-v8a",
+                htpTarget = "v79",
+                contextFingerprint = contextFingerprint,
+                loadedLibraryFingerprints = mapOf(
+                    htp.name to RuntimeCompatibilityEvaluator.sha256(htp),
+                    runtime.name to RuntimeCompatibilityEvaluator.sha256(runtime),
+                    stub.name to RuntimeCompatibilityEvaluator.sha256(stub),
                 ),
+                observedAtEpochMillis = 1L,
             ),
         )
     }
@@ -124,6 +170,6 @@ class RuntimeCompatibilityEvaluatorTest {
         val runtimeFile: File,
         val coreFile: File,
         val contextFingerprint: String,
-        val metadata: ModelMetadata,
+        val attestation: NativeRuntimeAttestation,
     )
 }

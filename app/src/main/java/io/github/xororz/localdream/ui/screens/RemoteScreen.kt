@@ -88,10 +88,9 @@ import io.github.xororz.localdream.data.RemoteConnectResult
 import io.github.xororz.localdream.data.RemoteRepository
 import io.github.xororz.localdream.mcp.AndroidMcpGrantRepository
 import io.github.xororz.localdream.mcp.McpClientCredentialStore
-import io.github.xororz.localdream.mcp.McpConfirmationStore
 import io.github.xororz.localdream.mcp.McpConnectionConfiguration
+import io.github.xororz.localdream.mcp.McpGenerationGateway
 import io.github.xororz.localdream.mcp.McpLanHostAllowlist
-import io.github.xororz.localdream.mcp.McpPendingConfirmation
 import io.github.xororz.localdream.mcp.McpServerPreferences
 import io.github.xororz.localdream.mcp.McpTransport
 import io.github.xororz.localdream.navigation.Screen
@@ -138,14 +137,12 @@ fun RemoteScreen(
     var apiKeyVisible by remember { mutableStateOf(false) }
     var confirmApiKeyRegeneration by remember { mutableStateOf(false) }
     val mcpStatus by McpService.status.collectAsState()
-    val mcpConfirmationRequests by McpService.confirmationRequests.collectAsState()
     var mcpPortInput by remember { mutableStateOf(mcpPreferences.port().toString()) }
     var mcpLanEnabled by remember { mutableStateOf(mcpPreferences.lanEnabled()) }
     var mcpClientId by remember { mutableStateOf("mcp-client") }
     var mcpConfig by remember { mutableStateOf<String?>(null) }
     var mcpGrants by remember { mutableStateOf(emptyList<McpClientCredentialStore.GrantSummary>()) }
     var mcpAudit by remember { mutableStateOf(emptyList<String>()) }
-    var mcpConfirmationId by remember { mutableStateOf<String?>(null) }
     var backgroundAccessExempt by remember {
         mutableStateOf(OpenAiBackgroundAccess.isExempt(context))
     }
@@ -258,27 +255,6 @@ fun RemoteScreen(
             },
             dismissButton = {
                 TextButton(onClick = { mcpConfig = null }) { Text(stringResource(R.string.cancel)) }
-            },
-        )
-    }
-    mcpConfirmationId?.let { confirmationId ->
-        AlertDialog(
-            onDismissRequest = { mcpConfirmationId = null },
-            title = { Text(stringResource(R.string.mcp_admin_confirmation_id)) },
-            text = {
-                Text(stringResource(R.string.mcp_admin_confirmation_id_hint, confirmationId))
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        clipboardManager.setText(AnnotatedString(confirmationId))
-                        Toast.makeText(context, mcpConfigCopiedMessage, Toast.LENGTH_SHORT).show()
-                        mcpConfirmationId = null
-                    },
-                ) { Text(stringResource(R.string.mcp_admin_copy)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { mcpConfirmationId = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -668,7 +644,7 @@ fun RemoteScreen(
                                 scope.launch {
                                     val transport = if (mcpLanEnabled) McpTransport.LAN else McpTransport.LOOPBACK
                                     val credential = try {
-                                        mcpGrantRepository.provision(mcpClientId, transport, DEFAULT_MCP_SCOPES)
+                                        mcpGrantRepository.provision(mcpClientId, transport, McpGenerationGateway.DEFAULT_CLIENT_SCOPES)
                                     } catch (_: IllegalArgumentException) {
                                         return@launch
                                     }
@@ -721,13 +697,6 @@ fun RemoteScreen(
                                 Text(event, style = MaterialTheme.typography.bodySmall)
                             }
                         }
-                        McpConfirmationRequests(
-                            requests = mcpConfirmationRequests,
-                            onApprove = { requestId ->
-                                mcpConfirmationId = McpService.approveConfirmation(requestId)
-                            },
-                            onReject = McpService::rejectConfirmation,
-                        )
                     }
                 }
             }
@@ -947,59 +916,8 @@ fun RemoteScreen(
     }
 }
 
-@Composable
-private fun McpConfirmationRequests(
-    requests: List<McpPendingConfirmation>,
-    onApprove: (String) -> Unit,
-    onReject: (String) -> Unit,
-) {
-    if (requests.isEmpty()) return
-    HorizontalDivider()
-    Text(stringResource(R.string.mcp_admin_confirmations), style = MaterialTheme.typography.titleSmall)
-    requests.forEach { request ->
-        Text(
-            stringResource(
-                R.string.mcp_admin_confirmation_detail,
-                request.clientId,
-                request.action,
-                request.targetIds.sorted().joinToString(", "),
-            ),
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Text(
-            stringResource(
-                R.string.mcp_admin_confirmation_meta,
-                request.scopes.sorted().joinToString(" "),
-                request.parameterDigest,
-                McpConfirmationStore.TTL_MILLIS / 1_000,
-            ),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onApprove(request.id) }) {
-                Text(stringResource(R.string.mcp_admin_approve))
-            }
-            OutlinedButton(onClick = { onReject(request.id) }) {
-                Text(stringResource(R.string.mcp_admin_reject))
-            }
-        }
-    }
-}
-
 // How long the shield's exit hint stays visible before fading to full black.
 private const val HINT_HIDE_DELAY_MS = 5_000L
-
-private val DEFAULT_MCP_SCOPES = setOf(
-    "models.read",
-    "generation.run",
-    "jobs.read",
-    "jobs.write",
-    "presets.read",
-    "presets.write",
-    "prompts.read",
-    "prompts.write",
-)
 
 /**
  * Full-screen pure-black overlay for host mode on OLED screens: the window

@@ -1,11 +1,11 @@
 package io.github.xororz.localdream.mcp
 
 /**
- * Resolves the opaque asset selected by a capability after transport
- * authorization. Implementations must not accept client-supplied file paths.
+ * Resolves an authenticated MCP asset id. Implementations must validate the
+ * id format and must never accept client-supplied file paths.
  */
 fun interface McpImageContentResolver {
-    fun resolve(capability: McpImageCapability): McpImageContent?
+    fun resolve(assetId: String): McpImageContent?
 }
 
 data class McpImageContent(

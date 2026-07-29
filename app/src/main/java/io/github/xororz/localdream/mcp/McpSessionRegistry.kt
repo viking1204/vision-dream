@@ -92,8 +92,11 @@ class McpSessionRegistry(
         return active
     }
 
-    fun sessionsFor(clientId: String, transport: McpTransport): List<McpSession> = sessions.values
-        .filter { it.clientId == clientId && it.transport == transport }
+    fun sessionsFor(clientId: String, transport: McpTransport): List<McpSession> {
+        val now = clock()
+        sessions.entries.removeIf { (_, session) -> now - session.lastActivityAt >= idleTimeoutMillis }
+        return sessions.values.filter { it.clientId == clientId && it.transport == transport }
+    }
 
     private fun newId(): String {
         val bytes = ByteArray(32)

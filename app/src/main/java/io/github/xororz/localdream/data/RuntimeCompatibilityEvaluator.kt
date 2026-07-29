@@ -67,7 +67,7 @@ class RuntimeCompatibilityEvaluator {
         manifestJson: String?,
         runtimeDirectory: File,
         coreFile: File,
-        metadata: ModelMetadata?,
+        attestation: NativeRuntimeAttestation?,
         deviceAbi: String,
         htpTarget: String,
         contextFingerprint: String?,
@@ -85,26 +85,36 @@ class RuntimeCompatibilityEvaluator {
             verify(File(runtimeDirectory, file.name), file, isCore = false)?.let(rejections::add)
         }
 
-        val compatibility = metadata?.runtimeCompatibility
-        if (compatibility == null) {
-            // Pre-v2 metadata has no runtime build evidence. It may run only
-            // through the conservative compatibility fallback, never through
-            // a target-performance preset.
+        if (attestation == null) {
+            // Public/imported metadata is not native execution evidence.
+            // It may run through the conservative fallback; only a successful
+            // in-app native inference can persist a target-runtime attestation.
             return RuntimeCompatibilityResult(
                 rejections = rejections,
                 requiresCompatibilityFallback = true,
             )
         } else {
-            if (compatibility.qairtVersion != manifest.qairtVersion) {
+            if (attestation.qairtVersion != manifest.qairtVersion) {
                 rejections += RuntimeCompatibilityRejection.QAIRT_VERSION_MISMATCH
             }
-            if (compatibility.abi != deviceAbi) {
+            if (attestation.abi != deviceAbi) {
                 rejections += RuntimeCompatibilityRejection.ABI_MISMATCH
             }
-            if (!compatibility.htpTarget.equals(htpTarget, ignoreCase = true)) {
+            if (!attestation.htpTarget.equals(htpTarget, ignoreCase = true)) {
                 rejections += RuntimeCompatibilityRejection.HTP_TARGET_MISMATCH
             }
-            if (contextFingerprint == null || compatibility.contextFingerprint != contextFingerprint) {
+            if (contextFingerprint == null || attestation.contextFingerprint != contextFingerprint) {
+                rejections += RuntimeCompatibilityRejection.CONTEXT_FINGERPRINT_MISMATCH
+            }
+            if (!attestationMatches(
+                    attestation = attestation,
+                    manifest = manifest,
+                    runtimeDirectory = runtimeDirectory,
+                    deviceAbi = deviceAbi,
+                    htpTarget = htpTarget,
+                    contextFingerprint = contextFingerprint,
+                )
+            ) {
                 rejections += RuntimeCompatibilityRejection.CONTEXT_FINGERPRINT_MISMATCH
             }
         }
@@ -132,6 +142,28 @@ class RuntimeCompatibilityEvaluator {
         }
 
         else -> null
+    }
+
+    private fun attestationMatches(
+        attestation: NativeRuntimeAttestation,
+        manifest: RuntimeManifest,
+        runtimeDirectory: File,
+        deviceAbi: String,
+        htpTarget: String,
+        contextFingerprint: String?,
+    ): Boolean {
+        val targetMatches = attestation.deviceModel == RuntimeProbeEvaluator.TARGET_MODEL &&
+            attestation.soc.equals(RuntimeProbeEvaluator.TARGET_SOC, ignoreCase = true)
+        val runtimeMatches = attestation.qairtVersion == manifest.qairtVersion &&
+            attestation.abi == deviceAbi &&
+            attestation.htpTarget.equals(htpTarget, ignoreCase = true)
+        if (!targetMatches || !runtimeMatches || attestation.contextFingerprint != contextFingerprint) return false
+        val requiredV79 = RuntimeProbeEvaluator.requiredV79Libraries(manifest.runtimeFiles)
+        return requiredV79.isNotEmpty() && requiredV79.all { (name, digest) ->
+            attestation.loadedLibraryFingerprints[name] == digest && File(runtimeDirectory, name).let { file ->
+                file.isFile && sha256(file) == digest
+            }
+        }
     }
 
     companion object {

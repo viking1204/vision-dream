@@ -201,7 +201,7 @@ def report_gate(
     sample_list = list(samples)
     if probe.status != RuntimeProbeStatus.VERIFIED:
         reasons.append(f"RuntimeProbe={probe.status.value}")
-    if not _is_complete_target_probe(probe):
+    if not is_verified_target_probe(probe):
         reasons.append("INCOMPLETE_RUNTIME_PROBE")
     if not sample_list:
         reasons.append("NO_SAMPLES")
@@ -233,11 +233,12 @@ def report_gate(
     return ("ACCEPTED_FOR_ONEPLUS13" if not reasons else "NOT_ACCEPTED_FOR_ONEPLUS13", reasons)
 
 
-def _is_complete_target_probe(probe: RuntimeProbe) -> bool:
+def is_verified_target_probe(probe: RuntimeProbe) -> bool:
     """A host-provided status alone is never target-device runtime evidence."""
     fingerprints = probe.loaded_library_fingerprints
     return (
-        probe.device_model == "PJZ110"
+        probe.status == RuntimeProbeStatus.VERIFIED
+        and probe.device_model == "PJZ110"
         and (probe.soc or "").upper() == "SM8750"
         and probe.abi == "arm64-v8a"
         and probe.qairt_version == "2.48.40"

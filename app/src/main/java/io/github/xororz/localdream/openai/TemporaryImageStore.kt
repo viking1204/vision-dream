@@ -23,6 +23,7 @@ internal class TemporaryImageStore(
         val bytes: ByteArray,
         val mimeType: String,
         val requestId: String,
+        val assetId: String,
         val expiresAtMillis: Long,
     )
 
@@ -39,9 +40,11 @@ internal class TemporaryImageStore(
     fun register(
         image: GeneratedImage,
         requestId: String,
+        assetId: String,
     ): String {
         require(image.bytes.isNotEmpty()) { "image bytes must not be empty" }
         require(image.bytes.size <= maxBytes) { "image exceeds temporary store capacity" }
+        require(ASSET_ID_PATTERN.matches(assetId)) { "invalid asset id" }
         purgeExpired()
         while (entries.size >= maxEntries || storedBytes + image.bytes.size > maxBytes) {
             evictOldest()
@@ -53,6 +56,7 @@ internal class TemporaryImageStore(
             bytes = bytes,
             mimeType = image.mimeType,
             requestId = requestId,
+            assetId = assetId,
             expiresAtMillis = nowMillis() + ttlMillis,
         )
         storedBytes += bytes.size
@@ -60,10 +64,11 @@ internal class TemporaryImageStore(
     }
 
     @Synchronized
-    fun get(token: String): Entry? {
+    fun get(assetId: String, token: String): Entry? {
+        if (!ASSET_ID_PATTERN.matches(assetId)) return null
         if (!TOKEN_PATTERN.matches(token)) return null
         purgeExpired()
-        return entries[token]
+        return entries[token]?.takeIf { it.assetId == assetId }
     }
 
     @Synchronized
@@ -104,7 +109,7 @@ internal class TemporaryImageStore(
     }
 
     companion object {
-        const val DOWNLOAD_PATH_PREFIX = "/v1/images/files/"
+        const val DOWNLOAD_PATH_PREFIX = "/assets/"
         const val DEFAULT_TTL_SECONDS = 10 * 60L
 
         private const val DEFAULT_TTL_MILLIS = DEFAULT_TTL_SECONDS * 1000L
@@ -112,28 +117,46 @@ internal class TemporaryImageStore(
         private const val DEFAULT_MAX_BYTES = 64L * 1024L * 1024L
         private const val MAX_TOKEN_ATTEMPTS = 8
         private val TOKEN_PATTERN = Regex("[0-9a-f]{32}")
+        private val ASSET_ID_PATTERN = Regex("[A-Za-z0-9:_-]{1,128}")
         private val HOST_PATTERN = Regex(
             """(?:\[[0-9A-Fa-f:.]+]|[A-Za-z0-9.-]+)(?::[0-9]{1,5})?""",
         )
 
-        fun tokenFromPath(path: String): String? {
+        fun assetIdFromPath(path: String): String? {
             if (!path.startsWith(DOWNLOAD_PATH_PREFIX)) return null
             return path.removePrefix(DOWNLOAD_PATH_PREFIX)
-                .takeIf(TOKEN_PATTERN::matches)
+                .takeIf(ASSET_ID_PATTERN::matches)
+        }
+
+        fun tokenFromQuery(query: String?): String? = query
+            ?.split('&')
+            ?.mapNotNull { part ->
+                val separator = part.indexOf('=')
+                if (separator <= 0 || part.substring(0, separator) != "token") null else part.substring(separator + 1)
+            }
+            ?.singleOrNull()
+            ?.takeIf(TOKEN_PATTERN::matches)
+
+        fun capabilityFromTarget(target: String): Pair<String, String>? {
+            val assetId = assetIdFromPath(target.substringBefore('?')) ?: return null
+            val token = tokenFromQuery(target.substringAfter('?', "").takeIf(String::isNotEmpty)) ?: return null
+            return assetId to token
         }
 
         fun downloadUrl(
             hostHeader: String?,
+            assetId: String,
             token: String,
             fallbackPort: Int,
         ): String {
+            require(ASSET_ID_PATTERN.matches(assetId)) { "invalid asset id" }
             require(TOKEN_PATTERN.matches(token)) { "invalid image token" }
             val fallback = "127.0.0.1:$fallbackPort"
             val host = hostHeader
                 ?.trim()
                 ?.takeIf(HOST_PATTERN::matches)
                 ?: fallback
-            return "http://$host$DOWNLOAD_PATH_PREFIX$token"
+            return "http://$host$DOWNLOAD_PATH_PREFIX$assetId?token=$token"
         }
     }
 }

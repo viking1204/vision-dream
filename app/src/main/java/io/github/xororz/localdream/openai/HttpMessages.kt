@@ -10,6 +10,7 @@ data class HttpRequest(
     val path: String,
     val headers: Map<String, String> = emptyMap(),
     val body: ByteArray = byteArrayOf(),
+    val query: String? = null,
 ) {
     init {
         require(method.isNotBlank()) { "method must not be blank" }

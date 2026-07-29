@@ -233,26 +233,17 @@ class McpProtocolIntegrationTest {
     }
 
     @Test
-    fun imageCapabilityDownloadsOnceAndNeverLeaksAcrossJobs() {
+    fun authenticatedAssetLinkIsStableReusableAndSeparatedByAssetId() {
         val port = availableLoopbackPort()
         val credentials = McpClientCredentialStore(context)
-        val grant = credentials.provision("image-client", McpTransport.LOOPBACK, setOf("jobs.read"))
+        val grant = credentials.provision("image-client", McpTransport.LOOPBACK, setOf("assets.read", "jobs.read"))
         val otherGrant = credentials.provision("other-image-client", McpTransport.LOOPBACK, setOf("jobs.read"))
-        val capabilities = McpImageCapabilityStore()
-        val capability = capabilities.create(
-            clientId = grant.clientId,
-            jobId = "job-1",
-            transport = McpTransport.LOOPBACK,
-            mimeType = "image/png",
-            assetId = "asset-1",
-        )
         val server = McpHttpServer(
             port = port,
             transport = McpTransport.LOOPBACK,
             credentialStore = credentials,
-            imageCapabilities = capabilities,
-            imageResolver = McpImageContentResolver { imageCapability ->
-                if (imageCapability.assetId == "asset-1") {
+            imageResolver = McpImageContentResolver { assetId ->
+                if (assetId == "asset-1") {
                     McpImageContent("image-data".toByteArray(StandardCharsets.UTF_8), "image/png")
                 } else {
                     null
@@ -267,10 +258,15 @@ class McpProtocolIntegrationTest {
                     port = port,
                     method = "GET",
                     token = grant.token,
-                    path = McpProtocol.imagePath("other-job", capability.token),
+                    path = McpProtocol.assetPath("asset-2"),
                 ),
                 404,
                 "NOT_FOUND",
+            )
+
+            assertEquals(
+                401,
+                request(port = port, method = "GET", path = McpProtocol.assetPath("asset-1")).status,
             )
 
             assertError(
@@ -278,31 +274,30 @@ class McpProtocolIntegrationTest {
                     port = port,
                     method = "GET",
                     token = otherGrant.token,
-                    path = McpProtocol.imagePath(capability.jobId, capability.token),
+                    path = McpProtocol.assetPath("asset-1"),
                 ),
-                404,
-                "NOT_FOUND",
+                403,
+                "SCOPE_DENIED",
             )
 
             val firstRead = request(
                 port = port,
                 method = "GET",
                 token = grant.token,
-                path = McpProtocol.imagePath(capability.jobId, capability.token),
+                path = McpProtocol.assetPath("asset-1"),
             )
             assertEquals(200, firstRead.status)
             assertEquals("image/png", firstRead.headers.getValue("content-type"))
             assertEquals("image-data", firstRead.body)
 
-            assertError(
+            assertEquals(
+                200,
                 request(
                     port = port,
                     method = "GET",
                     token = grant.token,
-                    path = McpProtocol.imagePath(capability.jobId, capability.token),
-                ),
-                404,
-                "NOT_FOUND",
+                    path = McpProtocol.assetPath("asset-1"),
+                ).status,
             )
         } finally {
             server.shutdown()
@@ -339,18 +334,16 @@ class McpProtocolIntegrationTest {
     }
 
     @Test
-    fun toolsAreValidatedConfirmedAndAuditedBeforeReachingTheDomainGateway() {
+    fun toolsAreValidatedAuthorizedAndAuditedBeforeReachingTheDomainGateway() {
         val port = availableLoopbackPort()
         val credentials = McpClientCredentialStore(context)
-        val grant = credentials.provision("tool-client", McpTransport.LOOPBACK, setOf("jobs.write", "models.read"))
-        val confirmations = McpConfirmationStore(idGenerator = { "confirmation-1" })
+        val grant = credentials.provision("tool-client", McpTransport.LOOPBACK, setOf("generation.run", "jobs.write", "models.read"))
         val audit = RecordingMcpAuditSink()
         val calls = mutableListOf<McpToolInvocation>()
         val server = McpHttpServer(
             port = port,
             transport = McpTransport.LOOPBACK,
             credentialStore = credentials,
-            confirmationStore = confirmations,
             auditSink = audit,
             toolGateway = McpToolGateway { _, invocation, _ ->
                 calls += invocation
@@ -368,27 +361,25 @@ class McpProtocolIntegrationTest {
             assertError(
                 request(port, "POST", grant.token, sessionId, body = toolCallRequest(3, "jobs.cancel", JSONObject().put("jobId", "job-1"))),
                 200,
-                "CONFIRMATION_REQUIRED",
+                "INVALID_PARAMS",
             )
-            assertTrue(calls.isEmpty())
-
-            val pending = confirmations.uiRequests.value.single()
-            assertEquals(grant.clientId, pending.clientId)
-            assertEquals("jobs.cancel", pending.action)
-            assertEquals(setOf("job-1"), pending.targetIds)
-            assertEquals(
-                "confirmation-1",
-                confirmations.approveUiRequest(pending.id),
+            val generation = request(
+                port,
+                "POST",
+                grant.token,
+                sessionId,
+                body = toolCallRequest(4, "generation.create", w7GenerationArguments()),
             )
+            assertEquals(true, generation.json().getJSONObject("result").getBoolean("cancelled"))
             val completed = request(
                 port,
                 "POST",
                 grant.token,
                 sessionId,
-                body = toolCallRequest(4, "jobs.cancel", JSONObject().put("jobId", "job-1"), "confirmation-1"),
+                body = toolCallRequest(5, "jobs.cancel", w7CancelArguments()),
             )
             assertEquals(true, completed.json().getJSONObject("result").getBoolean("cancelled"))
-            assertEquals(listOf("jobs.cancel"), calls.map { it.definition.name })
+            assertEquals(listOf("generation.create", "jobs.cancel"), calls.map { it.definition.name })
             assertEquals("destructive", audit.events.last().risk)
             assertEquals("job-1", audit.events.last().jobId)
             assertTrue(audit.events.last().parameterDigest.isNotBlank())
@@ -484,7 +475,6 @@ class McpProtocolIntegrationTest {
         id: Int,
         name: String,
         arguments: JSONObject,
-        confirmationId: String? = null,
     ): String = JSONObject()
         .put("jsonrpc", "2.0")
         .put("id", id)
@@ -493,10 +483,27 @@ class McpProtocolIntegrationTest {
             "params",
             JSONObject()
                 .put("name", name)
-                .put("arguments", arguments)
-                .apply { confirmationId?.let { put("confirmationId", it) } },
+                .put("arguments", arguments),
         )
         .toString()
+
+    private fun w7GenerationArguments(): JSONObject = JSONObject()
+        .put("modelId", "model-a")
+        .put("prompt", "portrait reference")
+        .put("negativePrompt", "low quality")
+        .put("seed", 123456)
+        .put("width", 1024)
+        .put("height", 1024)
+        .put("scheduler", "euler_a")
+        .put("steps", 20)
+        .put("cfg", 7)
+        .put("denoiseStrength", 1.0)
+        .put("idempotencyKey", "w7:W7:1:primary-generation")
+
+    private fun w7CancelArguments(): JSONObject = JSONObject()
+        .put("jobId", "job-1")
+        .put("dryRun", false)
+        .put("idempotencyKey", "w7:W7:1:cancel:job-1")
 
     private fun availableLoopbackPort(): Int = ServerSocket(0, 1, InetAddress.getByName(LOOPBACK_ADDRESS)).use {
         it.localPort

@@ -111,11 +111,17 @@ class DeviceScenarioExecutor:
         )
 
     def _upscale(self, scenario: dict, operation: str) -> ScenarioExecution:
+        if scenario["request"].get("format") != "PNG":
+            raise ProtocolExecutionError("W6 must declare PNG as its immutable output format")
         image = self._fixture_bytes(scenario)
         started = time.monotonic_ns()
         result = self._multipart_image_request(
             "/v1/images/upscales",
-            {"model": scenario["model"]["selector"], "response_format": "url"},
+            {
+                "model": scenario["model"]["selector"],
+                "output_format": "png",
+                "response_format": "url",
+            },
             image,
             scenario["timeoutMs"],
         )
@@ -124,6 +130,10 @@ class DeviceScenarioExecutor:
         download = self._transport.request("GET", result.output_url, timeout_ms=scenario["timeoutMs"])
         if download.status != 200 or not download.body:
             raise ProtocolExecutionError("W6 URL download did not return image bytes")
+        content_type = _media_type(download.headers.get("content-type"))
+        if content_type != "image/png":
+            raise ProtocolExecutionError("W6 URL download must return Content-Type image/png")
+        width, height = _png_dimensions(download.body)
         elapsed = (time.monotonic_ns() - started) / 1_000_000
         return ScenarioExecution(
             scenario["scenarioId"],
@@ -137,6 +147,11 @@ class DeviceScenarioExecutor:
                 evidence=result.evidence | {
                     "downloaded": True,
                     "downloadBytes": len(download.body),
+                    "downloadContentType": content_type,
+                    "downloadMagic": "PNG",
+                    "downloadWidth": width,
+                    "downloadHeight": height,
+                    "downloadSha256": hashlib.sha256(download.body).hexdigest(),
                     "postElapsedMs": result.elapsed_ms,
                     "endToEndIncludesDownload": True,
                 },
@@ -211,3 +226,17 @@ def _multipart_body(boundary: str, fields: dict[str, str], image: bytes) -> byte
         f"--{boundary}--\r\n".encode(),
     ))
     return b"".join(parts)
+
+
+def _media_type(value: str | None) -> str:
+    return (value or "").split(";", 1)[0].strip().lower()
+
+
+def _png_dimensions(image: bytes) -> tuple[int, int]:
+    if image[:8] != b"\x89PNG\r\n\x1a\n" or image[12:16] != b"IHDR" or len(image) < 24:
+        raise ProtocolExecutionError("W6 URL download must contain a PNG signature and IHDR")
+    width = int.from_bytes(image[16:20], "big")
+    height = int.from_bytes(image[20:24], "big")
+    if width <= 0 or height <= 0:
+        raise ProtocolExecutionError("W6 PNG dimensions must be positive")
+    return width, height

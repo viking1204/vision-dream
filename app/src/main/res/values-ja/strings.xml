@@ -24,13 +24,6 @@
     <string name="mcp_admin_configuration">MCP クライアント設定</string>
     <string name="mcp_admin_copy">設定をコピー</string>
     <string name="mcp_admin_config_copied">MCP 設定をコピーしました</string>
-    <string name="mcp_admin_confirmations">破壊的操作の確認</string>
-    <string name="mcp_admin_confirmation_detail">クライアント %1$s が %2$s を要求しています。対象: %3$s</string>
-    <string name="mcp_admin_confirmation_meta">スコープ: %1$s\nリクエスト要約: %2$s\n%3$d 秒で期限切れになります</string>
-    <string name="mcp_admin_approve">今回のみ承認</string>
-    <string name="mcp_admin_reject">拒否</string>
-    <string name="mcp_admin_confirmation_id">確認 ID</string>
-    <string name="mcp_admin_confirmation_id_hint">この使い切り ID を MCP クライアントに渡し、まったく同じ操作を再試行してください:\n%1$s</string>
 
     <!-- Models -->
     <string name="anythingv5_description">Anime Image Generation</string>

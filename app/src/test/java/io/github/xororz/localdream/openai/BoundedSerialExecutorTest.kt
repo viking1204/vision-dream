@@ -331,10 +331,12 @@ class BoundedSerialExecutorTest {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
         try {
-            accepted(executor.submit(ownerId = "mcp") {
-                started.countDown()
-                release.await(2, TimeUnit.SECONDS)
-            })
+            accepted(
+                executor.submit(ownerId = "mcp") {
+                    started.countDown()
+                    release.await(2, TimeUnit.SECONDS)
+                },
+            )
             assertTrue(started.await(2, TimeUnit.SECONDS))
 
             val completion = executor.cancelOwner("mcp").single()
