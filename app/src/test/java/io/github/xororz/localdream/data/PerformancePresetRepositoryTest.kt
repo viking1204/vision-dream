@@ -65,18 +65,18 @@ class PerformancePresetRepositoryTest {
         val modelContext = qualificationContext(modelPreset, "model-a")
         qualifications.save(qualification(defaultPreset, defaultContext))
         qualifications.save(qualification(modelPreset, modelContext))
-        repository.bind(PerformancePresetBinding.DEFAULT, defaultPreset.id, defaultContext)
-        repository.bind(PerformancePresetBinding.model("model-a"), modelPreset.id, modelContext)
+        repository.bind(PerformancePresetBinding.DEFAULT, defaultPreset.id)
+        repository.bind(PerformancePresetBinding.model("model-a"), modelPreset.id)
 
-        assertEquals(modelPreset.id, repository.resolve(modelId = "model-a", qualificationContext = modelContext).presetId)
-        assertEquals(defaultPreset.id, repository.resolve(modelId = "model-b", qualificationContext = defaultContext).presetId)
+        assertEquals(modelPreset.id, repository.resolve(modelId = "model-a").presetId)
+        assertEquals(defaultPreset.id, repository.resolve(modelId = "model-b").presetId)
 
         val delete = repository.delete(modelPreset.id)
 
         assertTrue(delete.deleted)
         assertEquals(listOf(PerformancePresetBinding.model("model-a")), delete.reboundBindingKeys)
         assertEquals(PerformancePresetRepository.COMPATIBILITY_FALLBACK_ID, repository.resolve(modelId = "model-a").presetId)
-        assertEquals(defaultPreset.id, repository.resolve(modelId = "model-b", qualificationContext = defaultContext).presetId)
+        assertEquals(defaultPreset.id, repository.resolve(modelId = "model-b").presetId)
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -108,6 +108,31 @@ class PerformancePresetRepositoryTest {
         }
         assertFalse(repository.delete(builtIn.id).deleted)
         assertTrue(repository.delete(custom.id).deleted)
+    }
+
+    @Test
+    fun disabledOverrideUsesRecommendedPresetAndKeepsModelBindingDormant() {
+        val store = InMemoryPerformancePresetStore()
+        val repository = PerformancePresetRepository(store)
+        val recommended = PerformancePreset(
+            id = PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID,
+            name = "持续性能",
+            selector = "sustained_performance",
+            configJson = validConfig,
+            revision = 1,
+            isBuiltIn = true,
+        )
+        store.save(recommended)
+        val custom = repository.create("Model custom", "model-custom", validConfig)
+
+        assertEquals(recommended.id, repository.resolve(modelId = "model-a").presetId)
+        repository.bind(PerformancePresetBinding.DEFAULT, recommended.id)
+        repository.bind(PerformancePresetBinding.model("model-a"), custom.id)
+        assertEquals(custom.id, repository.resolve(modelId = "model-a").presetId)
+
+        assertTrue(repository.unbind(PerformancePresetBinding.DEFAULT))
+        assertEquals(recommended.id, repository.resolve(modelId = "model-a").presetId)
+        assertEquals(custom.id, repository.binding(PerformancePresetBinding.model("model-a"))?.presetId)
     }
 
     @Test

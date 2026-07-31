@@ -87,41 +87,35 @@ class RoomInferenceJobRepository(
         ownerId: String,
         modelId: String? = null,
         explicitPresetId: String? = null,
-        qualificationContext: PresetQualificationContext? = null,
     ): InferenceJobSnapshot {
         require(ownerId.isNotBlank()) { "Job owner is required" }
         return database.withTransaction {
             val bindingDao = database.performancePresetBindingDao()
             val explicitId = explicitPresetId?.takeIf(String::isNotBlank)
-            val automaticBinding = if (explicitId == null) {
+            val defaultBinding = if (explicitId == null) {
+                bindingDao.get(PerformancePresetBinding.DEFAULT)?.presetId
+            } else {
+                null
+            }
+            val automaticBinding = if (defaultBinding != null) {
                 modelId?.let { model ->
                     bindingDao.get(PerformancePresetBinding.model(model))?.presetId
-                } ?: bindingDao.get(PerformancePresetBinding.DEFAULT)?.presetId
+                } ?: defaultBinding
             } else {
                 null
             }
             val presetId = explicitId
                 ?: automaticBinding
+                ?: database.performancePresetDao()
+                    .getById(PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID)
+                    ?.takeIf { PerformancePresetConfig.parse(it.configJson).isSupported }
+                    ?.id
                 ?: PerformancePresetRepository.COMPATIBILITY_FALLBACK_ID
             val preset = requireNotNull(database.performancePresetDao().getById(presetId)) {
                 "Preset not found"
             }
             val parsedConfig = PerformancePresetConfig.parse(preset.configJson)
             parsedConfig.requireExecutableSnapshot(preset.isFallback)
-            if (automaticBinding != null && !preset.isFallback) {
-                val context = qualificationContext ?: throw PresetNotTargetValidatedException()
-                val qualified = database.performancePresetQualificationDao().hasActiveTargetQualification(
-                    presetId = preset.id,
-                    presetRevision = preset.revision,
-                    presetSnapshotSha256 = context.presetSnapshotSha256,
-                    modelId = context.modelId,
-                    modelAssetSha256 = context.modelAssetSha256,
-                    runtimeFingerprint = context.runtimeFingerprint,
-                    scenarioSetSha256 = context.scenarioSetSha256,
-                    appBuild = context.appBuild,
-                )
-                if (!qualified) throw PresetNotTargetValidatedException()
-            }
             val acceptedAt = nowMillis()
             val job = InferenceJobEntity(
                 id = UUID.randomUUID().toString(),

@@ -2,7 +2,6 @@ package io.github.xororz.localdream.mcp
 
 import android.content.Context
 import androidx.room.withTransaction
-import io.github.xororz.localdream.BuildConfig
 import io.github.xororz.localdream.data.PerformancePreset
 import io.github.xororz.localdream.data.PerformancePresetBinding
 import io.github.xororz.localdream.data.PerformancePresetQualification
@@ -11,19 +10,12 @@ import io.github.xororz.localdream.data.PerformancePresetQualificationStore
 import io.github.xororz.localdream.data.PerformancePresetRepository
 import io.github.xororz.localdream.data.PerformancePresetStore
 import io.github.xororz.localdream.data.PresetDeleteResult
-import io.github.xororz.localdream.data.PresetQualificationContext
 import io.github.xororz.localdream.data.PresetSnapshot
-import io.github.xororz.localdream.data.RuntimeCompatibilityEvaluator
-import io.github.xororz.localdream.data.RuntimeProbe
-import io.github.xororz.localdream.data.RuntimeProbeStatus
 import io.github.xororz.localdream.data.db.AppDatabase
 import io.github.xororz.localdream.data.db.PerformancePresetBindingEntity
 import io.github.xororz.localdream.data.db.PerformancePresetDao
 import io.github.xororz.localdream.data.db.PerformancePresetEntity
 import io.github.xororz.localdream.data.db.PerformancePresetQualificationEntity
-import io.github.xororz.localdream.service.BackendService
-import java.io.File
-import java.security.MessageDigest
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -41,6 +33,7 @@ interface McpPresetStore {
     fun delete(id: String): PresetDeleteResult
     fun binding(bindingKey: String): PerformancePresetBinding?
     fun bind(bindingKey: String, presetId: String): PerformancePresetBinding
+    fun unbind(bindingKey: String): Boolean
     fun exportEnvelope(): String
     fun importEnvelope(envelope: String): List<PerformancePreset>
 
@@ -52,6 +45,7 @@ interface McpPresetStore {
         override fun delete(id: String): PresetDeleteResult = PresetDeleteResult(deleted = false)
         override fun binding(bindingKey: String): PerformancePresetBinding? = null
         override fun bind(bindingKey: String, presetId: String): PerformancePresetBinding = unavailableStore()
+        override fun unbind(bindingKey: String): Boolean = unavailableStore()
         override fun exportEnvelope(): String = unavailableStore()
         override fun importEnvelope(envelope: String): List<PerformancePreset> = unavailableStore()
 
@@ -68,7 +62,6 @@ class AndroidMcpPresetStore(context: Context) : McpPresetStore {
     private val database = AppDatabase.get(applicationContext)
     private val qualificationStore = RoomPerformancePresetQualificationStore(database)
     private val repository = PerformancePresetRepository(RoomPerformancePresetStore(database), qualificationStore)
-    private val qualificationContexts = AndroidPresetQualificationContexts(applicationContext, qualificationStore)
 
     override fun list(): List<PerformancePreset> = repository.list()
 
@@ -88,11 +81,9 @@ class AndroidMcpPresetStore(context: Context) : McpPresetStore {
 
     override fun binding(bindingKey: String): PerformancePresetBinding? = repository.binding(bindingKey)
 
-    override fun bind(bindingKey: String, presetId: String): PerformancePresetBinding = repository.bind(
-        bindingKey,
-        presetId,
-        qualificationContexts.forBinding(repository.get(presetId) ?: error("Preset not found"), bindingKey),
-    )
+    override fun bind(bindingKey: String, presetId: String): PerformancePresetBinding = repository.bind(bindingKey, presetId)
+
+    override fun unbind(bindingKey: String): Boolean = repository.unbind(bindingKey)
 
     override fun exportEnvelope(): String = JSONObject()
         .put("format", FORMAT)
@@ -136,94 +127,11 @@ class AndroidMcpPresetStore(context: Context) : McpPresetStore {
  * edits cannot change the pending launch configuration.
  */
 class AndroidPerformancePresetResolver(context: Context) {
-    private val applicationContext = context.applicationContext
-    private val database = AppDatabase.get(applicationContext)
-    private val qualificationStore = RoomPerformancePresetQualificationStore(database)
-    private val repository = PerformancePresetRepository(RoomPerformancePresetStore(database), qualificationStore)
-    private val qualificationContexts = AndroidPresetQualificationContexts(applicationContext, qualificationStore)
+    private val database = AppDatabase.get(context.applicationContext)
+    private val repository = PerformancePresetRepository(RoomPerformancePresetStore(database))
 
-    fun resolve(modelId: String): PresetSnapshot {
-        val binding = repository.binding(PerformancePresetBinding.model(modelId))
-            ?: repository.binding(PerformancePresetBinding.DEFAULT)
-        val boundPreset = binding?.let { repository.get(it.presetId) }
-        val context = boundPreset?.let { qualificationContexts.forModel(it, modelId) }
-        return repository.resolve(modelId = modelId, qualificationContext = context)
-    }
+    fun resolve(modelId: String): PresetSnapshot = repository.resolve(modelId = modelId)
 }
-
-/**
- * Converts only the live app-owned runtime facts into a binding context. The
- * imported candidate supplies the scenario-set digest, but it can never supply
- * the current model digest, runtime fingerprint or APK version by assertion.
- */
-private class AndroidPresetQualificationContexts(
-    private val context: Context,
-    private val qualifications: PerformancePresetQualificationStore,
-) {
-    fun forBinding(preset: PerformancePreset, bindingKey: String): PresetQualificationContext? {
-        val modelId = bindingKey.removePrefix("MODEL:").takeIf { bindingKey.startsWith("MODEL:") }
-        // A DEFAULT binding may cover multiple validated models. Binding it is
-        // allowed once any live, exact qualification exists; every later
-        // execution still resolves the context again for its requested model.
-        return matchingContexts(preset, modelId).firstOrNull()
-    }
-
-    fun forModel(preset: PerformancePreset, modelId: String): PresetQualificationContext? = matchingContexts(preset, modelId).singleOrNull()
-
-    private fun matchingContexts(preset: PerformancePreset, modelId: String?): List<PresetQualificationContext> = qualifications.all().asSequence()
-        .filter(PerformancePresetQualification::isActive)
-        .filter { it.presetId == preset.id && it.presetRevision == preset.revision }
-        .filter { modelId == null || it.modelId == modelId }
-        .map { qualification -> currentContext(qualification.modelId, qualification.scenarioSetSha256, preset) }
-        .filterNotNull()
-        .distinct()
-        .toList()
-
-    private fun currentContext(
-        modelId: String,
-        scenarioSetSha256: String,
-        preset: PerformancePreset,
-    ): PresetQualificationContext? {
-        val probe = BackendService.runtimeProbe.value
-        if (probe.status != RuntimeProbeStatus.VERIFIED) return null
-        val modelDigest = File(File(io.github.xororz.localdream.data.Model.getModelsDir(context), modelId), "unet.bin")
-            .takeIf(File::isFile)
-            ?.let(RuntimeCompatibilityEvaluator::sha256)
-            ?: return null
-        return PresetQualificationContext(
-            modelId = modelId,
-            modelAssetSha256 = modelDigest,
-            runtimeFingerprint = probe.qualificationFingerprint(),
-            scenarioSetSha256 = scenarioSetSha256,
-            appBuild = BuildConfig.VERSION_NAME,
-            presetSnapshotSha256 = PerformancePresetQualification.snapshotSha256(preset),
-        )
-    }
-}
-
-/** Mirrors Python's sorted `json.dumps(probe_as_dict(probe))` qualification contract. */
-private fun RuntimeProbe.qualificationFingerprint(): String {
-    val libraries = loadedLibraryFingerprints.toSortedMap().entries.joinToString(", ") { (name, digest) ->
-        "${JSONObject.quote(name)}: ${JSONObject.quote(digest)}"
-    }
-    val reasons = rejectionReasons.joinToString(", ") { JSONObject.quote(it) }
-    val payload = buildString {
-        append("{\"abi\": ").append(jsonString(abi))
-        append(", \"context_fingerprint\": ").append(jsonString(contextFingerprint))
-        append(", \"device_model\": ").append(jsonString(deviceModel))
-        append(", \"htp_target\": ").append(jsonString(htpTarget))
-        append(", \"loaded_library_fingerprints\": {").append(libraries).append("}")
-        append(", \"native_ready\": ").append(nativeReady?.toString() ?: "null")
-        append(", \"qairt_version\": ").append(jsonString(qairtVersion))
-        append(", \"rejection_reasons\": [").append(reasons).append("]")
-        append(", \"soc\": ").append(jsonString(soc))
-        append(", \"status\": ").append(JSONObject.quote(status.name)).append("}")
-    }
-    return MessageDigest.getInstance("SHA-256").digest(payload.toByteArray(Charsets.UTF_8))
-        .joinToString("") { "%02x".format(it) }
-}
-
-private fun jsonString(value: String?): String = value?.let(JSONObject::quote) ?: "null"
 
 /** Synchronous adapter used only from the MCP service worker threads. */
 private class RoomPerformancePresetStore(private val database: AppDatabase) : PerformancePresetStore {
@@ -268,6 +176,10 @@ private class RoomPerformancePresetStore(private val database: AppDatabase) : Pe
                 PerformancePresetBindingEntity(binding.bindingKey, binding.presetId, binding.updatedAt),
             )
         }
+    }
+
+    override fun deleteBinding(bindingKey: String): Boolean = runBlocking {
+        database.performancePresetBindingDao().delete(bindingKey) > 0
     }
 
     override fun deleteUserPresetAndRebind(id: String, fallbackId: String): PresetDeleteResult = runBlocking {

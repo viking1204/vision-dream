@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -74,6 +75,7 @@ import io.github.xororz.localdream.data.PerformancePreset
 import io.github.xororz.localdream.data.PerformancePresetBinding
 import io.github.xororz.localdream.data.PerformancePresetConfig
 import io.github.xororz.localdream.data.PerformancePresetEngineConfig
+import io.github.xororz.localdream.data.PerformancePresetRepository
 import io.github.xororz.localdream.mcp.AndroidMcpPresetStore
 import io.github.xororz.localdream.mcp.McpPresetStore
 import io.github.xororz.localdream.navigation.popBackStackIfResumed
@@ -110,6 +112,7 @@ fun PerformancePresetScreen(
     val snackbar = snackbarHostState ?: remember { SnackbarHostState() }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     var presets by remember { mutableStateOf(emptyList<PerformancePreset>()) }
+    var defaultBinding by remember { mutableStateOf<PerformancePresetBinding?>(null) }
     var editing by remember { mutableStateOf<PerformancePreset?>(null) }
     var creating by remember { mutableStateOf(false) }
     var createTemplate by remember { mutableStateOf<PerformancePreset?>(null) }
@@ -119,15 +122,62 @@ fun PerformancePresetScreen(
     var importing by remember { mutableStateOf(false) }
 
     fun refresh() = scope.launch {
-        presets = withContext(Dispatchers.IO) { store.list() }
+        val (updatedPresets, updatedBinding) = withContext(Dispatchers.IO) {
+            store.list() to store.binding(PerformancePresetBinding.DEFAULT)
+        }
+        presets = updatedPresets
+        defaultBinding = updatedBinding
     }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        presets = withContext(Dispatchers.IO) { store.list() }
+        val (initialPresets, initialBinding) = withContext(Dispatchers.IO) {
+            store.list() to store.binding(PerformancePresetBinding.DEFAULT)
+        }
+        presets = initialPresets
+        defaultBinding = initialBinding
     }
     val builtIns = presets.filter { it.isBuiltIn && !it.isFallback }
     val customPresets = presets.filter { !it.isBuiltIn && !it.isFallback }
-    val fallback = presets.firstOrNull(PerformancePreset::isFallback)
+    val recommended = presets.firstOrNull {
+        it.id == PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID
+    }
+    val effectivePreset = defaultBinding?.let { binding ->
+        presets.firstOrNull { it.id == binding.presetId }
+    } ?: recommended
+    val overrideEnabled = defaultBinding != null
+
+    fun setOverrideEnabled(enabled: Boolean) = scope.launch {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                if (enabled) {
+                    val target = effectivePreset ?: recommended ?: error("推荐预设不可用")
+                    store.bind(PerformancePresetBinding.DEFAULT, target.id)
+                } else {
+                    store.unbind(PerformancePresetBinding.DEFAULT)
+                }
+            }
+        }.onSuccess {
+            refresh()
+            snackbar.showSnackbar(
+                if (enabled) {
+                    "已启用自选预设"
+                } else {
+                    "已切换为推荐预设：${recommended?.let(::builtInDisplayName) ?: "持续性能"}"
+                },
+            )
+        }.onFailure { snackbar.showSnackbar("切换失败：${it.message}") }
+    }
+
+    fun activatePreset(preset: PerformancePreset) = scope.launch {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                store.bind(PerformancePresetBinding.DEFAULT, preset.id)
+            }
+        }.onSuccess {
+            refresh()
+            snackbar.showSnackbar("已启用：${if (preset.isBuiltIn) builtInDisplayName(preset) else preset.name}")
+        }.onFailure { snackbar.showSnackbar("启用失败：${it.message}") }
+    }
 
     Scaffold(
         modifier = modifier,
@@ -177,7 +227,15 @@ fun PerformancePresetScreen(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 10.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item { PerformanceConsoleHero() }
+            item {
+                PerformanceConsoleHero(
+                    overrideEnabled = overrideEnabled,
+                    effectivePresetName = effectivePreset?.let {
+                        if (it.isBuiltIn) builtInDisplayName(it) else it.name
+                    } ?: "持续性能",
+                    onOverrideEnabledChange = ::setOverrideEnabled,
+                )
+            }
             item { SectionHeading("内置基准", "系统维护 · 只读 · 点开查看完整参数") }
             if (builtIns.isEmpty()) {
                 item { EmptyBuiltInState() }
@@ -185,7 +243,10 @@ fun PerformancePresetScreen(
                 items(builtIns, key = PerformancePreset::id) { preset ->
                     BuiltInPresetCard(
                         preset = preset,
+                        isEffective = effectivePreset?.id == preset.id,
+                        isRecommended = preset.id == PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID,
                         onView = { viewing = preset },
+                        onActivate = { activatePreset(preset) },
                         onCopy = {
                             createTemplate = preset
                             creating = true
@@ -205,26 +266,17 @@ fun PerformancePresetScreen(
                 items(customPresets, key = PerformancePreset::id) { preset ->
                     CustomPresetCard(
                         preset = preset,
+                        isEffective = effectivePreset?.id == preset.id,
                         onView = { viewing = preset },
                         onEdit = { editing = preset },
                         onDelete = { deleting = preset },
-                        onBindDefault = {
-                            scope.launch {
-                                runCatching {
-                                    withContext(Dispatchers.IO) { store.bind(PerformancePresetBinding.DEFAULT, preset.id) }
-                                }.onSuccess { snackbar.showSnackbar("已绑定为默认预设") }
-                                    .onFailure { snackbar.showSnackbar("绑定失败：${it.message}") }
-                            }
-                        },
+                        onBindDefault = { activatePreset(preset) },
                     )
                 }
             }
-            fallback?.let { preset ->
-                item { CompatibilityPresetCard(preset, onView = { viewing = preset }) }
-            }
             item {
                 Text(
-                    "排队中的任务已经固定当时的预设快照；编辑、删除或更换默认值不会改变它们。",
+                    "关闭自选后统一使用「持续性能」；模型专属覆盖会保留但暂停生效。排队中的任务仍固定受理时的预设快照。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
@@ -341,30 +393,45 @@ fun PerformancePresetScreen(
 }
 
 @Composable
-private fun PerformanceConsoleHero() {
+private fun PerformanceConsoleHero(
+    overrideEnabled: Boolean,
+    effectivePresetName: String,
+    onOverrideEnabledChange: (Boolean) -> Unit,
+) {
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Default.Speed,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.size(28.dp),
-            )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("预设是推理策略，不是滤镜", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "低内存、CLIP 线程和 HTP 策略会随下次模型启动一起注入。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = .78f),
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Speed,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(28.dp),
+                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("当前生效：$effectivePresetName", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (overrideEnabled) "自选预设已启用" else "自动推荐模式 · 持续性能",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = .78f),
+                    )
+                }
+                Switch(
+                    checked = overrideEnabled,
+                    onCheckedChange = onOverrideEnabledChange,
+                    modifier = Modifier.testTag("performance-preset-override-switch"),
                 )
             }
+            Text(
+                "低内存、CLIP 线程和 HTP 策略会随下次模型启动一起注入。关闭自选不会退回低质量兼容模式。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = .78f),
+            )
         }
     }
 }
@@ -380,7 +447,10 @@ private fun SectionHeading(title: String, subtitle: String) {
 @Composable
 private fun BuiltInPresetCard(
     preset: PerformancePreset,
+    isEffective: Boolean,
+    isRecommended: Boolean,
     onView: () -> Unit,
+    onActivate: () -> Unit,
     onCopy: () -> Unit,
 ) {
     val engine = PerformancePresetConfig.parse(preset.configJson).engine
@@ -408,7 +478,15 @@ private fun BuiltInPresetCard(
                 )
                 AssistChip(
                     onClick = onView,
-                    label = { Text("只读") },
+                    label = {
+                        Text(
+                            when {
+                                isEffective -> "当前生效"
+                                isRecommended -> "推荐"
+                                else -> "只读"
+                            },
+                        )
+                    },
                     colors = AssistChipDefaults.assistChipColors(containerColor = accent.copy(alpha = .13f), labelColor = accent),
                     border = null,
                 )
@@ -424,6 +502,17 @@ private fun BuiltInPresetCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                FilledTonalButton(
+                    onClick = onActivate,
+                    enabled = !isEffective,
+                    modifier = Modifier.testTag("performance-preset-activate-${preset.id}"),
+                ) {
+                    if (isEffective) {
+                        Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(if (isEffective) "使用中" else "启用")
+                }
                 TextButton(onClick = onView) {
                     Text("查看参数")
                     Icon(Icons.Default.ChevronRight, null)
@@ -445,6 +534,7 @@ private fun BuiltInPresetCard(
 @Composable
 private fun CustomPresetCard(
     preset: PerformancePreset,
+    isEffective: Boolean,
     onView: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -461,12 +551,26 @@ private fun CustomPresetCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(preset.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                AssistChip(onClick = onView, label = { Text("自定义 · r${preset.revision}") }, border = null)
+                AssistChip(
+                    onClick = onView,
+                    label = { Text(if (isEffective) "当前生效" else "自定义 · r${preset.revision}") },
+                    border = null,
+                )
             }
             PresetTraits(engine)
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                FilledTonalButton(onClick = onBindDefault) { Text("设为默认") }
+                FilledTonalButton(
+                    onClick = onBindDefault,
+                    enabled = !isEffective,
+                    modifier = Modifier.testTag("performance-preset-activate-${preset.id}"),
+                ) {
+                    if (isEffective) {
+                        Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(if (isEffective) "使用中" else "启用")
+                }
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, "编辑") }
                 IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "删除") }
@@ -529,22 +633,6 @@ private fun EmptyCustomPresetCard(onCreate: () -> Unit) {
                 Text("先复制一个适合自己模型的组合，再通过验证结果迭代。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             TextButton(onClick = onCreate) { Text("创建") }
-        }
-    }
-}
-
-@Composable
-private fun CompatibilityPresetCard(preset: PerformancePreset, onView: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onView).testTag("performance-preset-view-${preset.id}"),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-    ) {
-        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("基础兼容", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
-                Text("Compatibility fallback · 最保守的运行方式", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

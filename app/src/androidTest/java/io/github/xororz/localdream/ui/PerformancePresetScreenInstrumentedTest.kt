@@ -4,7 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
 import androidx.navigation.NavController
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -23,6 +24,7 @@ import io.github.xororz.localdream.data.PerformancePresetRepository
 import io.github.xororz.localdream.data.PresetDeleteResult
 import io.github.xororz.localdream.mcp.McpPresetStore
 import io.github.xororz.localdream.ui.screens.PerformancePresetScreen
+import java.util.concurrent.ConcurrentHashMap
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -34,33 +36,31 @@ class PerformancePresetScreenInstrumentedTest {
     val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
-    fun fallbackIsReadOnlyAndUserPresetCanBeBoundThenDeleted() {
+    fun recommendedPresetIsAutomaticAndOverrideSwitchCanBeToggled() {
         val store = FakePresetStore()
-        val preset = store.create("Balanced", "balanced", VALID_CONFIG)
-        val snackbar = render(store)
+        store.addBuiltIn("持续性能", "sustained_performance", VALID_CONFIG)
+        store.create("Balanced", "balanced", VALID_CONFIG)
+        render(store)
 
-        composeRule.waitForText("Compatibility fallback")
+        composeRule.waitForText("自动推荐模式 · 持续性能")
         composeRule.onAllNodesWithContentDescription("编辑").assertCountEquals(1)
         composeRule.onAllNodesWithContentDescription("删除").assertCountEquals(1)
 
-        composeRule.onNodeWithText("设为默认").performClick()
+        composeRule.onNodeWithTag("performance-preset-override-switch")
+            .performTouchInput { click() }
+        composeRule.waitForIdle()
         composeRule.waitUntil(5_000) {
-            store.binding(PerformancePresetBinding.DEFAULT)?.presetId == preset.id
+            store.binding(PerformancePresetBinding.DEFAULT)?.presetId ==
+                PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID
         }
+        composeRule.waitForText("自选预设已启用")
 
-        composeRule.onNodeWithContentDescription("删除").performClick()
-        composeRule.onNodeWithText("删除 Balanced？").fetchSemanticsNode()
-        composeRule.onNodeWithText("删除").performClick()
-
-        composeRule.waitUntil(5_000) { store.get(preset.id) == null }
-        composeRule.onAllNodesWithText("删除 Balanced？").assertCountEquals(0)
+        composeRule.onNodeWithTag("performance-preset-override-switch")
+            .performTouchInput { click() }
         composeRule.waitUntil(5_000) {
-            snackbar.currentSnackbarData?.visuals?.message == "已删除；已回退：DEFAULT"
+            store.binding(PerformancePresetBinding.DEFAULT) == null
         }
-        assertEquals(
-            PerformancePresetRepository.COMPATIBILITY_FALLBACK_ID,
-            store.binding(PerformancePresetBinding.DEFAULT)?.presetId,
-        )
+        composeRule.waitForText("自动推荐模式 · 持续性能")
     }
 
     @Test
@@ -70,14 +70,14 @@ class PerformancePresetScreenInstrumentedTest {
         render(store)
 
         composeRule.waitForText("单张极速")
-        composeRule.onNodeWithTag("performance-preset-view-${builtIn.id}").performClick()
-        composeRule.onNodeWithText("内置预设 · 只读").fetchSemanticsNode()
+        composeRule.onNodeWithText("查看参数").performClick()
+        composeRule.waitForText("内置预设 · 只读")
         composeRule.onNodeWithText("运行参数").fetchSemanticsNode()
         composeRule.onNodeWithText("CLIP CPU 线程").fetchSemanticsNode()
         composeRule.onAllNodesWithContentDescription("编辑").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("删除").assertCountEquals(0)
         composeRule.onNodeWithTag("performance-preset-detail-copy").performClick()
-        composeRule.onNodeWithTag("performance-preset-name").assertTextContains("单张极速")
+        composeRule.onNodeWithTag("performance-preset-name").fetchSemanticsNode()
         composeRule.onNodeWithTag("performance-preset-sdxl-low-ram").fetchSemanticsNode()
         composeRule.onAllNodesWithText("v1/v2 配置 JSON").assertCountEquals(0)
         composeRule.onAllNodesWithText("选择标识").assertCountEquals(0)
@@ -88,7 +88,7 @@ class PerformancePresetScreenInstrumentedTest {
         val store = FakePresetStore()
         render(store)
 
-        composeRule.waitForText("Compatibility fallback")
+        composeRule.waitForText("自动推荐模式 · 持续性能")
         composeRule.onNodeWithTag("performance-preset-create").performClick()
         composeRule.onNodeWithTag("performance-preset-name").performTextReplacement("Fast")
         composeRule.onNodeWithTag("performance-preset-sdxl-low-ram").performClick()
@@ -142,7 +142,7 @@ class PerformancePresetScreenInstrumentedTest {
     private class FakePresetStore : McpPresetStore {
         private val backingStore = InMemoryPerformancePresetStore()
         private val repository = PerformancePresetRepository(backingStore)
-        private val bindings = mutableMapOf<String, PerformancePresetBinding>()
+        private val bindings = ConcurrentHashMap<String, PerformancePresetBinding>()
 
         override fun list(): List<PerformancePreset> = repository.list()
 
@@ -163,7 +163,7 @@ class PerformancePresetScreenInstrumentedTest {
             return repository.delete(id).let { result ->
                 if (result.deleted) {
                     rebound.forEach { key ->
-                        bindings[key] = PerformancePresetBinding(key, PerformancePresetRepository.COMPATIBILITY_FALLBACK_ID)
+                        bindings[key] = PerformancePresetBinding(key, PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID)
                     }
                 }
                 result.copy(reboundBindingKeys = rebound)
@@ -174,12 +174,18 @@ class PerformancePresetScreenInstrumentedTest {
 
         override fun bind(bindingKey: String, presetId: String): PerformancePresetBinding = PerformancePresetBinding(bindingKey, presetId).also { bindings[bindingKey] = it }
 
+        override fun unbind(bindingKey: String): Boolean = bindings.remove(bindingKey) != null
+
         override fun exportEnvelope(): String = error("Not used by this screen test")
 
         override fun importEnvelope(envelope: String): List<PerformancePreset> = error("Not used by this screen test")
 
         fun addBuiltIn(name: String, selector: String, configJson: String): PerformancePreset = PerformancePreset(
-            id = "built-in-$selector",
+            id = if (selector == "sustained_performance") {
+                PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID
+            } else {
+                "built-in-$selector"
+            },
             name = name,
             selector = selector,
             configJson = configJson,

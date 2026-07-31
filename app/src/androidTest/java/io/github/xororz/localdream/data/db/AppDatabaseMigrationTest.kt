@@ -5,7 +5,6 @@ import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import io.github.xororz.localdream.data.PresetNotTargetValidatedException
 import io.github.xororz.localdream.data.RoomInferenceJobRepository
 import io.github.xororz.localdream.mcp.McpAuditEvent
 import io.github.xororz.localdream.mcp.McpTransport
@@ -208,7 +207,7 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun historicalAutomaticBindingFailsClosedWithoutQualification() = runBlocking {
+    fun userSelectedBindingRunsWithoutQualification() = runBlocking {
         val database = Room.databaseBuilder(context, AppDatabase::class.java, DATABASE_NAME)
             .allowMainThreadQueries()
             .build()
@@ -229,12 +228,9 @@ class AppDatabaseMigrationTest {
             PerformancePresetBindingEntity("DEFAULT", "target-preset", 1),
         )
 
-        try {
-            RoomInferenceJobRepository(database, nowMillis = { 2 }).accept(ownerId = "migration-test", modelId = "model")
-            throw AssertionError("Expected PRESET_NOT_TARGET_VALIDATED")
-        } catch (error: PresetNotTargetValidatedException) {
-            assertEquals("PRESET_NOT_TARGET_VALIDATED", error.message)
-        }
+        val snapshot = RoomInferenceJobRepository(database, nowMillis = { 2 })
+            .accept(ownerId = "migration-test", modelId = "model")
+        assertEquals("target-preset", snapshot.presetId)
     }
 
     @Test

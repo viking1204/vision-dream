@@ -16,6 +16,9 @@ interface PerformancePresetBindingDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun save(binding: PerformancePresetBindingEntity)
 
+    @Query("DELETE FROM performance_preset_bindings WHERE bindingKey = :bindingKey")
+    suspend fun delete(bindingKey: String): Int
+
     @Query("UPDATE performance_preset_bindings SET presetId = :fallbackId, updatedAt = :updatedAt WHERE presetId = :presetId")
     suspend fun rebindPreset(presetId: String, fallbackId: String, updatedAt: Long): Int
 }

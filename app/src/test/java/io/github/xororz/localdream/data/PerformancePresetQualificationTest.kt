@@ -10,25 +10,21 @@ class PerformancePresetQualificationTest {
     private val digest = "a".repeat(64)
 
     @Test
-    fun automaticBindingRequiresExactActiveTargetQualificationButExplicitSelectionIsExploratory() {
+    fun userSelectedBindingRunsWithoutQualificationWhileQualificationRemainsAuditable() {
         val qualifications = InMemoryPerformancePresetQualificationStore()
         val repository = PerformancePresetRepository(InMemoryPerformancePresetStore(), qualifications)
         val preset = repository.create("Target", "target", config)
         val context = qualificationContext(preset)
 
         assertFalse(repository.isAutomaticBindingQualified(preset, context))
-        try {
-            repository.bind(PerformancePresetBinding.DEFAULT, preset.id, context)
-            throw AssertionError("Expected PRESET_NOT_TARGET_VALIDATED")
-        } catch (error: PresetNotTargetValidatedException) {
-            assertEquals("PRESET_NOT_TARGET_VALIDATED", error.message)
-        }
+        repository.bind(PerformancePresetBinding.DEFAULT, preset.id)
+        assertEquals(preset.id, repository.resolve().presetId)
         assertEquals(preset.id, repository.resolve(explicitPresetId = preset.id).presetId)
 
         qualifications.save(qualification(preset, context, PerformancePresetQualificationLevel.TARGET_VALIDATED))
 
-        repository.bind(PerformancePresetBinding.DEFAULT, preset.id, context)
-        assertEquals(preset.id, repository.resolve(qualificationContext = context).presetId)
+        assertTrue(repository.isAutomaticBindingQualified(preset, context))
+        assertEquals(preset.id, repository.resolve().presetId)
     }
 
     @Test

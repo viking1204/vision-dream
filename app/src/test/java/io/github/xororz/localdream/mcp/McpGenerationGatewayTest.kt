@@ -630,6 +630,8 @@ class McpGenerationGatewayTest {
             presetId = presetId,
         ).also { bindings[bindingKey] = it }
 
+        override fun unbind(bindingKey: String): Boolean = bindings.remove(bindingKey) != null
+
         override fun exportEnvelope(): String = JSONObject()
             .put("format", "vision-dream-performance-preset")
             .put("schemaVersion", 1)

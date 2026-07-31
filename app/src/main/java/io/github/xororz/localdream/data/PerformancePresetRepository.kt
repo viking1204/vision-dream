@@ -62,6 +62,7 @@ interface PerformancePresetStore {
     fun binding(bindingKey: String): PerformancePresetBinding?
     fun bindingsForPreset(presetId: String): List<PerformancePresetBinding>
     fun saveBinding(binding: PerformancePresetBinding)
+    fun deleteBinding(bindingKey: String): Boolean
     fun deleteUserPresetAndRebind(id: String, fallbackId: String): PresetDeleteResult
 }
 
@@ -140,34 +141,41 @@ class PerformancePresetRepository(
     fun bind(
         bindingKey: String,
         presetId: String,
-        qualificationContext: PresetQualificationContext? = null,
     ): PerformancePresetBinding = synchronized(this) {
         require(PerformancePresetBinding.isValid(bindingKey)) { "Preset binding key is invalid" }
         val preset = requireNotNull(store.get(presetId)) { "Preset not found" }
         require(!preset.isFallback && PerformancePresetConfig.parse(preset.configJson).isSupported) {
-            "Only a supported user preset can be bound"
+            "Only a supported preset can be bound"
         }
-        requireAutomaticBindingQualified(preset, qualificationContext)
         PerformancePresetBinding(bindingKey = bindingKey, presetId = presetId).also(store::saveBinding)
+    }
+
+    fun unbind(bindingKey: String): Boolean = synchronized(this) {
+        require(PerformancePresetBinding.isValid(bindingKey)) { "Preset binding key is invalid" }
+        store.deleteBinding(bindingKey)
     }
 
     fun resolve(
         explicitPresetId: String? = null,
         modelId: String? = null,
-        qualificationContext: PresetQualificationContext? = null,
     ): PresetSnapshot = synchronized(this) {
         val explicitId = explicitPresetId?.takeIf(String::isNotBlank)
-        val automaticBinding = if (explicitId == null) {
-            modelId?.let(PerformancePresetBinding::model)?.let(store::binding)
-                ?: store.binding(PerformancePresetBinding.DEFAULT)
+        val defaultBinding = if (explicitId == null) {
+            store.binding(PerformancePresetBinding.DEFAULT)
         } else {
             null
         }
-        val selectedId = explicitId ?: automaticBinding?.presetId ?: COMPATIBILITY_FALLBACK_ID
-        val preset = requireNotNull(store.get(selectedId)) { "Preset not found" }
-        if (automaticBinding != null && !preset.isFallback) {
-            requireAutomaticBindingQualified(preset, qualificationContext)
+        // DEFAULT doubles as the master override switch. Model-specific
+        // bindings stay persisted but are intentionally dormant while it is
+        // absent, so one toggle cannot leave a hidden override active.
+        val automaticBinding = if (defaultBinding != null) {
+            modelId?.let(PerformancePresetBinding::model)?.let(store::binding)
+                ?: defaultBinding
+        } else {
+            null
         }
+        val selectedId = explicitId ?: automaticBinding?.presetId ?: recommendedPresetId()
+        val preset = requireNotNull(store.get(selectedId)) { "Preset not found" }
         val parsed = PerformancePresetConfig.parse(preset.configJson)
         require(parsed.isSupported || (preset.isFallback && parsed.status == PresetConfigParseStatus.LEGACY_COMPATIBILITY)) {
             "Preset config is not executable"
@@ -178,7 +186,7 @@ class PerformancePresetRepository(
     fun delete(id: String): PresetDeleteResult = synchronized(this) {
         val preset = store.get(id) ?: return PresetDeleteResult(deleted = false)
         if (preset.isBuiltIn) return PresetDeleteResult(deleted = false)
-        store.deleteUserPresetAndRebind(id, COMPATIBILITY_FALLBACK_ID).also { result ->
+        store.deleteUserPresetAndRebind(id, recommendedPresetId()).also { result ->
             if (result.deleted) qualifications?.revokeForPreset(id)
         }
     }
@@ -217,12 +225,16 @@ class PerformancePresetRepository(
         }
     }
 
-    private fun requireAutomaticBindingQualified(
-        preset: PerformancePreset,
-        qualificationContext: PresetQualificationContext?,
-    ) {
-        if (qualificationContext == null || !isAutomaticBindingQualified(preset, qualificationContext)) {
-            throw PresetNotTargetValidatedException()
+    private fun recommendedPresetId(): String {
+        val recommended = store.get(RECOMMENDED_DEFAULT_PRESET_ID)
+        return if (
+            recommended != null &&
+            !recommended.isFallback &&
+            PerformancePresetConfig.parse(recommended.configJson).isSupported
+        ) {
+            recommended.id
+        } else {
+            COMPATIBILITY_FALLBACK_ID
         }
     }
 
@@ -236,6 +248,7 @@ class PerformancePresetRepository(
 
     companion object {
         const val COMPATIBILITY_FALLBACK_ID = "00000000-0000-4000-8000-000000000000"
+        const val RECOMMENDED_DEFAULT_PRESET_ID = "10000000-0000-4000-8000-000000000004"
         private val SELECTOR = Regex("[A-Za-z0-9_.-]{1,80}")
     }
 }
@@ -262,6 +275,8 @@ class InMemoryPerformancePresetStore : PerformancePresetStore {
     override fun saveBinding(binding: PerformancePresetBinding) {
         bindings[binding.bindingKey] = binding
     }
+
+    override fun deleteBinding(bindingKey: String): Boolean = bindings.remove(bindingKey) != null
 
     override fun deleteUserPresetAndRebind(id: String, fallbackId: String): PresetDeleteResult {
         if (!values.containsKey(id)) return PresetDeleteResult(deleted = false)
