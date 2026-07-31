@@ -1296,7 +1296,11 @@ def _sample_from_execution(
             baseline["qualityReferenceSha256"],
             acceptance_evidence.quality_results,
         )
-    if execution.operation.startswith("W4.") and not _is_verified_process_cold_lifecycle(lifecycle_evidence):
+    # W4 records three terminal measurement groups: the first A is genuinely
+    # process-cold, whereas B and the trailing A run after their respective
+    # prefix replays in an already-started process.  Gate lifecycle evidence
+    # from the derived measurement identity instead of the W4 wrapper name.
+    if group_key.cold_state == ColdState.PROCESS_COLD and not _is_verified_process_cold_lifecycle(lifecycle_evidence):
         raise ValueError("W4 sample lacks verified PROCESS_COLD lifecycle evidence")
     lifecycle_metrics = {"processColdLifecycle": lifecycle_evidence} if lifecycle_evidence else {}
     return Sample(

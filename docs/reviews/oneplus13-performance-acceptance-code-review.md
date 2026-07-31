@@ -1528,3 +1528,97 @@ git -c core.fsmonitor=false -c submodule.recurse=false diff --check -- tools/per
 通过。独立 review 的唯一有效 P1 已修复，并以多 GroupKey 正反、分组 telemetry 归档与完整 harness 回归验证；未发现新的 P0/P1/P2。此结论仅确认主机侧资源生命周期与工件合同，不构成 PJZ110/SM8750 的 QAIRT、性能、可靠性或热稳定性通过。真实目标机仍须在 07 以 `RuntimeProbe=VERIFIED`、冻结 B0/质量、W1-W7、每候选 100 次及 30/60 分钟热稳定运行完成验收。
 
 [业务解读] 资源释放证据现在能回答“某个候选和运行时组合是否具有自身绑定的显式回收原始记录”，而不是用另一个统计组的收尾状态替它背书；这避免把跨模型、跨预设或跨 runtime 的内存问题隐藏在一份共享 release 中。
+
+## 独立变更评审（2026-07-31，04-implementation-052 后）
+
+### 范围与方法
+
+- [实锤，高] 本轮从 `master` 的当前提交 `7f5bc0c` 重新检查 `git diff`、`git show HEAD`、规格、计划、`04-implementation-052.json` 与人工反馈；工作树在排除既有 `app/src/main/cpp/3rdparty` 符号链接异常和 `QAIRT_NOTICE.txt` 历史尾随空白后没有待评审差异。最新实现位于已提交的 `7f5bc0c`，因此以下结论基于该提交的真实代码而不是 04 自评。
+- [实锤，高] 规格要求 W4 的每个 `PROCESS_COLD` 样本具 lifecycle evidence，同时 `CONTEXT_WARM` 统计组只需精确五次 warmup；W4 还必须保持可审核的 A→B→A：`docs/specs/oneplus13-performance-acceptance-spec.md:37-48`、`docs/plans/oneplus13-performance-acceptance-plan.md:100-111`。
+
+### CR-47 — P1：W4 的 B 与尾 A 会被错误要求 `PROCESS_COLD` lifecycle，真实运行不能完成
+
+- 状态：open。
+- [实锤，高] `run_w4_isolated_prefix()` 对 A、A→B、A→B→A 分别独立回放；但 prefix 2 与 3 明确传入 `lifecycle_evidence=None`，只有 prefix 1 附带重启证据：`tools/performance-harness/localdream_perf_harness.py:389-416`。
+- [实锤，高] `_sample_from_execution()` 对所有 `W4.*` 操作都要求 `_is_verified_process_cold_lifecycle(lifecycle_evidence)`。因此 W4.2（B）和 W4.3（尾 A）首次记录样本时必然抛出 `ValueError`，与它们的 `CONTEXT_WARM` measurement identity 冲突：`tools/performance-harness/localdream_perf_harness.py:1299-1300`、`tools/performance-harness/localdream_perf_harness.py:1515-1529`。
+- [实锤，高] 现有 `test_w4_requires_a_verified_process_cold_lifecycle_before_first_request` 对 `_sample_from_execution` 做 mock，78 项 harness 回归没有覆盖上述真实记录路径：`tools/performance-harness/tests/test_harness.py:894-980`。
+- 处置：回到 04。仅对 W4 prefix 1 的 `PROCESS_COLD` terminal 样本强制 lifecycle；或为三个 prefix 传入可区分且符合 coldState 的证据。补不 mock `_sample_from_execution` 的 W4 A、A→B、A→B→A 回归，断言首组带 lifecycle、后两组以 `CONTEXT_WARM` 落样，且三组均在下一组前完成各自的 `MCP_RUNTIME_UNLOAD`。
+
+### CR-48 — P2：当前候选的全量静态门禁被两个无用 import 阻断
+
+- 状态：open。
+- [实锤，高] 真实命令 `./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:ktlintCheck :app:detekt :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` 在 `:app:detekt` 失败，报告 `PerformancePresetScreen.kt:33` 的 `Button` 和 `:66` 的 `Color` 为 `Unused import`。
+- [实锤，高] 这两个 import 位于当前提交的性能预设 UI 文件，且全文件搜索分别没有 `Button(` 或 `Color.` 使用：`app/src/main/java/io/github/xororz/localdream/ui/screens/PerformancePresetScreen.kt:33,66`。
+- 处置：回到 04 删除无用 import，重跑上述完整 Gradle 门禁。该 finding 是当前候选的静态质量缺口，不属于已接受的历史格式债务。
+
+### CR-49 — P2：评审产物未覆盖最新 CR-46.1 实现（已修复）
+
+- 状态：fixed。
+- [实锤，高] 本文此前停在 CR-46，仍把 release 描述为 `ADB_FORCE_STOP`；当前实现已改为带 `expectedModelId` 的 `MCP_RUNTIME_UNLOAD`，并在普通组、W4 隔离前缀和 W5 variant 批次结束时立即 release：`tools/performance-harness/localdream_perf_harness.py:359-468,874-907`。
+- 处置：本节已补齐对 `04-implementation-052` 的独立评审事实；CR-46.1 的分组即时 release 实现保持待 CR-47 修复后的真实 W4 回归复核。
+
+### 本轮独立验证
+
+```text
+python3 -m unittest discover -s tools/performance-harness/tests -p 'test_*.py' -v
+# Ran 78 tests ... OK
+
+python3 tools/performance-harness/localdream_perf_harness.py validate-scenarios --scenario-dir tools/performance-harness/scenarios/v4
+# {"validated": 7, "scenarioIds": ["W1", "W2", "W3", "W4", "W5", "W6", "W7"]}
+
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:ktlintCheck :app:detekt :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+# :app:detekt FAILED: PerformancePresetScreen.kt:33 Button, :66 Color，均为 Unused import
+
+git -c core.fsmonitor=false -c submodule.recurse=false diff --no-ext-diff --check -- . ':(exclude)app/src/main/cpp/3rdparty' ':(exclude)app/src/main/assets/legal/QAIRT_NOTICE.txt'
+# 无输出
+```
+
+### 当前阶段结论
+
+未通过。CR-47 是无人工风险接受的 P1，CR-48 是 P2；两者必须回到 04 修复并新增/重跑针对性验证后再独立复审。78 项主机回归与场景校验通过不能反证 W4 的真实未 mock 路径，且 detekt 已实际失败。人工已接受的 PJZ110 完整 W1-W7、B0/质量、100 次可靠性、30/60 分钟热稳定和失效旧 Token 重放仍是后续边界，不代替本阶段的源码修复。
+
+## 独立复核闭环（2026-07-31，CR-47 / CR-48）
+
+### 复核范围
+
+- [实锤，高] 本轮重新读取规格、计划、人工反馈、当前差异和 `04-implementation-052` 后的源码；修复前有效的范围仅为 CR-47 与 CR-48。
+- [实锤，高] W4 的派生测量身份已经把首个 A 标为 `PROCESS_COLD`，B 与尾 A 标为 `CONTEXT_WARM`：`tools/performance-harness/localdream_perf_harness.py:1462-1476`。因此 lifecycle 门禁必须以派生 `GroupKey.cold_state` 而不是操作名前缀为准。
+
+### CR-47 — P1：W4 lifecycle 门禁错误覆盖 B 与尾 A
+
+- 状态：fixed。
+- [实锤，高] `_sample_from_execution()` 现在只在派生 `GroupKey` 为 `PROCESS_COLD` 时验证 `PROCESS_COLD_V1` lifecycle；W4 的 `CONTEXT_WARM` B 和尾 A 不再被错误拒绝：`tools/performance-harness/localdream_perf_harness.py:1299-1305`。
+- [实锤，高] 回归已移除 `_sample_from_execution` mock，真实记录 W4 A、A→B、A→B→A 的 13 个样本，断言仅首个 A 有 lifecycle、两个热态组各有五次 warmup；测试还以事件序列断言每个 W4 前缀批次结束后立即执行一次精确模型的 `MCP_RUNTIME_UNLOAD`：`tools/performance-harness/tests/test_harness.py:894-1040`。
+- 处置：fixed。缺失或伪造的 `PROCESS_COLD` lifecycle 仍被单元测试拒绝：`tools/performance-harness/tests/test_harness.py:1254-1262`。
+
+### CR-48 — P2：性能预设页面的无用 import 阻断 detekt
+
+- 状态：fixed。
+- [实锤，高] 已从 `PerformancePresetScreen.kt` 移除未使用的 `Button` 和 `Color` import；当前 import 区间不再包含两项：`app/src/main/java/io/github/xororz/localdream/ui/screens/PerformancePresetScreen.kt:30-69`。
+- 处置：fixed。完整 Gradle 静态、单测和 APK 构建门禁已成功结束。
+
+### 本轮独立验证
+
+```text
+python3 -m unittest tools.performance-harness.tests.test_harness.ArtifactProtocolTest.test_w4_requires_a_verified_process_cold_lifecycle_before_first_request -v
+# Ran 1 test ... OK
+
+python3 -m unittest discover -s tools/performance-harness/tests -p 'test_*.py'
+# Ran 78 tests ... OK
+
+python3 -m py_compile tools/performance-harness/localdream_perf_harness.py tools/performance-harness/localdream_perf_models.py tools/performance-harness/localdream_perf_executor.py tools/performance-harness/localdream_perf_protocol.py
+# exit 0
+
+python3 tools/performance-harness/localdream_perf_harness.py validate-scenarios --scenario-dir tools/performance-harness/scenarios/v4
+# {"validated": 7, "scenarioIds": ["W1", "W2", "W3", "W4", "W5", "W6", "W7"]}
+
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:ktlintCheck :app:detekt :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+# exit 0; GRADLE_GATE_OK
+
+git -c core.fsmonitor=false -c submodule.recurse=false diff --no-ext-diff --check -- app/src/main/java/io/github/xororz/localdream/ui/screens/PerformancePresetScreen.kt tools/performance-harness/localdream_perf_harness.py tools/performance-harness/tests/test_harness.py
+# 无输出
+```
+
+### 当前阶段结论
+
+通过。CR-47（P1）和 CR-48（P2）均已修复并经独立复核；当前未发现新的 P0/P1/P2。本结论只确认源码、主机 harness 和 Android 本地构建门禁，不形成 PJZ110/SM8750 的 QAIRT、性能、可靠性或热稳定性通过。PJZ110 的完整 W1-W7、冻结 B0/质量、每候选 100 次可靠性和 30/60 分钟热稳定性仍属于 `07-business-e2e`。

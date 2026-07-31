@@ -904,7 +904,7 @@ class ArtifactProtocolTest(unittest.TestCase):
 
                 def execute(self, scenario_id, after_execution=None, before_execution=None):
                     events.append(("execute", scenario_id))
-                    protocol = ProtocolExecution("/v1/images/generations", 100.0, 200, "/asset", 1, {})
+                    protocol = ProtocolExecution("/v1/images/generations", 100.0, 200, "/asset", 1, png_evidence())
                     executions = [
                         type("Execution", (), {"scenario_id": baseline, "operation": f"W4.{index}.{baseline}", "protocol": protocol})()
                         for index, baseline in enumerate(("W1", "W2", "W1"), start=1)
@@ -923,7 +923,7 @@ class ArtifactProtocolTest(unittest.TestCase):
                     observe_prefixes=False,
                 ):
                     events.append(("prefix", prefix_length))
-                    protocol = ProtocolExecution("/v1/images/generations", 100.0, 200, "/asset", 1, {})
+                    protocol = ProtocolExecution("/v1/images/generations", 100.0, 200, "/asset", 1, png_evidence())
                     executions = [
                         type("Execution", (), {"scenario_id": baseline, "operation": f"W4.{index}.{baseline}", "protocol": protocol})()
                         for index, baseline in enumerate(("W1", "W2", "W1")[:prefix_length], start=1)
@@ -962,49 +962,75 @@ class ArtifactProtocolTest(unittest.TestCase):
 
                 def restart_and_verify(self):
                     events.append(("lifecycle", "verified"))
-                    return {"forceStopped": True, "processAbsentAfterStop": True, "healthStatus": 200, "processPid": "123"}
+                    return {
+                        "protocol": "PROCESS_COLD_V1",
+                        "forceStopped": True,
+                        "processAbsentAfterStop": True,
+                        "healthStatus": 200,
+                        "processPid": "123",
+                    }
+
+            class W4Sampler(FakeSampler):
+                def unload_and_collect(self, sequence, expected_model_id, _unloader):
+                    events.append(("release", expected_model_id))
+                    record = {
+                        "sequence": sequence,
+                        "capturePhase": "POST_UNLOAD_RELEASE",
+                        "unloadAction": "MCP_RUNTIME_UNLOAD",
+                        "runtimeUnloaded": True,
+                        "serviceAvailableAfterUnload": True,
+                        "processAliveAfterUnload": True,
+                        "processPssKb": 80,
+                        "processRssKb": 160,
+                        "swapPssKb": 0,
+                        "sourceSha256": f"release-{sequence}",
+                    }
+                    self.records.append(record)
+                    return record
+
+            scenario_models = {
+                item["scenarioId"]: item["model"]["selector"]
+                for item in validate_scenarios(ROOT / "scenarios" / "v4")
+            }
 
             with patch.dict("os.environ", {"LOCALDREAM_API_KEY": "token"}, clear=True), patch(
                 "localdream_perf_harness.DeviceScenarioExecutor", FakeExecutor,
             ), patch(
-                "localdream_perf_harness.AdbResourceSampler", FakeSampler,
+                "localdream_perf_harness.AdbResourceSampler", W4Sampler,
             ), patch(
                 "localdream_perf_harness.ProcessLifecycleController", FakeLifecycle,
             ), patch(
-                "localdream_perf_harness.load_acceptance_evidence", return_value=FakeAcceptanceEvidence(),
-            ), patch(
                 "localdream_perf_harness.fetch_runtime_probe",
                 side_effect=lambda _transport, context: verified_probe_for_context(context),
-            ), patch(
-                "localdream_perf_harness._sample_from_execution", side_effect=sample_from_mock_execution,
-            ) as sample:
-                self.assertEqual(2, command_run(run_args(root, probe_path, scenario_ids="W4")))
+            ):
+                args = run_args(root, probe_path, scenario_ids="W4")
+                args.validation_level = ValidationLevel.EXPLORATORY.value
+                self.assertEqual(0, command_run(args))
 
             self.assertEqual(
                 [("lifecycle", "verified"), ("prefix", 1)]
+                + [("release", scenario_models["W1"])]
                 + [item for _ in range(6) for item in (("lifecycle", "verified"), ("prefix", 2))]
-                + [item for _ in range(6) for item in (("lifecycle", "verified"), ("prefix", 3))],
+                + [("release", scenario_models["W2"])]
+                + [item for _ in range(6) for item in (("lifecycle", "verified"), ("prefix", 3))]
+                + [("release", scenario_models["W1"])],
                 events,
-            )
-            self.assertEqual(13, sample.call_count)
-            self.assertTrue(sample.call_args_list[0].kwargs["lifecycle_evidence"]["processAbsentAfterStop"])
-            self.assertTrue(all(call.kwargs["lifecycle_evidence"] is None for call in sample.call_args_list[1:]))
-            self.assertEqual(
-                ["W1"] + ["W2"] * 6 + ["W1"] * 6,
-                [call.args[2]["scenarioId"] for call in sample.call_args_list],
-            )
-            self.assertEqual(
-                ["PROCESS_COLD"] + ["CONTEXT_WARM"] * 12,
-                [call.args[2]["measurement"]["coldState"] for call in sample.call_args_list],
-            )
-            self.assertEqual(
-                [False] + [True] * 5 + [False] + [True] * 5 + [False],
-                [call.kwargs["is_warmup"] for call in sample.call_args_list],
             )
             raw_samples = [
                 json.loads(line)
                 for line in (root / "output" / "raw-samples.jsonl").read_text().splitlines()
             ]
+            self.assertEqual(13, len(raw_samples))
+            self.assertEqual(
+                ["PROCESS_COLD"] + ["CONTEXT_WARM"] * 12,
+                [sample["groupKey"]["coldState"] for sample in raw_samples],
+            )
+            self.assertTrue(raw_samples[0]["resourceMetrics"]["processColdLifecycle"]["processAbsentAfterStop"])
+            self.assertTrue(all("processColdLifecycle" not in sample["resourceMetrics"] for sample in raw_samples[1:]))
+            self.assertEqual(
+                [False] + [True] * 5 + [False] + [True] * 5 + [False],
+                [sample["isWarmup"] for sample in raw_samples],
+            )
             warmup_counts = {}
             for raw_sample in raw_samples:
                 key = raw_sample["groupKey"]
@@ -1231,11 +1257,14 @@ class ArtifactProtocolTest(unittest.TestCase):
                 {},
             )
 
+        process_cold_scenario = scenario | {
+            "measurement": scenario["measurement"] | {"coldState": ColdState.PROCESS_COLD.value},
+        }
         with self.assertRaisesRegex(ValueError, "PROCESS_COLD lifecycle"):
             _sample_from_execution(
-                "run", 2, scenario,
+                "run", 2, process_cold_scenario,
                 type("Execution", (), {"operation": "W4.1.W1", "protocol": execution.protocol})(),
-                fingerprint, snapshot, acceptance, {},
+                fingerprint, snapshot, None, {},
             )
 
     def test_thermal_gate_requires_duration_and_complete_adb_metrics(self):
@@ -1490,6 +1519,19 @@ class ArtifactProtocolTest(unittest.TestCase):
                 report = json.loads((root / "output" / "w7-report.json").read_text())
                 self.assertEqual("NOT_ACCEPTED_FOR_ONEPLUS13", report["conclusion"])
                 self.assertEqual(status, json.loads((root / "output" / "run-manifest.json").read_text())["preflightRuntimeProbe"]["status"])
+
+
+def png_evidence() -> dict[str, object]:
+    """Return the minimum frozen 1024 PNG evidence for an unmocked sample."""
+    return {
+        "downloaded": True,
+        "downloadContentType": "image/png",
+        "downloadMagic": "PNG",
+        "downloadSha256": "f" * 64,
+        "downloadBytes": 1,
+        "downloadWidth": 1024,
+        "downloadHeight": 1024,
+    }
 
 
 class FakeSampler:
