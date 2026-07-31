@@ -92,6 +92,31 @@ class McpSessionRegistry(
         return active
     }
 
+    /**
+     * Renews only an already-authorized stream lease. It repeats ownership
+     * checks so a heartbeat cannot revive a revoked token or foreign session.
+     */
+    fun renewLease(
+        sessionId: String,
+        clientId: String,
+        tokenGeneration: Long,
+        transport: McpTransport,
+    ): Boolean {
+        while (true) {
+            val current = sessions[sessionId] ?: return false
+            val now = clock()
+            if (current.clientId != clientId ||
+                current.tokenGeneration != tokenGeneration ||
+                current.transport != transport ||
+                now - current.lastActivityAt >= idleTimeoutMillis
+            ) {
+                sessions.remove(sessionId, current)
+                return false
+            }
+            if (sessions.replace(sessionId, current, current.copy(lastActivityAt = now))) return true
+        }
+    }
+
     fun sessionsFor(clientId: String, transport: McpTransport): List<McpSession> {
         val now = clock()
         sessions.entries.removeIf { (_, session) -> now - session.lastActivityAt >= idleTimeoutMillis }

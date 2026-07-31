@@ -8,6 +8,150 @@ import org.junit.Test
 class McpAuthorizationTest {
 
     @Test
+    fun replayStoreFailsClosedAtCapacityWithoutEvictingSafeTombstones() {
+        val registry = McpToolRegistry()
+        val client = McpAuthenticatedClient("client-a", 1, setOf("prompts.write"), McpTransport.LOOPBACK)
+        val store = McpMutationReplayStore(maxEntries = 2)
+        var executions = 0
+        val original = mutation(registry, client, "original")
+
+        store.execute(client, original, "original") {
+            executions += 1
+            McpToolGatewayResult.Completed(JSONObject().put("promptId", "original"))
+        }
+        repeat(1) { index ->
+            val key = "filler-$index"
+            store.execute(client, mutation(registry, client, key), key) {
+                executions += 1
+                McpToolGatewayResult.Completed(JSONObject().put("promptId", key))
+            }
+        }
+
+        val rejected = store.execute(client, mutation(registry, client, "overflow"), "overflow") {
+            executions += 1
+            McpToolGatewayResult.Completed(JSONObject().put("promptId", "duplicate"))
+        } as McpToolGatewayResult.Rejected
+        assertEquals("IDEMPOTENCY_LEDGER_FULL", rejected.code)
+        val replay = store.execute(client, original, "original") {
+            executions += 1
+            McpToolGatewayResult.Completed(JSONObject().put("promptId", "duplicate"))
+        } as McpToolGatewayResult.Completed
+
+        assertEquals("original", replay.result.getString("promptId"))
+        assertEquals(2, executions)
+    }
+
+    @Test
+    fun replayStorePrunesExpiredTombstonesBeforeReadmittingAndKeepsBoundAfterRecreation() {
+        var now = 0L
+        val registry = McpToolRegistry()
+        val client = McpAuthenticatedClient("client-a", 1, setOf("prompts.write"), McpTransport.LOOPBACK)
+        val persistence = InMemoryMutationReplayPersistence()
+        val first = McpMutationReplayStore(persistence, { now }, maxEntries = 1)
+        var executions = 0
+        first.execute(client, mutation(registry, client, "old"), "old") {
+            executions += 1
+            McpToolGatewayResult.Completed(JSONObject().put("promptId", "old"))
+        }
+        assertEquals(
+            "IDEMPOTENCY_LEDGER_FULL",
+            (
+                McpMutationReplayStore(persistence, { now }, maxEntries = 1)
+                    .execute(client, mutation(registry, client, "blocked"), "blocked") {
+                        executions += 1
+                        McpToolGatewayResult.Completed(JSONObject())
+                    } as McpToolGatewayResult.Rejected
+                ).code,
+        )
+        now = 24 * 60 * 60 * 1000L + 1
+        val admitted = McpMutationReplayStore(persistence, { now }, maxEntries = 1)
+            .execute(client, mutation(registry, client, "new"), "new") {
+                executions += 1
+                McpToolGatewayResult.Completed(JSONObject().put("promptId", "new"))
+            } as McpToolGatewayResult.Completed
+        assertEquals("new", admitted.result.getString("promptId"))
+        assertEquals(2, executions)
+    }
+
+    @Test
+    fun replayStoreRejectsExpiredKeyRatherThanPerformingAnUnsafeRetry() {
+        var now = 0L
+        val registry = McpToolRegistry()
+        val client = McpAuthenticatedClient("client-a", 1, setOf("prompts.write"), McpTransport.LOOPBACK)
+        val store = McpMutationReplayStore(clock = { now })
+        var executions = 0
+        val invocation = mutation(registry, client, "expired")
+
+        store.execute(client, invocation, "expired") {
+            executions += 1
+            McpToolGatewayResult.Completed(JSONObject().put("promptId", "original"))
+        }
+        now = 16 * 60 * 1000L
+
+        assertEquals(
+            "IDEMPOTENCY_RETRY_WINDOW_EXPIRED",
+            (
+                store.execute(client, invocation, "expired") {
+                    executions += 1
+                    McpToolGatewayResult.Completed(JSONObject().put("promptId", "duplicate"))
+                } as McpToolGatewayResult.Rejected
+                ).code,
+        )
+        assertEquals(1, executions)
+    }
+
+    @Test
+    fun replayStoreRestoresTheClientTokenToolPartitionAfterListenerRecreation() {
+        val registry = McpToolRegistry()
+        val client = McpAuthenticatedClient("client-a", 7, setOf("prompts.write"), McpTransport.LOOPBACK)
+        val persistence = InMemoryMutationReplayPersistence()
+        val firstStore = McpMutationReplayStore(persistence)
+        val invocation = mutation(registry, client, "persisted")
+        var executions = 0
+
+        firstStore.execute(client, invocation, "persisted") {
+            executions += 1
+            McpToolGatewayResult.Completed(JSONObject().put("promptId", "persisted"))
+        }
+        val replay = McpMutationReplayStore(persistence).execute(client, invocation, "persisted") {
+            executions += 1
+            McpToolGatewayResult.Completed(JSONObject().put("promptId", "duplicate"))
+        } as McpToolGatewayResult.Completed
+
+        assertEquals("persisted", replay.result.getString("promptId"))
+        assertEquals(1, executions)
+    }
+
+    @Test
+    fun replayStorePartitionsSameIdempotencyKeyByClientAndCredentialGeneration() {
+        val registry = McpToolRegistry()
+        val firstClient = McpAuthenticatedClient("client-a", 1, setOf("prompts.write"), McpTransport.LOOPBACK)
+        val reissuedClient = firstClient.copy(tokenGeneration = 2)
+        val otherClient = firstClient.copy(clientId = "client-b")
+        val store = McpMutationReplayStore()
+        var executions = 0
+
+        listOf(firstClient, reissuedClient, otherClient).forEach { client ->
+            val result = store.execute(client, mutation(registry, client, "shared-key"), "shared-key") {
+                executions += 1
+                McpToolGatewayResult.Completed(JSONObject().put("promptId", client.clientId + client.tokenGeneration))
+            } as McpToolGatewayResult.Completed
+            assertEquals(client.clientId + client.tokenGeneration, result.result.getString("promptId"))
+        }
+        assertEquals(3, executions)
+        assertEquals(
+            "client-a1",
+            (
+                store.execute(firstClient, mutation(registry, firstClient, "shared-key"), "shared-key") {
+                    executions += 1
+                    McpToolGatewayResult.Completed(JSONObject().put("promptId", "duplicate"))
+                } as McpToolGatewayResult.Completed
+                ).result.getString("promptId"),
+        )
+        assertEquals(3, executions)
+    }
+
+    @Test
     fun replayStoreExecutesOneMutationOnceAndRejectsReusedKeysForDifferentPayloads() {
         val registry = McpToolRegistry()
         val client = McpAuthenticatedClient("client-a", 1, setOf("prompts.write"), McpTransport.LOOPBACK)
@@ -163,6 +307,20 @@ class McpAuthorizationTest {
     }
 
     @Test
+    fun qualificationEvidenceImportToolIsNotRegistered() {
+        val registry = McpToolRegistry()
+        assertEquals(
+            McpToolValidation.Rejected("TOOL_NOT_FOUND"),
+            registry.validate(
+                "presets.import_qualification_evidence",
+                JSONObject(),
+                setOf("qualifications.write"),
+            ),
+        )
+        assertTrue("qualifications.write" !in McpGenerationGateway.DEFAULT_CLIENT_SCOPES)
+    }
+
+    @Test
     fun rejectsUnknownToolExtraFieldsAndMissingScopeBeforeDomainDispatch() {
         val registry = McpToolRegistry()
 
@@ -255,5 +413,33 @@ class McpAuthorizationTest {
             McpToolValidation.Rejected("INVALID_PARAMS"),
             registry.validate("generation.create", JSONObject(w7.toString()).put("path", "/sdcard/model"), setOf("generation.run")),
         )
+    }
+
+    private fun mutation(registry: McpToolRegistry, client: McpAuthenticatedClient, key: String): McpToolInvocation = (
+        registry.validate(
+            "prompts.create",
+            JSONObject().put("title", "Title $key").put("prompt", "Prompt").put("idempotencyKey", key),
+            client.scopes,
+        ) as McpToolValidation.Allowed
+        ).invocation
+
+    private class InMemoryMutationReplayPersistence : McpMutationReplayPersistence {
+        private val records = mutableMapOf<String, String>()
+
+        override fun read(key: String): String? = records[key]
+
+        override fun write(key: String, value: String): Boolean {
+            records[key] = value
+            return true
+        }
+
+        override fun remove(key: String): Boolean = records.remove(key) != null
+
+        override fun writeWithinCapacity(key: String, value: String, cutoffMillis: Long, maxEntries: Int): Boolean {
+            records.entries.removeIf { (_, stored) -> JSONObject(stored).getLong("recordedAt") < cutoffMillis }
+            if (key !in records && records.size >= maxEntries) return false
+            records[key] = value
+            return true
+        }
     }
 }

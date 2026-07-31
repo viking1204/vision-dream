@@ -18,6 +18,7 @@ import io.github.xororz.localdream.mcp.AndroidMcpClientManagementStore
 import io.github.xororz.localdream.mcp.AndroidMcpDownloadStore
 import io.github.xororz.localdream.mcp.AndroidMcpGenerationScheduler
 import io.github.xororz.localdream.mcp.AndroidMcpInstalledModelCatalog
+import io.github.xororz.localdream.mcp.AndroidMcpMutationReplayPersistence
 import io.github.xororz.localdream.mcp.AndroidMcpPresetStore
 import io.github.xororz.localdream.mcp.AndroidMcpPromptStore
 import io.github.xororz.localdream.mcp.AndroidMcpRuntimeStore
@@ -26,6 +27,7 @@ import io.github.xororz.localdream.mcp.McpGenerationGateway
 import io.github.xororz.localdream.mcp.McpHistoryImageContentResolver
 import io.github.xororz.localdream.mcp.McpHttpServer
 import io.github.xororz.localdream.mcp.McpLanHostAllowlist
+import io.github.xororz.localdream.mcp.McpMutationReplayStore
 import io.github.xororz.localdream.mcp.McpSessionRegistry
 import io.github.xororz.localdream.mcp.McpSseEventStore
 import io.github.xororz.localdream.mcp.McpTransport
@@ -77,6 +79,7 @@ class McpService : Service() {
             val database = AppDatabase.get(applicationContext)
             val lanHostAllowlist = McpLanHostAllowlist(applicationContext)
             val sseEvents = McpSseEventStore()
+            val mutationReplays = McpMutationReplayStore(AndroidMcpMutationReplayPersistence(applicationContext))
             val jobs = RoomMcpJobStore(database)
             val generationScheduler = AndroidMcpGenerationScheduler(applicationContext, InferenceDispatcher.process, jobs)
             val gateway = McpGenerationGateway(
@@ -103,12 +106,13 @@ class McpService : Service() {
                 auditSink = RoomMcpAuditSink(database.mcpAuditEventDao()),
                 imageResolver = McpHistoryImageContentResolver(applicationContext, database.historyDao()),
                 toolGateway = gateway,
+                mutationReplays = mutationReplays,
                 sseEvents = sseEvents,
             )
             listener.start()
             loopbackServer = listener
             scheduler = generationScheduler
-            lanInputs = LanInputs(gateway, database, generationScheduler, sseEvents)
+            lanInputs = LanInputs(gateway, database, generationScheduler, mutationReplays, sseEvents)
             runtimeLease = InferenceDispatcher.process.acquireServiceLease(DISPATCH_OWNER)
             val lanError = runCatching { configureLan(lanEnabled, port, lanInputs) }.exceptionOrNull()
             updateStatus(Status(running = true, ready = true, port = port, transport = McpTransport.LOOPBACK, error = lanError?.message))
@@ -166,6 +170,7 @@ class McpService : Service() {
             auditSink = RoomMcpAuditSink(activeInputs.database.mcpAuditEventDao()),
             imageResolver = McpHistoryImageContentResolver(applicationContext, activeInputs.database.historyDao()),
             toolGateway = activeInputs.gateway,
+            mutationReplays = activeInputs.mutationReplays,
             sseEvents = activeInputs.sseEvents,
             bindAddress = lanAddress,
         ).also(McpHttpServer::start)
@@ -182,6 +187,7 @@ class McpService : Service() {
         val gateway: McpGenerationGateway,
         val database: AppDatabase,
         val scheduler: AndroidMcpGenerationScheduler,
+        val mutationReplays: McpMutationReplayStore,
         val sseEvents: McpSseEventStore,
     )
 

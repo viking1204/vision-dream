@@ -37,5 +37,6 @@ app/src/main/assets/qnnlibs
 
 # Local development loop ledgers and Python caches
 docs/loop-records/
+.workbuddy/
 __pycache__/
 *.py[cod]

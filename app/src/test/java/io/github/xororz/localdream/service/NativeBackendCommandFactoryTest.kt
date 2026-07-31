@@ -74,6 +74,66 @@ class NativeBackendCommandFactoryTest {
         assertFalse(command.contains("--lowram"))
     }
 
+    @Test
+    fun `v2 options map to native CPU CLIP and HTP command arguments`() {
+        val command = NativeBackendCommandFactory.build(
+            executableFile = File("/native/libstable_diffusion_core.so"),
+            modelsDir = temporaryFolder.newFolder("v2-sdxl"),
+            runtimeDir = temporaryFolder.newFolder("v2-runtime"),
+            config = launchConfig(
+                backendType = "sdxl",
+                cpuClipThreads = 6,
+                htpPowerMode = io.github.xororz.localdream.data.HtpPowerMode.POWER_SAVER,
+                htpDynamicPartitioning = io.github.xororz.localdream.data.HtpDynamicPartitioning.ENABLED,
+            ),
+            usesUnifiedCli = true,
+        )
+
+        assertEquals("6", command[command.indexOf("--cpu_clip_threads") + 1])
+        assertEquals("power_saver", command[command.indexOf("--htp_power_mode") + 1])
+        assertEquals("enabled", command[command.indexOf("--htp_dynamic_partitioning") + 1])
+    }
+
+    @Test
+    fun `portable preset omits CPU CLIP override for Anima`() {
+        val command = NativeBackendCommandFactory.build(
+            executableFile = File("/native/libstable_diffusion_core.so"),
+            modelsDir = temporaryFolder.newFolder("v2-anima"),
+            runtimeDir = temporaryFolder.newFolder("v2-anima-runtime"),
+            config = launchConfig(
+                backendType = "anima",
+                cpuClipThreads = 8,
+                htpPowerMode = io.github.xororz.localdream.data.HtpPowerMode.PERFORMANCE,
+                htpDynamicPartitioning = io.github.xororz.localdream.data.HtpDynamicPartitioning.ENABLED,
+            ),
+            usesUnifiedCli = true,
+        )
+
+        assertFalse(command.contains("--cpu_clip_threads"))
+        assertEquals("performance", command[command.indexOf("--htp_power_mode") + 1])
+        assertEquals("enabled", command[command.indexOf("--htp_dynamic_partitioning") + 1])
+    }
+
+    @Test
+    fun `portable preset omits HTP overrides for CPU backend`() {
+        val command = NativeBackendCommandFactory.build(
+            executableFile = File("/native/libstable_diffusion_core.so"),
+            modelsDir = temporaryFolder.newFolder("v2-cpu"),
+            runtimeDir = temporaryFolder.newFolder("v2-cpu-runtime"),
+            config = launchConfig(
+                backendType = "sd15cpu",
+                cpuClipThreads = 8,
+                htpPowerMode = io.github.xororz.localdream.data.HtpPowerMode.POWER_SAVER,
+                htpDynamicPartitioning = io.github.xororz.localdream.data.HtpDynamicPartitioning.ENABLED,
+            ),
+            usesUnifiedCli = true,
+        )
+
+        assertEquals("8", command[command.indexOf("--cpu_clip_threads") + 1])
+        assertFalse(command.contains("--htp_power_mode"))
+        assertFalse(command.contains("--htp_dynamic_partitioning"))
+    }
+
     private fun build(
         backendType: String,
         usesUnifiedCli: Boolean,
@@ -86,18 +146,34 @@ class NativeBackendCommandFactoryTest {
             executableFile = File("/native/libstable_diffusion_core.so"),
             modelsDir = modelsDir,
             runtimeDir = runtimeDir,
-            config = NativeBackendLaunchConfig(
-                modelId = "test-model",
+            config = launchConfig(
                 backendType = backendType,
-                width = 512,
-                height = 512,
-                listenOnAll = false,
                 imageInputEnabled = imageInputEnabled,
                 sdxlLowRam = sdxlLowRam,
-                animaLowRam = true,
-                animaSequentialDit = false,
             ),
             usesUnifiedCli = usesUnifiedCli,
         )
     }
+
+    private fun launchConfig(
+        backendType: String,
+        sdxlLowRam: Boolean = true,
+        imageInputEnabled: Boolean = true,
+        cpuClipThreads: Int? = null,
+        htpPowerMode: io.github.xororz.localdream.data.HtpPowerMode? = null,
+        htpDynamicPartitioning: io.github.xororz.localdream.data.HtpDynamicPartitioning? = null,
+    ) = NativeBackendLaunchConfig(
+        modelId = "test-model",
+        backendType = backendType,
+        width = 512,
+        height = 512,
+        listenOnAll = false,
+        imageInputEnabled = imageInputEnabled,
+        sdxlLowRam = sdxlLowRam,
+        animaLowRam = true,
+        animaSequentialDit = false,
+        cpuClipThreads = cpuClipThreads,
+        htpPowerMode = htpPowerMode,
+        htpDynamicPartitioning = htpDynamicPartitioning,
+    )
 }

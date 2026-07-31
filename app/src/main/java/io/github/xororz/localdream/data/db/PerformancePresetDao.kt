@@ -22,6 +22,6 @@ interface PerformancePresetDao {
     @Query("SELECT * FROM performance_presets WHERE name = :name")
     suspend fun getByName(name: String): PerformancePresetEntity?
 
-    @Query("DELETE FROM performance_presets WHERE id = :id AND isFallback = 0")
+    @Query("DELETE FROM performance_presets WHERE id = :id AND isBuiltIn = 0")
     suspend fun deleteUserPreset(id: String): Int
 }

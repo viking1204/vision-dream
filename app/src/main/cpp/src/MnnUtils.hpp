@@ -9,6 +9,7 @@
 
 #include <MNN/Interpreter.hpp>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 
@@ -72,6 +73,23 @@ struct MnnSessionOptions {
   std::string cache_file;  // OpenCL tuning cache path ("" = no cache file)
   int num_threads = 4;
 };
+
+// v2 performance presets only tune CPU CLIP sessions.  Keep this separate
+// from the generic MNN defaults so a CLIP choice cannot accidentally change
+// CPU UNet/VAE or the safety-checker scheduling policy.
+inline int g_cpu_clip_threads = 4;
+
+inline void setCpuClipThreads(int threads) {
+  if (threads < 1 || threads > 8)
+    throw std::invalid_argument("cpu clip threads must be in [1, 8]");
+  g_cpu_clip_threads = threads;
+}
+
+inline MnnSessionOptions cpuClipSessionOptions() {
+  MnnSessionOptions options;
+  options.num_threads = g_cpu_clip_threads;
+  return options;
+}
 
 // Creates a session with the standard pipeline configuration. The interpreter
 // keeps no reference to the local configs after createSession returns.

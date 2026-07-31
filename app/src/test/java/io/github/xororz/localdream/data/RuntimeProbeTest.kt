@@ -14,6 +14,17 @@ class RuntimeProbeTest {
     }
 
     @Test
+    fun `protected projection retains attestation facts without local paths or credentials`() {
+        val projection = RuntimeProbeEvaluator.evaluate(input(nativeReady = true)).toProtectedProjection()
+
+        assertEquals("PJZ110", projection.deviceModel)
+        assertEquals("SM8750", projection.soc)
+        assertEquals("a".repeat(64), projection.contextFingerprint)
+        assertEquals("a".repeat(64), projection.loadedLibraryFingerprints["libQnnHtp.so"])
+        assertTrue(projection.nativeReady == true)
+    }
+
+    @Test
     fun `non target device and failed native readiness are rejected`() {
         val probe = RuntimeProbeEvaluator.evaluate(input(deviceModel = "Redmi K30", nativeReady = false))
 

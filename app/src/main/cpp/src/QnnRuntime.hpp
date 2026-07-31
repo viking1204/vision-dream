@@ -25,6 +25,18 @@ namespace qnn_runtime {
 inline QnnFunctionPointers g_systemFuncs;
 inline std::string g_backendPath;
 inline bool g_initialized = false;
+inline QnnModel::HtpPowerMode g_htp_power_mode =
+    QnnModel::HtpPowerMode::kPerformance;
+inline bool g_has_htp_dynamic_partitioning = false;
+inline bool g_htp_dynamic_partitioning_enabled = false;
+
+inline void configureHtpPerformance(
+    QnnModel::HtpPowerMode power_mode, bool has_dynamic_partitioning,
+    bool dynamic_partitioning_enabled) {
+  g_htp_power_mode = power_mode;
+  g_has_htp_dynamic_partitioning = has_dynamic_partitioning;
+  g_htp_dynamic_partitioning_enabled = dynamic_partitioning_enabled;
+}
 
 // Resolves libQnnHtp.so / libQnnSystem.so inside `lib_dir`.
 inline bool init(const std::string &lib_dir) {
@@ -67,6 +79,11 @@ inline std::unique_ptr<QnnModel> createModel(const std::string &modelPath,
   // Hand off the model library handle so the QnnModel destructor can dlclose
   // it. Otherwise lowram mode leaks one .so handle per load cycle.
   if (app) app->m_modelHandle = modelHandle;
+  if (app) {
+    app->setHtpPowerMode(g_htp_power_mode);
+    if (g_has_htp_dynamic_partitioning)
+      app->setHtpDynamicPartitioning(g_htp_dynamic_partitioning_enabled);
+  }
   return app;
 }
 

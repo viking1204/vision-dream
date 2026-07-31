@@ -178,7 +178,7 @@ class PipelineSdxl : public PipelineQnn {
 
   void runUnetStep(const GenerationRequest &, const float *latents_batch2,
                    float timestep, bool skip_uncond, Conditioning &cond,
-                   float *out_batch2) override {
+                   float *out_batch2, int64_t &unet_execution_ms) override {
     if (!unet_) throw std::runtime_error("QNN UNET missing");
 
     const int single_latent_size = 1 * 4 * sample_width * sample_height;
@@ -186,16 +186,19 @@ class PipelineSdxl : public PipelineQnn {
     float *latents_in = const_cast<float *>(latents_batch2);
     float *time_ids = cond.time_ids.data();
 
-    if (!skip_uncond &&
-        StatusCode::SUCCESS != unet_->executeUnetGraphsSDXL(
-                                   latents_in, ts, cond.negHidden(),
-                                   cond.negPooled(), time_ids, out_batch2))
-      throw std::runtime_error("QNN UNET SDXL exec failed (uncond)");
+    if (!skip_uncond) {
+      const auto status = unet_->executeUnetGraphsSDXL(
+          latents_in, ts, cond.negHidden(), cond.negPooled(), time_ids,
+          out_batch2, unet_execution_ms);
+      if (StatusCode::SUCCESS != status)
+        throw std::runtime_error("QNN UNET SDXL exec failed (uncond)");
+    }
 
-    if (StatusCode::SUCCESS !=
-        unet_->executeUnetGraphsSDXL(
-            latents_in + single_latent_size, ts, cond.posHidden(),
-            cond.posPooled(), time_ids + 6, out_batch2 + single_latent_size))
+    const auto status = unet_->executeUnetGraphsSDXL(
+        latents_in + single_latent_size, ts, cond.posHidden(),
+        cond.posPooled(), time_ids + 6, out_batch2 + single_latent_size,
+        unet_execution_ms);
+    if (StatusCode::SUCCESS != status)
       throw std::runtime_error("QNN UNET SDXL exec failed (cond)");
   }
 
@@ -273,7 +276,7 @@ class PipelineSdxl : public PipelineQnn {
       if (!clip2_interpreter_)
         throw std::runtime_error("Failed load SDXL CLIP2 MNN");
     }
-    MnnSessionOptions opts;  // CLIP always runs on CPU
+    MnnSessionOptions opts = cpuClipSessionOptions();
     if (!clip_session_) {
       clip_session_ = createMnnSession(clip_interpreter_, opts);
       if (!clip_session_)

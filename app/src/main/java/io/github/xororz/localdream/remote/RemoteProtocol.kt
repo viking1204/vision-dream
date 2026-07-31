@@ -44,7 +44,7 @@ object RemoteProtocol {
 /**
  * The immutable performance-preset value accepted by a controller before it
  * asks a remote host to start a generation backend. The host intentionally
- * does not look up its own mutable preset rows: a v1 preset must match its
+ * does not look up its own mutable preset rows: a v1/v2 preset must match its
  * serialized engine flags, while the legacy fallback carries the controller's
  * already-resolved flags explicitly.
  */
@@ -69,6 +69,11 @@ data class RemotePresetExecution(
                 put("sdxl_low_ram", engineConfig.sdxlLowRam)
                 put("anima_low_ram", engineConfig.animaLowRam)
                 put("anima_sequential_dit", engineConfig.animaSequentialDit)
+                engineConfig.cpuClipThreads?.let { put("cpu_clip_threads", it) }
+                engineConfig.htpPowerMode?.let { put("htp_power_mode", it.name) }
+                engineConfig.htpDynamicPartitioning?.let {
+                    put("htp_dynamic_partitioning", it.name)
+                }
             },
         )
     }
@@ -77,9 +82,7 @@ data class RemotePresetExecution(
         fun fromJson(body: JSONObject): RemotePresetExecution? {
             val snapshotJson = body.optJSONObject("preset_snapshot") ?: return null
             val engineJson = body.optJSONObject("engine") ?: return null
-            if (snapshotJson.keys().asSequence().toSet() != SNAPSHOT_KEYS ||
-                engineJson.keys().asSequence().toSet() != ENGINE_KEYS
-            ) {
+            if (snapshotJson.keys().asSequence().toSet() != SNAPSHOT_KEYS) {
                 return null
             }
             val presetId = snapshotJson.opt("preset_id") as? String ?: return null
@@ -92,6 +95,18 @@ data class RemotePresetExecution(
             ) {
                 return null
             }
+            val parsed = PerformancePresetConfig.parse(configJson)
+            if (parsed.status != PresetConfigParseStatus.SUPPORTED &&
+                parsed.status != PresetConfigParseStatus.LEGACY_COMPATIBILITY
+            ) {
+                return null
+            }
+            val expectedEngineKeys = when {
+                parsed.engine == null -> V1_ENGINE_KEYS
+                parsed.engine.cpuClipThreads == null -> V1_ENGINE_KEYS
+                else -> V2_ENGINE_KEYS
+            }
+            if (engineJson.keys().asSequence().toSet() != expectedEngineKeys) return null
             val sdxlLowRam = engineJson.opt("sdxl_low_ram") as? Boolean ?: return null
             val animaLowRam = engineJson.opt("anima_low_ram") as? Boolean ?: return null
             val animaSequentialDit = engineJson.opt("anima_sequential_dit") as? Boolean ?: return null
@@ -99,13 +114,14 @@ data class RemotePresetExecution(
                 sdxlLowRam = sdxlLowRam,
                 animaLowRam = animaLowRam,
                 animaSequentialDit = animaSequentialDit,
+                cpuClipThreads = engineJson.optionalInteger("cpu_clip_threads"),
+                htpPowerMode = engineJson.optionalEnum("htp_power_mode") {
+                    io.github.xororz.localdream.data.HtpPowerMode.valueOf(it)
+                },
+                htpDynamicPartitioning = engineJson.optionalEnum("htp_dynamic_partitioning") {
+                    io.github.xororz.localdream.data.HtpDynamicPartitioning.valueOf(it)
+                },
             )
-            val parsed = PerformancePresetConfig.parse(configJson)
-            if (parsed.status != PresetConfigParseStatus.SUPPORTED &&
-                parsed.status != PresetConfigParseStatus.LEGACY_COMPATIBILITY
-            ) {
-                return null
-            }
             if (parsed.engine != null && parsed.engine != engineConfig) return null
             return RemotePresetExecution(
                 snapshot = PresetSnapshot(
@@ -120,7 +136,28 @@ data class RemotePresetExecution(
         }
 
         private val SNAPSHOT_KEYS = setOf("preset_id", "name", "selector", "config_json", "revision")
-        private val ENGINE_KEYS = setOf("sdxl_low_ram", "anima_low_ram", "anima_sequential_dit")
+        private val V1_ENGINE_KEYS = setOf("sdxl_low_ram", "anima_low_ram", "anima_sequential_dit")
+        private val V2_ENGINE_KEYS = V1_ENGINE_KEYS + setOf(
+            "cpu_clip_threads",
+            "htp_power_mode",
+            "htp_dynamic_partitioning",
+        )
+
+        private fun JSONObject.optionalInteger(key: String): Int? {
+            if (!has(key)) return null
+            val value = opt(key) as? Number ?: return null
+            if (value.toDouble() != value.toInt().toDouble() || value.toInt() !in 1..8) return null
+            return value.toInt()
+        }
+
+        private fun <T> JSONObject.optionalEnum(
+            key: String,
+            parser: (String) -> T,
+        ): T? {
+            if (!has(key)) return null
+            val value = opt(key) as? String ?: return null
+            return runCatching { parser(value) }.getOrNull()
+        }
     }
 }
 

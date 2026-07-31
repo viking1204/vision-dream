@@ -22,6 +22,7 @@ using namespace qnn::tools::sample_app;
 
 class QnnModel : public QnnSampleApp {
  public:
+  enum class HtpPowerMode { kPerformance, kAdjustUpDown, kPowerSaver };
   Qnn_Tensor_t *inputs = nullptr;
   Qnn_Tensor_t *outputs = nullptr;
   void *m_modelHandle = nullptr;
@@ -70,6 +71,52 @@ class QnnModel : public QnnSampleApp {
   // Valid only after a successful initialize()/createFromBinary(): the QNN
   // context handle, used as the group head reference for the other models.
   Qnn_ContextHandle_t getContextHandle() const { return m_context; }
+
+  void setHtpPowerMode(HtpPowerMode power_mode) { htp_power_mode_ = power_mode; }
+
+  // AUTO intentionally keeps the QNN backend default. ENABLED/DISABLED are
+  // passed during QnnDevice_create and fail the launch if the runtime rejects
+  // the requested device configuration.
+  void setHtpDynamicPartitioning(bool enabled) {
+    has_htp_dynamic_partitioning_ = true;
+    htp_dynamic_partitioning_enabled_ = enabled;
+  }
+
+  StatusCode createDevice() {
+    if (m_qnnFunctionPointers.qnnInterface.deviceCreate == nullptr)
+      return StatusCode::SUCCESS;
+
+    QnnHtpDevice_CustomConfig_t htp_config{};
+    QnnDevice_Config_t device_config = QNN_DEVICE_CONFIG_INIT;
+    const QnnDevice_Config_t *device_configs[] = {&device_config, nullptr};
+    const QnnDevice_Config_t **config_ptr = nullptr;
+    if (has_htp_dynamic_partitioning_) {
+      htp_config.option = QNN_HTP_DEVICE_CONFIG_OPTION_DYNAMIC_PARTITIONING;
+      htp_config.useDynamicPartitioning.deviceId = 0;
+      htp_config.useDynamicPartitioning.useDynamicPartitioning =
+          htp_dynamic_partitioning_enabled_;
+      device_config.option = QNN_DEVICE_CONFIG_OPTION_CUSTOM;
+      device_config.customConfig = &htp_config;
+      config_ptr = device_configs;
+      QNN_INFO("HTP dynamic partitioning=%s",
+               htp_dynamic_partitioning_enabled_ ? "enabled" : "disabled");
+    }
+
+    auto qnn_status = m_qnnFunctionPointers.qnnInterface.deviceCreate(
+        m_logHandle, config_ptr, &m_deviceHandle);
+    // Keep the established compatibility behavior for AUTO.  An explicit
+    // ENABLED/DISABLED preset, however, must not silently run without its
+    // requested device configuration.
+    if (!has_htp_dynamic_partitioning_ &&
+        qnn_status == QNN_DEVICE_ERROR_UNSUPPORTED_FEATURE) {
+      return StatusCode::SUCCESS;
+    }
+    if (qnn_status != QNN_SUCCESS) {
+      QNN_ERROR("Failed to create device with requested HTP configuration");
+      return verifyFailReturnStatus(qnn_status);
+    }
+    return StatusCode::SUCCESS;
+  }
 
   // Queries the HTP backend for this context's real spill-fill scratch
   // requirement (bytes). Valid only after the context is created. Returns 0 if
@@ -169,29 +216,45 @@ class QnnModel : public QnnSampleApp {
     QnnHtpPerfInfrastructure_PowerConfig_t powerConfig;
     memset(&powerConfig, 0, sizeof(powerConfig));
     powerConfig.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_DCVS_V3;
-    powerConfig.dcvsV3Config.dcvsEnable = 0;
+    powerConfig.dcvsV3Config.dcvsEnable =
+        htp_power_mode_ == HtpPowerMode::kPerformance ? 0 : 1;
     powerConfig.dcvsV3Config.setDcvsEnable = 1;
     powerConfig.dcvsV3Config.contextId = powerConfigId;
-    powerConfig.dcvsV3Config.powerMode =
-        QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_PERFORMANCE_MODE;
-    powerConfig.dcvsV3Config.setSleepLatency = 1;
-    powerConfig.dcvsV3Config.setBusParams = 1;
-    powerConfig.dcvsV3Config.setCoreParams = 1;
-    powerConfig.dcvsV3Config.sleepDisable = 1;
-    powerConfig.dcvsV3Config.setSleepDisable = 1;
-    powerConfig.dcvsV3Config.sleepLatency = 40;
-    powerConfig.dcvsV3Config.busVoltageCornerMin =
-        DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-    powerConfig.dcvsV3Config.busVoltageCornerTarget =
-        DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-    powerConfig.dcvsV3Config.busVoltageCornerMax =
-        DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-    powerConfig.dcvsV3Config.coreVoltageCornerMin =
-        DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-    powerConfig.dcvsV3Config.coreVoltageCornerTarget =
-        DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-    powerConfig.dcvsV3Config.coreVoltageCornerMax =
-        DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+    switch (htp_power_mode_) {
+      case HtpPowerMode::kPerformance:
+        powerConfig.dcvsV3Config.powerMode =
+            QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_PERFORMANCE_MODE;
+        powerConfig.dcvsV3Config.setSleepLatency = 1;
+        powerConfig.dcvsV3Config.setBusParams = 1;
+        powerConfig.dcvsV3Config.setCoreParams = 1;
+        powerConfig.dcvsV3Config.sleepDisable = 1;
+        powerConfig.dcvsV3Config.setSleepDisable = 1;
+        powerConfig.dcvsV3Config.sleepLatency = 40;
+        powerConfig.dcvsV3Config.busVoltageCornerMin =
+            DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+        powerConfig.dcvsV3Config.busVoltageCornerTarget =
+            DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+        powerConfig.dcvsV3Config.busVoltageCornerMax =
+            DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+        powerConfig.dcvsV3Config.coreVoltageCornerMin =
+            DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+        powerConfig.dcvsV3Config.coreVoltageCornerTarget =
+            DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+        powerConfig.dcvsV3Config.coreVoltageCornerMax =
+            DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+        QNN_INFO("HTP DCVS V3 power mode=performance");
+        break;
+      case HtpPowerMode::kAdjustUpDown:
+        powerConfig.dcvsV3Config.powerMode =
+            QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_ADJUST_UP_DOWN;
+        QNN_INFO("HTP DCVS V3 power mode=adjust_up_down");
+        break;
+      case HtpPowerMode::kPowerSaver:
+        powerConfig.dcvsV3Config.powerMode =
+            QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_POWER_SAVER_MODE;
+        QNN_INFO("HTP DCVS V3 power mode=power_saver");
+        break;
+    }
     const QnnHtpPerfInfrastructure_PowerConfig_t *powerConfigs3[] = {
         &powerConfig, NULL};
     perfInfraErr = perfInfra.setPowerConfig(powerConfigId, powerConfigs3);
@@ -217,7 +280,8 @@ class QnnModel : public QnnSampleApp {
   }
 
   StatusCode executeUnetGraphs(float *latents, int timestep,
-                               float *text_embedding, float *latents_pred) {
+                               float *text_embedding, float *latents_pred,
+                               int64_t &unet_execution_ms) {
     auto returnStatus = StatusCode::SUCCESS;
 
     size_t graphIdx = 0;
@@ -284,6 +348,9 @@ class QnnModel : public QnnSampleApp {
     int duration = std::chrono::duration_cast<std::chrono::milliseconds>(
                        end_time - start_time)
                        .count();
+    // This interval encloses only QNN graphExecute. Tensor quantization and
+    // output conversion stay outside the UNet acceptance metric.
+    unet_execution_ms += duration;
     QNN_INFO("unet graph execution time: %d ms", duration);
 
     if (QNN_GRAPH_NO_ERROR != executeStatus) {
@@ -446,7 +513,8 @@ class QnnModel : public QnnSampleApp {
   StatusCode executeUnetGraphsSDXL(float *sample, int timestep,
                                    float *encoder_hidden_states,
                                    float *text_embeds, float *time_ids,
-                                   float *out_sample) {
+                                   float *out_sample,
+                                   int64_t &unet_execution_ms) {
     auto returnStatus = StatusCode::SUCCESS;
 
     size_t graphIdx = 0;
@@ -518,6 +586,8 @@ class QnnModel : public QnnSampleApp {
     int duration = std::chrono::duration_cast<std::chrono::milliseconds>(
                        end_time - start_time)
                        .count();
+    // Keep host tensor copies out of the target-device UNet timing.
+    unet_execution_ms += duration;
     QNN_INFO("sdxl unet graph execution time: %d ms", duration);
 
     if (QNN_GRAPH_NO_ERROR != executeStatus) {
@@ -700,16 +770,17 @@ class QnnModel : public QnnSampleApp {
   }
 
   bool runGraph(const qnn_wrapper_api::GraphInfo_t &graphInfo,
-                const char *tag) {
+                const char *tag, int64_t *unet_execution_ms = nullptr) {
     auto start = std::chrono::high_resolution_clock::now();
     auto st = m_qnnFunctionPointers.qnnInterface.graphExecute(
         graphInfo.graph, inputs, graphInfo.numInputTensors, outputs,
         graphInfo.numOutputTensors, m_profileBackendHandle, nullptr);
     auto end = std::chrono::high_resolution_clock::now();
-    QNN_INFO(
-        "%s graph execution time: %d ms", tag,
-        (int)std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
-            .count());
+    const int64_t duration_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
+            .count();
+    if (unet_execution_ms != nullptr) *unet_execution_ms += duration_ms;
+    QNN_INFO("%s graph execution time: %d ms", tag, (int)duration_ms);
     if (QNN_GRAPH_NO_ERROR != st) {
       QNN_ERROR("%s graph execution failed!", tag);
       return false;
@@ -745,7 +816,8 @@ class QnnModel : public QnnSampleApp {
   // part-1: (sample, timestamp, encoder_hidden_states) -> (hidden, emb).
   StatusCode executeAnimaUnetPart1(float *sample, float timestep,
                                    float *context,
-                                   std::vector<std::vector<float>> &out2) {
+                                   std::vector<std::vector<float>> &out2,
+                                   int64_t &unet_execution_ms) {
     if (!ensureIoTensors()) return StatusCode::FAILURE;
     auto graphInfo = (*m_graphsInfo)[0];
     logAnimaIoOnce("unet_part1", graphInfo);
@@ -759,7 +831,8 @@ class QnnModel : public QnnSampleApp {
                          ctx_elems))
       return StatusCode::FAILURE;
 
-    if (!runGraph(graphInfo, "anima unet part1")) return StatusCode::FAILURE;
+    if (!runGraph(graphInfo, "anima unet part1", &unet_execution_ms))
+      return StatusCode::FAILURE;
 
     out2.resize(2);
     for (int k = 0; k < 2; ++k) {
@@ -781,7 +854,8 @@ class QnnModel : public QnnSampleApp {
   // adaln + rope are recomputed inside the graph from `timestamp`/grid.
   StatusCode executeAnimaUnetPart2(const std::vector<std::vector<float>> &in2,
                                    float timestep, float *context,
-                                   float *out_sample) {
+                                   float *out_sample,
+                                   int64_t &unet_execution_ms) {
     if (!ensureIoTensors()) return StatusCode::FAILURE;
     auto graphInfo = (*m_graphsInfo)[0];
     logAnimaIoOnce("unet_part2", graphInfo);
@@ -794,7 +868,8 @@ class QnnModel : public QnnSampleApp {
         !writeNamedFloat(graphInfo, "context", context, ctx_elems))
       return StatusCode::FAILURE;
 
-    if (!runGraph(graphInfo, "anima unet part2")) return StatusCode::FAILURE;
+    if (!runGraph(graphInfo, "anima unet part2", &unet_execution_ms))
+      return StatusCode::FAILURE;
 
     const int latent_elems =
         1 * anima_latent_channels * sample_width * sample_height;
@@ -1073,6 +1148,9 @@ class QnnModel : public QnnSampleApp {
   QnnHtpContext_CustomConfig_t m_sfHtpConfig{};
   QnnContext_Config_t m_sfCtxConfig{};
   QnnContext_Config_t *m_sfCtxConfigPtrs[2] = {nullptr, nullptr};
+  HtpPowerMode htp_power_mode_ = HtpPowerMode::kPerformance;
+  bool has_htp_dynamic_partitioning_ = false;
+  bool htp_dynamic_partitioning_enabled_ = false;
 };
 
 #endif  // QNNMODEL_HPP

@@ -331,7 +331,14 @@ class McpGenerationGateway(
         .put("selector", preset.selector)
         .put("configJson", preset.configJson)
         .put("revision", preset.revision)
-        .put("kind", if (preset.isFallback) "COMPATIBILITY_FALLBACK" else "USER")
+        .put(
+            "kind",
+            when {
+                preset.isFallback -> "COMPATIBILITY_FALLBACK"
+                preset.isBuiltIn -> "BUILT_IN"
+                else -> "USER"
+            },
+        )
 
     /** Prompt templates remain product-owned records; MCP never accepts a path or shell command. */
     private fun listPrompts(): McpToolGatewayResult = McpToolGatewayResult.Completed(

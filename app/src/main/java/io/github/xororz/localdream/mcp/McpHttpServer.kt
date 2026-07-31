@@ -482,7 +482,7 @@ class McpHttpServer(
             stream.subscription.initial.forEach { writeSseEvent(output, it) }
             output.flush()
             while (running) {
-                if (!sessions.isActive(stream.sessionId, stream.clientId, stream.tokenGeneration, transport)) {
+                if (!sessions.renewLease(stream.sessionId, stream.clientId, stream.tokenGeneration, transport)) {
                     sseEvents.close(stream.sessionId)
                     return
                 }

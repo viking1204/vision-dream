@@ -20,6 +20,8 @@ import io.github.xororz.localdream.openai.OpenAiApiPreferences
 import io.github.xororz.localdream.openai.OpenAiHttpServer
 import java.io.IOException
 import java.util.concurrent.CancellationException
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -209,23 +211,60 @@ class OpenAiApiService : Service() {
             destroyed = true
             server.also { server = null }
         }
-        serverToClose?.shutdown()
+        // Cancel the loopback call before waiting for HTTP workers. A native
+        // generation can otherwise keep a worker blocked while ColorOS has
+        // already jailed the high-ION child process.
         controller?.cancelActiveCalls()
         controller = null
+        serverToClose?.shutdown()
         val dispatcherToRelease = dispatcher
         activeDispatcher.compareAndSet(dispatcherToRelease, null)
-        dispatcherToRelease?.cancelOwner(OpenAiApiController.DISPATCH_OWNER)
+        val cancellationBarriers = dispatcherToRelease
+            ?.cancelOwner(OpenAiApiController.DISPATCH_OWNER)
+            .orEmpty()
         dispatcher = null
         runtimeLease?.close()
         runtimeLease = null
         updateStatus(Status(error = terminalError))
-        if (backendPrepared &&
-            dispatcherToRelease?.runtimeLeases?.canStopBackend() == true
-        ) {
+        if (backendPrepared && dispatcherToRelease != null) {
             backendPrepared = false
+            stopBackendAfterCancellation(dispatcherToRelease, cancellationBarriers)
+        } else {
+            backendPrepared = false
+        }
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
+    /**
+     * A cancelled result future is not proof that native inference unwound.
+     * Wait briefly for the real execution barriers, then force-stop the native
+     * child when every remaining lease still belongs to this stopped API. This
+     * closes the ColorOS memory-jail failure where an active job lease used to
+     * leave a 7 GB backend process and its foreground notification behind.
+     */
+    private fun stopBackendAfterCancellation(
+        dispatcher: InferenceDispatcher,
+        cancellationBarriers: List<CompletableFuture<Unit>>,
+    ) {
+        teardownScope.launch {
+            if (cancellationBarriers.isNotEmpty()) {
+                runCatching {
+                    CompletableFuture
+                        .allOf(*cancellationBarriers.toTypedArray())
+                        .get(CANCELLATION_DRAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                }.onFailure {
+                    Log.w(TAG, "Native cancellation did not drain before backend stop", it)
+                }
+            }
+            val leases = dispatcher.runtimeLeases.snapshot()
+            if (!shouldStopBackendAfterOwnerCancellation(leases, OpenAiApiController.DISPATCH_OWNER)) {
+                Log.i(TAG, "Keeping backend for other inference owners: ${leases.owners}")
+                return@launch
+            }
             try {
                 startService(
-                    Intent(this, BackendService::class.java)
+                    Intent(this@OpenAiApiService, BackendService::class.java)
                         .setAction(BackendService.ACTION_STOP)
                         .putExtra(
                             BackendService.EXTRA_REQUEST_OWNER,
@@ -235,11 +274,7 @@ class OpenAiApiService : Service() {
             } catch (e: Exception) {
                 Log.w(TAG, "Could not stop backend after API shutdown", e)
             }
-        } else {
-            backendPrepared = false
         }
-        serviceScope.cancel()
-        super.onDestroy()
     }
 
     @SuppressLint("WakelockTimeout")
@@ -320,6 +355,8 @@ class OpenAiApiService : Service() {
         private const val CHANNEL_ID = "openai_image_api"
         private const val NOTIFICATION_ID = 5
         private const val BACKEND_PREPARE_TIMEOUT_MS = 60_000L
+        private const val CANCELLATION_DRAIN_TIMEOUT_MS = 5_000L
+        private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         const val ACTION_STOP = "io.github.xororz.localdream.STOP_OPENAI_API"
 
@@ -354,3 +391,8 @@ class OpenAiApiService : Service() {
         }
     }
 }
+
+internal fun shouldStopBackendAfterOwnerCancellation(
+    leases: io.github.xororz.localdream.inference.BackendRuntimeLeaseManager.Snapshot,
+    stoppedOwnerId: String,
+): Boolean = leases.total == 0 || leases.owners.all { it == stoppedOwnerId }

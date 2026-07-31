@@ -1,5 +1,6 @@
 package io.github.xororz.localdream.mcp
 
+import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.LinkedHashMap
 import java.util.concurrent.ArrayBlockingQueue
@@ -57,11 +58,24 @@ class McpTransportGuards(
 }
 
 /**
- * Serializes a client's mutation retries by idempotency key. A reused key may
- * replay only the exact same domain request; a changed payload is rejected so
- * reconnecting clients cannot accidentally turn one approval into two writes.
+ * Serializes a client's mutation retries by idempotency key.
+ *
+ * Replay records are partitioned by client, credential generation, tool and
+ * idempotency key. A completed result remains replayable for the whole safe
+ * retry window. After that window its tombstone remains until expiry and
+ * rejects the key rather than risking a duplicate write. The Android service
+ * supplies a persistent private-store implementation so listener restarts keep
+ * the same boundary; a crash after the pre-operation IN_FLIGHT record is also
+ * rejected rather than repeated.
  */
-class McpMutationReplayStore {
+class McpMutationReplayStore(
+    private val persistence: McpMutationReplayPersistence? = null,
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val maxEntries: Int = MAX_REPLAY_ENTRIES,
+) {
+    init {
+        require(maxEntries > 0)
+    }
     private data class Key(
         val clientId: String,
         val tokenGeneration: Long,
@@ -71,8 +85,12 @@ class McpMutationReplayStore {
 
     private data class Entry(
         val parameterDigest: String,
-        val result: McpToolGatewayResult,
+        val recordedAt: Long,
+        val state: State,
+        val result: McpToolGatewayResult? = null,
     )
+
+    private enum class State { IN_FLIGHT, SETTLED }
 
     private val entries = LinkedHashMap<Key, Entry>()
 
@@ -81,14 +99,9 @@ class McpMutationReplayStore {
         invocation: McpToolInvocation,
         idempotencyKey: String,
     ): McpToolGatewayResult? = synchronized(entries) {
+        pruneExpired()
         val key = Key(client.clientId, client.tokenGeneration, invocation.definition.name, idempotencyKey)
-        entries[key]?.let { existing ->
-            if (existing.parameterDigest == invocation.parameterDigest) {
-                existing.result.copyForReplay()
-            } else {
-                McpToolGatewayResult.Rejected("IDEMPOTENCY_KEY_CONFLICT")
-            }
-        }
+        replayExisting(key, invocation.parameterDigest)
     }
 
     fun execute(
@@ -97,12 +110,99 @@ class McpMutationReplayStore {
         idempotencyKey: String,
         operation: () -> McpToolGatewayResult,
     ): McpToolGatewayResult = synchronized(entries) {
+        pruneExpired()
         val key = Key(client.clientId, client.tokenGeneration, invocation.definition.name, idempotencyKey)
-        replay(client, invocation, idempotencyKey)?.let { return@synchronized it }
-        operation().also {
-            entries[key] = Entry(invocation.parameterDigest, it.copyForReplay())
-            while (entries.size > MAX_REPLAYED_MUTATIONS) entries.remove(entries.entries.first().key)
+        replayExisting(key, invocation.parameterDigest)?.let { return@synchronized it }
+
+        val inFlight = Entry(invocation.parameterDigest, clock(), State.IN_FLIGHT)
+        if (entries.size >= maxEntries) return@synchronized McpToolGatewayResult.Rejected("IDEMPOTENCY_LEDGER_FULL")
+        if (!persist(key, inFlight)) return@synchronized McpToolGatewayResult.Rejected("IDEMPOTENCY_LEDGER_FULL")
+        entries[key] = inFlight
+        operation().also { result ->
+            val settled = inFlight.copy(state = State.SETTLED, result = result.copyForReplay())
+            // The original domain operation already happened. If its replay
+            // result cannot be committed, retain IN_FLIGHT and reject future
+            // retries instead of allowing a second side effect after restart.
+            if (persist(key, settled)) entries[key] = settled
         }
+    }
+
+    private fun replayExisting(key: Key, parameterDigest: String): McpToolGatewayResult? {
+        val existing = entry(key) ?: return null
+        if (existing.parameterDigest != parameterDigest) return McpToolGatewayResult.Rejected("IDEMPOTENCY_KEY_CONFLICT")
+        val elapsed = (clock() - existing.recordedAt).coerceAtLeast(0L)
+        if (elapsed >= TOMBSTONE_RETENTION_MILLIS) {
+            if (persistence?.remove(storageKey(key)) == false) return McpToolGatewayResult.Rejected("IDEMPOTENCY_RECORD_UNAVAILABLE")
+            entries.remove(key)
+            return null
+        }
+        if (elapsed >= SAFE_RETRY_WINDOW_MILLIS) return McpToolGatewayResult.Rejected("IDEMPOTENCY_RETRY_WINDOW_EXPIRED")
+        return existing.result?.copyForReplay() ?: McpToolGatewayResult.Rejected("IDEMPOTENCY_OUTCOME_UNKNOWN")
+    }
+
+    private fun entry(key: Key): Entry? {
+        entries[key]?.let { return it }
+        val encoded = persistence?.read(storageKey(key)) ?: return null
+        val restored = decode(encoded) ?: return Entry(
+            parameterDigest = "",
+            recordedAt = clock(),
+            state = State.IN_FLIGHT,
+        )
+        entries[key] = restored
+        return restored
+    }
+
+    private fun persist(key: Key, entry: Entry): Boolean = persistence?.writeWithinCapacity(
+        storageKey(key),
+        encode(entry),
+        clock() - TOMBSTONE_RETENTION_MILLIS,
+        maxEntries,
+    ) ?: true
+
+    private fun pruneExpired() {
+        val cutoff = clock() - TOMBSTONE_RETENTION_MILLIS
+        entries.entries.removeIf { (_, entry) -> entry.recordedAt < cutoff }
+    }
+
+    private fun encode(entry: Entry): String = JSONObject()
+        .put("parameterDigest", entry.parameterDigest)
+        .put("recordedAt", entry.recordedAt)
+        .put("state", entry.state.name)
+        .apply {
+            when (val result = entry.result) {
+                is McpToolGatewayResult.Completed -> {
+                    put("result", result.result)
+                    result.jobId?.let { put("jobId", it) }
+                }
+
+                is McpToolGatewayResult.Rejected -> put("rejectedCode", result.code)
+
+                null -> Unit
+            }
+        }
+        .toString()
+
+    private fun decode(encoded: String): Entry? = runCatching {
+        val value = JSONObject(encoded)
+        val state = State.valueOf(value.getString("state"))
+        val result = when {
+            state == State.IN_FLIGHT -> null
+
+            value.has("result") -> McpToolGatewayResult.Completed(
+                JSONObject(value.getJSONObject("result").toString()),
+                value.optString("jobId", "").takeIf(String::isNotBlank),
+            )
+
+            value.has("rejectedCode") -> McpToolGatewayResult.Rejected(value.getString("rejectedCode"))
+
+            else -> return null
+        }
+        Entry(value.getString("parameterDigest"), value.getLong("recordedAt"), state, result)
+    }.getOrNull()
+
+    private fun storageKey(key: Key): String {
+        val material = listOf(key.clientId, key.tokenGeneration, key.toolName, key.idempotencyKey).joinToString("\u0000")
+        return MessageDigest.getInstance("SHA-256").digest(material.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
 
     private fun McpToolGatewayResult.copyForReplay(): McpToolGatewayResult = when (this) {
@@ -111,7 +211,9 @@ class McpMutationReplayStore {
     }
 
     private companion object {
-        const val MAX_REPLAYED_MUTATIONS = 256
+        const val SAFE_RETRY_WINDOW_MILLIS = 15 * 60 * 1000L
+        const val TOMBSTONE_RETENTION_MILLIS = 24 * 60 * 60 * 1000L
+        const val MAX_REPLAY_ENTRIES = 256
     }
 }
 
@@ -180,7 +282,7 @@ class McpSseEventStore(
                 session.events.filter { lastEventId == null || it.id > lastEventId }
             }
         }
-        return Subscription(session, queue, initial)
+        return Subscription(session, queue, initial, clock)
     }
 
     /** Unblocks all streams of a deleted or revoked session immediately. */
@@ -224,7 +326,11 @@ class McpSseEventStore(
 
     private fun expiredSessionsLocked(): List<SessionEvents> {
         val cutoff = clock() - replayIdleMillis
-        val expired = bySession.entries.filter { (_, session) -> session.lastAccessAt < cutoff }
+        // An open stream may be quiet for longer than replay retention.  It is
+        // still live and must receive the next task/progress event.
+        val expired = bySession.entries.filter { (_, session) ->
+            synchronized(session) { session.lastAccessAt < cutoff && session.subscribers.isEmpty() }
+        }
         expired.forEach { (id, _) -> bySession.remove(id) }
         return expired.map { it.value }
     }
@@ -244,8 +350,11 @@ class McpSseEventStore(
         private val session: SessionEvents,
         private val queue: ArrayBlockingQueue<Event>,
         val initial: List<Event>,
+        private val clock: () -> Long,
     ) : AutoCloseable {
-        fun poll(timeoutMillis: Long): Event? = queue.poll(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+        fun poll(timeoutMillis: Long): Event? = queue.poll(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS).also {
+            synchronized(session) { session.lastAccessAt = clock() }
+        }
         override fun close() = synchronized(session) { session.subscribers -= queue }
     }
 

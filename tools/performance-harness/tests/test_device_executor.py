@@ -48,10 +48,17 @@ class DeviceScenarioExecutorTest(unittest.TestCase):
             executor = DeviceScenarioExecutor(transport, self._scenario_set_with_real_fixture_digests(), Path(directory))
 
             self.assertEqual(1, len(executor.execute("W1")))
-            self.assertEqual(["W4", "W4", "W4"], [item.scenario_id for item in executor.execute("W4")])
-            self.assertEqual(["W1", "W2"], [item.scenario_id for item in executor.execute("W5")])
+            self.assertEqual(["W1", "W2", "W1"], [item.scenario_id for item in executor.execute("W4")])
+            executor.begin_sustained_measurement()
+            sustained = executor.execute("W5")
+            self.assertEqual(["W1", "W2"], [item.scenario_id for item in sustained])
+            self.assertEqual(["W5", "W5"], [item.measurement_scenario_id for item in sustained])
+            self.assertEqual(["W1", "W2"], [item.variant_id for item in sustained])
+            self.assertTrue(all(item.sustained_throughput_per_second and item.sustained_throughput_per_second > 0 for item in sustained))
+            self.assertTrue(all(item.sustained_window_elapsed_ms and item.sustained_window_elapsed_ms > 0 for item in sustained))
+            self.assertEqual([1, 1], [item.sustained_window_sample_count for item in sustained])
 
-        payloads = [json.loads(call[2].decode()) for call in transport.calls]
+        payloads = [json.loads(call[2].decode()) for call in transport.calls if call[0] == "POST"]
         self.assertEqual(
             [
                 "novaAsianXL_illustriousV70",
@@ -67,6 +74,71 @@ class DeviceScenarioExecutorTest(unittest.TestCase):
             ["euler_a", "euler_a", "euler", "euler_a", "euler_a", "euler"],
             [payload["scheduler"] for payload in payloads],
         )
+
+    def test_w4_observer_runs_after_each_baseline_before_the_next_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transport = RecordingTransport()
+            executor = DeviceScenarioExecutor(transport, self._scenario_set_with_real_fixture_digests(), Path(directory))
+            observed = []
+
+            executor.execute(
+                "W4",
+                lambda execution: observed.append((execution.operation, len(transport.calls))),
+            )
+
+        self.assertEqual(["W4.1.W1", "W4.2.W2", "W4.3.W1"], [item[0] for item in observed])
+        # POST plus completed PNG download are both finished before the runtime
+        # observation; the next model request has not yet started.
+        self.assertEqual([2, 4, 6], [item[1] for item in observed])
+
+    def test_request_baseline_is_captured_before_each_physical_request_and_survives_w5(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transport = RecordingTransport()
+            executor = DeviceScenarioExecutor(transport, self._scenario_set_with_real_fixture_digests(), Path(directory))
+            before = []
+
+            executions = executor.execute(
+                "W5",
+                before_execution=lambda scenario_id, operation: before.append(
+                    (scenario_id, operation, len(transport.calls)),
+                ) or {"request": operation},
+            )
+
+        self.assertEqual([("W1", "W5.W1", 0), ("W2", "W5.W2", 2)], before)
+        self.assertEqual([{"request": "W5.W1"}, {"request": "W5.W2"}], [item.request_baseline for item in executions])
+
+    def test_w5_throughput_window_is_per_variant_and_excludes_warmups(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transport = RecordingTransport()
+            executor = DeviceScenarioExecutor(transport, self._scenario_set_with_real_fixture_digests(), Path(directory))
+
+            # The first invocation is warmup-only and must not seed either
+            # variant's sustained window.
+            warmups = [
+                executor.execute_sustained_variant(variant, measure_sustained=False)
+                for variant in ("W1", "W2")
+            ]
+            self.assertEqual([None, None], [item.sustained_window_sample_count for item in warmups])
+            executor.begin_sustained_measurement()
+            # The executor and protocol share the same time module.  Advance
+            # every timer so this verifies the W5 window independently of
+            # per-request HTTP timing implementation details.
+            with patch(
+                "localdream_perf_executor.time.monotonic_ns",
+                side_effect=[value * 1_000_000 for value in range(20)],
+            ):
+                first = [
+                    executor.execute_sustained_variant(variant)
+                    for variant in ("W1", "W2")
+                ]
+                second = [
+                    executor.execute_sustained_variant(variant)
+                    for variant in ("W1", "W2")
+                ]
+
+        self.assertEqual([1, 1], [item.sustained_window_sample_count for item in first])
+        self.assertEqual([2, 2], [item.sustained_window_sample_count for item in second])
+        self.assertTrue(all(item.sustained_window_elapsed_ms > 0 for item in second))
 
     def test_w3_and_w6_require_digest_matched_fixture_and_verify_download(self):
         with tempfile.TemporaryDirectory() as directory:

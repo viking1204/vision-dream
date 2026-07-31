@@ -1,6 +1,8 @@
 package io.github.xororz.localdream.service
 
 import android.util.Log
+import io.github.xororz.localdream.data.HtpDynamicPartitioning
+import io.github.xororz.localdream.data.HtpPowerMode
 import java.io.File
 
 internal data class NativeBackendLaunchConfig(
@@ -13,6 +15,9 @@ internal data class NativeBackendLaunchConfig(
     val sdxlLowRam: Boolean,
     val animaLowRam: Boolean,
     val animaSequentialDit: Boolean,
+    val cpuClipThreads: Int? = null,
+    val htpPowerMode: HtpPowerMode? = null,
+    val htpDynamicPartitioning: HtpDynamicPartitioning? = null,
 )
 
 /**
@@ -65,6 +70,7 @@ internal object NativeBackendCommandFactory {
         if (!config.imageInputEnabled) {
             command += "--no_img2img"
         }
+        appendV2PerformanceOptions(command, config)
         appendCommonOptions(command, modelsDir, config, unified = true)
         return command
     }
@@ -181,6 +187,35 @@ internal object NativeBackendCommandFactory {
         }
         if (unified && config.listenOnAll) {
             command += "--listen_all"
+        }
+    }
+
+    private fun appendV2PerformanceOptions(
+        command: MutableList<String>,
+        config: NativeBackendLaunchConfig,
+    ) {
+        config.cpuClipThreads?.let { threads ->
+            require(threads in 1..8) { "cpuClipThreads must be between 1 and 8" }
+            // A preset is portable across installed model families. Anima
+            // performs CLIP on QNN, so the CPU-only override is deliberately
+            // projected out instead of making the whole preset unexecutable.
+            if (config.backendType != "anima") {
+                command += listOf("--cpu_clip_threads", threads.toString())
+            }
+        }
+        val qnnBackend = config.backendType != "sd15cpu"
+        config.htpPowerMode?.let { mode ->
+            // CPU models share the same product preset but have no HTP
+            // device. Ignore the inapplicable field rather than rejecting a
+            // valid portable preset at model-launch time.
+            if (qnnBackend) {
+                command += listOf("--htp_power_mode", mode.name.lowercase())
+            }
+        }
+        config.htpDynamicPartitioning?.let { partitioning ->
+            if (qnnBackend) {
+                command += listOf("--htp_dynamic_partitioning", partitioning.name.lowercase())
+            }
         }
     }
 }

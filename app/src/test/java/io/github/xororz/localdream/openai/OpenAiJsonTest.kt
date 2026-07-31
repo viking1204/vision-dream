@@ -67,6 +67,26 @@ class OpenAiJsonTest {
     }
 
     @Test
+    fun imageEnvelopeExposesOnlyPositiveNativeVendorDiagnostics() {
+        val json = OpenAiJson.images(
+            created = 123L,
+            images = listOf(OpenAiImage(b64Json = "YWJj")),
+            diagnostics = NativeGenerationDiagnostics(unetMs = 456L),
+        )
+
+        assertEquals(
+            """{"created":123,"data":[{"b64_json":"YWJj"}],"vendor_diagnostics":{"unet_ms":456}}""",
+            json,
+        )
+        val absent = OpenAiJson.images(
+            created = 123L,
+            images = listOf(OpenAiImage(b64Json = "YWJj")),
+            diagnostics = NativeGenerationDiagnostics(unetMs = 0L),
+        )
+        assertTrue(!absent.contains("vendor_diagnostics"))
+    }
+
+    @Test
     fun surrogatePairsAreEscapedAsValidJsonUnicodeEscapes() {
         val json = OpenAiJson.error(OpenAiError(message = "😀"))
 

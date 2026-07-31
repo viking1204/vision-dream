@@ -87,6 +87,7 @@ class NativeBackendClient {
                             bytes = normalized.first,
                             mimeType = normalized.second,
                             seed = event.optLong("seed", -1L).takeIf { it >= 0L },
+                            diagnostics = nativeDiagnostics(event),
                         )
                     }
 
@@ -97,6 +98,14 @@ class NativeBackendClient {
             }
         }
         throw IOException("Native generation ended before a complete event")
+    }
+
+    private fun nativeDiagnostics(event: JSONObject): NativeGenerationDiagnostics? {
+        val metrics = event.optJSONObject("stage_metrics") ?: return null
+        val unetMs = metrics.opt("unet_ms")
+            .takeIf { it is Number && it.toLong() > 0L }
+            ?.let { (it as Number).toLong() }
+        return NativeGenerationDiagnostics(unetMs = unetMs)
     }
 
     private fun normalizeGeneratedImage(

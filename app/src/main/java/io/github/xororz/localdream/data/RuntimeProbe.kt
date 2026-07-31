@@ -27,18 +27,35 @@ data class RuntimeProbe(
 )
 
 /**
- * The authenticated HTTP and MCP diagnostic shape.  It deliberately excludes
- * the loaded-library map: even hashes become an unnecessary asset inventory
- * outside the device-local report bundle.
+ * Authenticated diagnostic evidence used by the local acceptance harness.
+ *
+ * It keeps the observed runtime contract (including library digests) but never
+ * exposes device paths, native command lines, model files or credentials.
  */
 data class RuntimeProbeProjection(
     val status: RuntimeProbeStatus,
     val rejectionReasons: List<String>,
+    val deviceModel: String? = null,
+    val soc: String? = null,
+    val abi: String? = null,
+    val qairtVersion: String? = null,
+    val htpTarget: String? = null,
+    val contextFingerprint: String? = null,
+    val loadedLibraryFingerprints: Map<String, String> = emptyMap(),
+    val nativeReady: Boolean? = null,
 )
 
 fun RuntimeProbe.toProtectedProjection(): RuntimeProbeProjection = RuntimeProbeProjection(
     status = status,
     rejectionReasons = rejectionReasons.sorted(),
+    deviceModel = deviceModel,
+    soc = soc,
+    abi = abi,
+    qairtVersion = qairtVersion,
+    htpTarget = htpTarget,
+    contextFingerprint = contextFingerprint,
+    loadedLibraryFingerprints = loadedLibraryFingerprints.toSortedMap(),
+    nativeReady = nativeReady,
 )
 
 data class RuntimeProbeInput(

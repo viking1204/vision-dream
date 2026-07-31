@@ -502,8 +502,8 @@ class ModelRepository private constructor(private val context: Context) {
 
         return Model(
             id = modelId,
-            name = modelId,
-            description = context.getString(R.string.custom_model),
+            name = metadata?.displayName ?: modelId,
+            description = metadata?.description ?: context.getString(R.string.custom_model),
             baseUrl = "",
             generationSize = if (isSdxl || isAnima) 1024 else 512,
             approximateSize = "Custom",

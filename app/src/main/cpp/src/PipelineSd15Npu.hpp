@@ -37,7 +37,7 @@ class PipelineSd15Npu : public PipelineQnn {
       QNN_ERROR("Failed load CLIP MNN: %s", clip_path_.c_str());
       return false;
     }
-    clip_session_ = createMnnSession(clip_interpreter_, MnnSessionOptions{});
+    clip_session_ = createMnnSession(clip_interpreter_, cpuClipSessionOptions());
     if (!clip_session_) {
       QNN_ERROR("Failed create persistent MNN CLIP session!");
       return false;
@@ -141,22 +141,24 @@ class PipelineSd15Npu : public PipelineQnn {
 
   void runUnetStep(const GenerationRequest &, const float *latents_batch2,
                    float timestep, bool skip_uncond, Conditioning &cond,
-                   float *out_batch2) override {
+                   float *out_batch2, int64_t &unet_execution_ms) override {
     if (!unet_) throw std::runtime_error("QNN UNET missing");
 
     const int single_latent_size = 1 * 4 * sample_width * sample_height;
     const int ts = static_cast<int>(timestep);
     float *latents_in = const_cast<float *>(latents_batch2);
 
-    if (!skip_uncond && StatusCode::SUCCESS !=
-                            unet_->executeUnetGraphs(
-                                latents_in, ts, cond.negHidden(), out_batch2))
-      throw std::runtime_error("QNN UNET exec failed (uncond)");
+    if (!skip_uncond) {
+      const auto status = unet_->executeUnetGraphs(
+          latents_in, ts, cond.negHidden(), out_batch2, unet_execution_ms);
+      if (StatusCode::SUCCESS != status)
+        throw std::runtime_error("QNN UNET exec failed (uncond)");
+    }
 
-    if (StatusCode::SUCCESS !=
-        unet_->executeUnetGraphs(latents_in + single_latent_size, ts,
-                                 cond.posHidden(),
-                                 out_batch2 + single_latent_size))
+    const auto status = unet_->executeUnetGraphs(
+        latents_in + single_latent_size, ts, cond.posHidden(),
+        out_batch2 + single_latent_size, unet_execution_ms);
+    if (StatusCode::SUCCESS != status)
       throw std::runtime_error("QNN UNET exec failed (cond)");
   }
 

@@ -1,197 +1,205 @@
 # 一加 13 性能验收实施计划
 
-## 1. 交付目标与执行边界
+## 1. 结论与实施边界
 
-本计划把规格中的验收能力拆成可实现、可测试的改动：不可变 W1–W7 场景和主机侧报告、PJZ110/SM8750/QAIRT 2.48.40/HTP V79 的运行时取证、性能预设 v1 的持久化和实际启动映射，以及历史数据兼容。完成代码与测试发布不等于一加 13 性能通过；只有 07 阶段拿到 `RuntimeProbe.status=VERIFIED` 的原始 RunManifest 与报告才能形成该结论。
+本计划以已批准规格为唯一实施合同：先让 PJZ110（SM8750 / HTP V79）的 NPU/HTP 性能探索、可调预设和候选筛选可审计，再把 100 次可靠性、30/60 分钟热稳定性作为最终胜出候选的深度验证门槛。计划不把 Redmi K30 的任何结果计入目标机结论。
 
-依据：规格第 2–6 节；人工反馈 `docs/loop-records/oneplus13-performance-acceptance/feedback.md:5-9`。
+- [实锤，高] 当前数据库版本为 v6，已存在预设和 binding 表，尚无资格表；新增资格表必须是 v6→v7 migration，不能沿用过期的 v5→v6 说法。证据：`app/src/main/java/io/github/xororz/localdream/data/db/AppDatabase.kt:14-28,271-300`。
+- [实锤，高] 当前 harness 实际接受 `v4` 场景，`validate-scenarios` 已校验 W1–W7 共 7 项；新验收输入必须基于 v4，v1–v3 仅保留历史重放。证据：`tools/performance-harness/scenarios/v4/`；`python3 tools/performance-harness/localdream_perf_harness.py validate-scenarios --scenario-dir tools/performance-harness/scenarios/v4`。
+- [实锤，高] 现有 `run` 只消费外部 `--baseline-file`、`--quality-evidence-file`，缺少规格要求的采集命令；P04 必须新增受审计的 B0 与质量采集入口。证据：`python3 tools/performance-harness/localdream_perf_harness.py run --help`；`docs/specs/oneplus13-performance-acceptance-spec.md:54-59`。
+- [实锤，高] 当前唯一已授权目标设备是 USB ADB `3B15C4018L500000`，已核验为 OnePlus / PJZ110 / SM8750 / Android 16；本轮安装、操作、NPU/HTP profiling 和性能验收均只能显式指定该串号。旧 Wi-Fi 串号与 Redmi K30 约束已被此事实取代；每次真机执行前仍须复核产品、板型、SoC 和 Android 版本。证据：`docs/loop-records/oneplus13-performance-acceptance/feedback.md:116-118`。
 
-不做 V79 Context Binary 重编译，也不做商店签名或最终用户生产发布。缺少一加 13 时，Redmi K30 只允许运行不触发推理的 UI、数据库、协议和 harness 拒绝路径验证。
+本阶段仅定义文件改动、测试和发布边界，不改业务代码，不执行目标设备烧机。缺 ONNX/DLC、量化配置、校准集及既有编译参数时不重编译 V79 Context Binary，也不作极限优化完成声明；商店签名和最终用户生产发布不在本轮。
 
-## 2. 规格到任务映射
+## 2. 规格到计划任务映射
 
-| 规格验收 | 实施任务 | 通过证据 |
+| 规格要求 | 实施任务 | 可验证证据 |
 | --- | --- | --- |
-| S-01：W1–W7 可由场景、snapshot、RunManifest 和样本重放，W2/W2b 不混组 | P01、P04 | scenario 校验和 harness 单元测试；RunManifest/统计报告样例 |
-| S-02：RuntimeProbe、分组、质量、可靠性或热稳定不满足时不得发布一加 13 性能结论 | P03、P04 | Probe 拒绝测试；缺字段、混组、质量失败和 `UNAVAILABLE` 报告测试 |
-| S-03：预设 CRUD、v1 配置实际影响启动、Job snapshot 不变、删除原子回退且可见 | P02、P05、P06 | JVM 领域/命令行测试、Room instrumentation、MCP 与 Compose 集成测试 |
-| S-04：历史数据库和 JSON 可读且不隐式改写，无归属历史不进入新统计 | P02、P04 | v5→v6 迁移 instrumentation 与 legacy JSON/报告过滤测试 |
+| 不可变 W1–W7/W2b、RunManifest、完整 GroupKey、冷热样本和指标可重放 | P01、P04 | scenario 摘要/版本测试、RunManifest/样本/分组报告测试 |
+| `EXPLORATORY`、`TARGET_VALIDATED`、`FINAL_VALIDATED` 的门槛分层；非 `VERIFIED` fail-closed | P03、P04 | RuntimeProbe/报告门禁/分层运行测试 |
+| B0 与质量由可审核采集入口生成，目标验证和最终验证严格匹配 | P04 | baseline/quality 采集、篡改和 GroupKey 一致性测试 |
+| 预设 v1/v2 严格解析、不可变 Job snapshot、资格记录和默认绑定门禁 | P02、P05、P06 | JVM 领域测试、Room migration、入口集成测试 |
+| 旧 JSON/数据库/Job 可读且不伪回填资格；无归属历史不入统计 | P02、P04 | migration、legacy 反序列化和报告过滤测试 |
+| W6/W7 的 PNG、资产下载、MCP progress/cancel/replay/reconnect 与 `/v1` 对照 | P03、P05 | Python 协议测试、MCP/HTTP Android integration 测试 |
+| GitHub Android 单仓的构建、发布和回滚边界 | P07 | debug APK、精确提交、远端 `master` 对齐和非推理设备检查 |
 
 ## 3. 实施任务
 
-### P01：版本化场景、报告模型与主机 harness
+### P01：冻结验收场景、分组模型与主机侧基础门禁
 
-**修改/新增文件**
+**文件清单**
 
-| 操作 | 文件 | 内容 |
+| 操作 | 文件 | 实施内容 |
 | --- | --- | --- |
-| 新增 | `tools/performance-harness/scenarios/v1/W1.json`、`W2.json`、`W3.json`、`W4.json`、`W5.json`、`W6.json`、`W7.json` | 固化规格中的 workflow、fixture、模型摘要、请求、measurement、timeout 与顶层 SHA-256；W2b 仅在发布方提供独立输入时新增文件。 |
-| 新增 | `tools/performance-harness/localdream_perf_harness.py` | 以标准库执行 scenario 校验、RunManifest 写入、样本收集、统计、质量/可靠性/热稳定门禁和 JSON/Markdown 报告生成；拒绝调用方覆盖 fixture。 |
-| 新增 | `tools/performance-harness/localdream_perf_models.py` | 定义 `RunManifest`、`RuntimeProbe`、四类冷热状态、`Outcome`、分组键、质量结果与报告数据结构。 |
-| 新增 | `tools/performance-harness/tests/test_scenarios.py`、`test_report_guards.py`、`test_statistics.py` | 覆盖摘要篡改、W2/W2b 隔离、预热排除、样本下限、固定种子 bootstrap CI、全部 Outcome、B0 timeout 冻结及质量/热稳定拒绝。 |
+| 修改 | `tools/performance-harness/scenarios/v4/W1.json` 至 `W7.json` | 保持 v4 的不可变字段、真实模型摘要和 fixture 摘要；任何请求、fixture、模型、measurement 或 timeout 变化均发布新 `scenarioVersion` 与新文件。W2 发布方变体单独使用 W2b，绝不改写 W2。 |
+| 修改 | `tools/performance-harness/localdream_perf_models.py` | 固定 `RunManifest`、`Sample`、`Outcome`、`ColdState`、`GroupKey` 与三层结论模型；`GroupKey=scenarioSha256+presetSnapshotSha256+runtimeFingerprint+coldState+harnessVersion`，任一字段不同独立归档。 |
+| 修改 | `tools/performance-harness/localdream_perf_harness.py` | 在任何设备请求前落盘 RunManifest；拒绝摘要、workflow、fixture、模型摘要、请求参数或 GroupKey 不匹配的输入；只将 v4 作为验收场景集。 |
+| 修改 | `tools/performance-harness/tests/test_harness.py`、`test_device_executor.py` | 覆盖摘要篡改、W2/W2b 隔离、未知 workflow、固定 fixture、RunManifest 先于请求、冷热样本下限和 warmup 排除。 |
 
-**实现步骤**
+**实施顺序**
 
-1. 将每个 scenario 的原始内容 canonical JSON 序列化后计算 SHA-256；读取时重新计算并拒绝摘要不一致、未知 workflow、缺模型、缺 fixture 或 request 不一致。
-2. 把统计分组固定为 scenario、preset snapshot、设备/运行时/Context 指纹、冷热状态和 harness 版本；任何键不同均生成新组。
-3. 将冷态有效样本下限固定为 5，热态固定先预热 5 次且只对至少 30 个有效样本计算 p50、p95、MAD 和 95% bootstrap CI。
-4. 由 harness 统一冻结 B0 的绝对超时与质量参考；候选报告逐项输出准入门槛、失败原因和原始样本路径，禁止只输出聚合“通过”。
+1. 保留 v1–v3 供历史读取和重放，不将其样本与 v4 聚合。
+2. `DEVICE_COLD`、`PROCESS_COLD`、`OS_CACHE_WARM`、`CONTEXT_WARM` 互斥；禁止 root 清 page cache。冷态每组至少 5 条有效样本；热态恰有 5 条 warmup 后至少 30 条有效样本，warmup 永不进入统计或可靠性计数。
+3. 对每组计算 p50、p95、MAD 与以 runId 派生种子的 95% bootstrap CI；缺 UNet、端到端、资源或热主指标时输出 `MISSING_METRIC:<name>`，不得用 0 填充。
 
 **验证命令**
 
 ```bash
+python3 tools/performance-harness/localdream_perf_harness.py validate-scenarios --scenario-dir tools/performance-harness/scenarios/v4
 python3 -m unittest discover -s tools/performance-harness/tests -p 'test_*.py'
-python3 tools/performance-harness/localdream_perf_harness.py validate-scenarios --scenario-dir tools/performance-harness/scenarios/v1
 ```
 
-### P02：预设 v1、绑定、删除回退与 v5→v6 数据库迁移
+### P02：预设资格数据模型、v6→v7 迁移与自动绑定门禁
 
-**修改/新增文件**
+**文件清单**
 
-| 操作 | 文件 | 内容 |
+| 操作 | 文件 | 实施内容 |
 | --- | --- | --- |
-| 新增 | `app/src/main/java/io/github/xororz/localdream/data/PerformancePresetConfig.kt` | 严格解析 `schemaVersion=1`、三个必填布尔 engine 字段和四种解码状态；提供不可变解析结果。 |
-| 修改 | `app/src/main/java/io/github/xororz/localdream/data/PerformancePresetRepository.kt` | 创建、更新、导入和绑定仅接受 `SUPPORTED`；保留 `{}` 的 `LEGACY_COMPATIBILITY` 读取；将删除返回值改为含回退 binding key 的 `PresetDeleteResult`。 |
-| 新增 | `app/src/main/java/io/github/xororz/localdream/data/db/PerformancePresetBindingEntity.kt`、`PerformancePresetBindingDao.kt` | 定义唯一 `bindingKey`、`presetId`、`updatedAt` 与查询/原子回退操作。 |
-| 修改 | `app/src/main/java/io/github/xororz/localdream/data/db/AppDatabase.kt`、`PerformancePresetDao.kt` | 数据库版本升至 v6，注册 binding 实体和 DAO，新增 v5→v6 migration、索引、fresh-db fallback 初始化及删除事务入口。 |
-| 修改 | `app/src/main/java/io/github/xororz/localdream/data/InferenceJobRepository.kt` | 在既有 `withTransaction` 内按“显式→模型绑定→默认绑定→兼容 fallback”解析、校验并写入原始 JSON snapshot 与已解析的执行 snapshot。 |
-| 修改 | `app/src/androidTest/java/io/github/xororz/localdream/data/db/AppDatabaseMigrationTest.kt` | 增加 v5→v6 迁移、历史 `{}` snapshot、NULL 历史关联、fallback 单例和删除回退原子性测试。 |
-| 新增 | `app/src/test/java/io/github/xororz/localdream/data/PerformancePresetConfigTest.kt`、`PerformancePresetBindingTest.kt` | 覆盖严格 schema、legacy/unknown/invalid 状态、revision 冲突、优先级、同名、导入编号、snapshot 不变与事务失败回滚。 |
-
-**实现步骤**
-
-1. 用 JSON key 集合精确匹配 v1 schema，拒绝未知字段、缺字段、非布尔值、未知版本和非法 JSON；禁止在创建、更新、导入、绑定或执行时把非法值静默转成 fallback。
-2. `DEFAULT` 与 `MODEL:<modelId>` 只保存未来请求的选择；已受理 Job 只读自己的 snapshot，编辑、解绑和删除都不能改写它。
-3. 在单个 `RoomDatabase.withTransaction` 中检查所有 binding、改为 compatibility fallback、删除用户预设并返回被回退键；任一 SQL 失败必须回滚，不得留下半条 binding。
-4. migration 只增加 binding 表和索引，不改写 v5 的 preset、snapshot、revision 或 `generation_history` NULL 字段。
+| 新增 | `app/src/main/java/io/github/xororz/localdream/data/db/PerformancePresetQualificationEntity.kt`、`PerformancePresetQualificationDao.kt` | 定义 `performance_preset_qualifications` 及活跃唯一键 `(presetSnapshotSha256, modelAssetSha256, runtimeFingerprint, scenarioSetSha256, qualificationLevel)`；记录 preset/revision、model、build、evidence manifest、创建和撤销时间。 |
+| 修改 | `app/src/main/java/io/github/xororz/localdream/data/db/AppDatabase.kt` | 数据库升至 v7，注册实体/DAO、外键和索引，加入非破坏性的 `MIGRATION_6_7`；绝不回填资格或改写历史 JSON、revision、Job、generation history。 |
+| 修改 | `app/src/main/java/io/github/xororz/localdream/data/PerformancePresetConfig.kt`、`PerformancePresetRepository.kt`、`InferenceJobRepository.kt` | 严格解析 `SUPPORTED`、`LEGACY_COMPATIBILITY`、`UNSUPPORTED_VERSION`、`INVALID`；显式用户预设可探索，`DEFAULT`/`MODEL:<modelId>` 自动绑定必须精确匹配活跃 `TARGET_VALIDATED` 或 `FINAL_VALIDATED`，否则返回 `PRESET_NOT_TARGET_VALIDATED`。本版本不允许 MCP/HTTP/普通 UI 导入候选 JSON 写资格；候选只作 harness 审计，资格写入留给未来本机受控采集链路。 |
+| 修改 | `app/src/main/java/io/github/xororz/localdream/data/db/PerformancePresetBindingDao.kt` | 删除事务内撤销活跃资格、把引用 binding 指向 fallback、删除 preset，并返回全部 `reboundBindingKeys`。 |
+| 修改 | `app/src/androidTest/java/io/github/xororz/localdream/data/db/AppDatabaseMigrationTest.kt` | 覆盖 v6→v7 保留旧预设/Job/snapshot/历史行、没有伪资格、旧自动 binding fail-closed、删除全回滚、导入副本不继承资格。 |
+| 新增 | `app/src/test/java/io/github/xororz/localdream/data/PerformancePresetQualificationTest.kt` | 覆盖资格唯一键、revision/model/runtime/scenario/build 变化失效、资格撤销、自动绑定拒绝和显式探索放行。 |
+| 修改 | `app/src/test/java/io/github/xororz/localdream/data/PerformancePresetConfigTest.kt`、`PerformancePresetRepositoryTest.kt`、`InferenceJobRepositoryTest.kt` | 覆盖 v1/v2 严格键集、`{}` 历史兼容、非法配置拒绝、不可变 snapshot、同名规则、导入自动编号和事务原子性。 |
 
 **验证命令**
 
 ```bash
-./gradlew :app:testDebugUnitTest --tests 'io.github.xororz.localdream.data.PerformancePresetConfigTest' --tests 'io.github.xororz.localdream.data.PerformancePresetBindingTest' --tests 'io.github.xororz.localdream.data.PerformancePresetRepositoryTest' --tests 'io.github.xororz.localdream.data.InferenceJobRepositoryTest'
-./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=io.github.xororz.localdream.data.db.AppDatabaseMigrationTest
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:testDebugUnitTest --tests 'io.github.xororz.localdream.data.PerformancePresetConfigTest' --tests 'io.github.xororz.localdream.data.PerformancePresetRepositoryTest' --tests 'io.github.xororz.localdream.data.InferenceJobRepositoryTest' --tests 'io.github.xororz.localdream.data.PerformancePresetQualificationTest'
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=io.github.xororz.localdream.data.db.AppDatabaseMigrationTest
 ```
 
-### P03：运行时取证、分段指标与拒绝发布结论
+### P03：目标运行时 attestation、原生指标和受保护投影
 
-**修改/新增文件**
+**文件清单**
 
-| 操作 | 文件 | 内容 |
+| 操作 | 文件 | 实施内容 |
 | --- | --- | --- |
-| 新增 | `app/src/main/java/io/github/xororz/localdream/data/RuntimeProbe.kt` | 定义 `VERIFIED`、`REJECTED`、`UNAVAILABLE` 与设备、ABI、QAIRT、HTP、库/Context 摘要和启动结果。 |
-| 修改 | `app/src/main/java/io/github/xororz/localdream/data/RuntimeCompatibilityEvaluator.kt`、`app/src/main/assets/qairt-runtime-manifest.json` | 将 manifest 声明、实际设备/ABI、加载库和 Context fingerprint 统一成可序列化 probe 输入，保留既有 rejection code 语义。 |
-| 修改 | `app/src/main/java/io/github/xororz/localdream/service/BackendService.kt`、`app/src/main/java/io/github/xororz/localdream/service/NativeBackendCommandFactory.kt` | 启动成功后记录实际 runtime probe，并把完整已解析 preset 参数输入 `NativeBackendLaunchConfig`；启动拒绝时保留具体 rejection。 |
-| 修改 | `app/src/main/cpp/src/main.cpp`、`app/src/main/cpp/src/QnnRuntime.hpp` | 在不改变生成数学语义的前提下，输出 Context load、CLIP、首步、完整 UNet、VAE、端到端、内存/HTP 资源可用性字段；不可采到的字段显式标 `UNAVAILABLE`。 |
-| 修改 | `app/src/main/java/io/github/xororz/localdream/openai/OpenAiApiController.kt`、`app/src/main/java/io/github/xororz/localdream/mcp/McpGenerationGateway.kt`、`app/src/main/java/io/github/xororz/localdream/mcp/McpRuntimeStore.kt` | 将受保护的 runtime status 投影和请求阶段事件提供给本地 harness/MCP；不得暴露绝对文件路径或原始可执行命令。 |
-| 新增 | `app/src/test/java/io/github/xororz/localdream/data/RuntimeProbeTest.kt`、`app/src/test/java/io/github/xororz/localdream/service/NativeBackendLaunchConfigTest.kt` | 覆盖 PJZ110/SM8750/V79/2.48.40 成功条件，所有 rejection code、无设备状态和 preset 到命令参数的逐字段映射。 |
-| 修改 | `app/src/test/java/io/github/xororz/localdream/service/NativeBackendCommandFactoryTest.kt`、`app/src/test/java/io/github/xororz/localdream/mcp/McpGenerationGatewayTest.kt`、`app/src/androidTest/java/io/github/xororz/localdream/openai/OpenAiHttpServerInstrumentedTest.kt` | 覆盖 native command、MCP runtime 投影与 `/health`/本地诊断接口的无敏感路径响应。 |
-
-**实现步骤**
-
-1. `RuntimeProbe` 只有在型号 PJZ110、SoC SM8750、QAIRT 2.48.40、HTP V79、ABI、已加载库摘要、Context fingerprint 与启动成功均可采集并匹配时才为 `VERIFIED`。
-2. mismatch 使用现有 `QAIRT_VERSION_MISMATCH`、`ABI_MISMATCH`、`HTP_TARGET_MISMATCH`、`CONTEXT_FINGERPRINT_MISMATCH` 拒绝；无设备或无法采集只产生 `UNAVAILABLE` 诊断，不能进入 benchmark 聚合。
-3. native 事件新增指标字段必须向后兼容当前 SSE 的 `generation_time_ms`、`first_step_time_ms`；客户端解析未知/缺失指标时只标不可用，不能伪造为 0。
+| 修改 | `app/src/main/java/io/github/xororz/localdream/data/RuntimeProbe.kt`、`RuntimeCompatibilityEvaluator.kt`、`ModelMetadata.kt` | 仅在 PJZ110、SM8750、QAIRT 2.48.40、HTP V79、ABI、已映射库摘要、Context fingerprint 与成功 native readiness 全部匹配时产生 `VERIFIED`；`REJECTED` 与 `UNAVAILABLE` 均不得进入目标机统计。 |
+| 修改 | `app/src/main/java/io/github/xororz/localdream/data/NativeRuntimeAttestationStore.kt`、`app/src/main/java/io/github/xororz/localdream/service/NativeRuntimeAttestationRecorder.kt`、`BackendService.kt` | 将成功 native 图片生成的可验证证据存入私有完整性保护存储；存储失败不得使已成功生成失败，也不得升级为 `VERIFIED`。 |
+| 修改 | `app/src/main/cpp/src/main.cpp`、`app/src/main/cpp/src/QnnRuntime.hpp` | 采集 Context load、CLIP、首 diffusion step、完整 UNet、VAE、端到端、PSS/RSS 与 HTP/thermal 可用性；未知值显式为 `UNAVAILABLE`，保留原有 SSE 字段兼容。 |
+| 修改 | `app/src/main/java/io/github/xororz/localdream/openai/OpenAiApiController.kt`、`app/src/main/java/io/github/xororz/localdream/mcp/McpGenerationGateway.kt`、`McpRuntimeStore.kt` | 为本地 harness 投影不含绝对路径、原始命令或密钥的 runtime/阶段证据；任何失败 probe 的响应不能造成性能通过。 |
+| 修改 | `app/src/test/java/io/github/xororz/localdream/data/RuntimeProbeTest.kt`、`RuntimeCompatibilityEvaluatorTest.kt`、`app/src/test/java/io/github/xororz/localdream/service/NativeRuntimeAttestationRecorderTest.kt`、`NativeBackendCommandFactoryTest.kt` | 覆盖 VERIFIED 全条件、每类 rejection、证据缺失、attestation 写入失败非致命和配置到命令的逐字段映射。 |
+| 修改 | `app/src/androidTest/java/io/github/xororz/localdream/data/NativeRuntimeAttestationStoreInstrumentedTest.kt`、`app/src/androidTest/java/io/github/xororz/localdream/openai/NativeBackendClientInstrumentedTest.kt` | 覆盖私有证据完整性和缺失指标/PNG 响应的 Android 协议。 |
 
 **验证命令**
 
 ```bash
-./gradlew :app:testDebugUnitTest --tests 'io.github.xororz.localdream.data.RuntimeProbeTest' --tests 'io.github.xororz.localdream.service.NativeBackendLaunchConfigTest' --tests 'io.github.xororz.localdream.service.NativeBackendCommandFactoryTest' --tests 'io.github.xororz.localdream.mcp.McpGenerationGatewayTest'
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:testDebugUnitTest --tests 'io.github.xororz.localdream.data.RuntimeProbeTest' --tests 'io.github.xororz.localdream.data.RuntimeCompatibilityEvaluatorTest' --tests 'io.github.xororz.localdream.service.NativeRuntimeAttestationRecorderTest' --tests 'io.github.xororz.localdream.service.NativeBackendCommandFactoryTest'
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:compileDebugAndroidTestKotlin
 cd app/src/main/cpp && ./build.sh
-./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=io.github.xororz.localdream.openai.OpenAiHttpServerInstrumentedTest
 ```
 
-### P04：设备运行协议与报告门禁
+### P04：B0/质量采集、设备执行协议与分层报告
 
-**修改/新增文件**
+**文件清单**
 
-| 操作 | 文件 | 内容 |
+| 操作 | 文件 | 实施内容 |
 | --- | --- | --- |
-| 修改 | `tools/performance-harness/localdream_perf_harness.py`、`localdream_perf_models.py` | 对接本地 `/v1`、MCP 与 runtime status，执行 W1–W7、100 次可靠性和 30/60 分钟协议，写入原始样本、报告与结论状态。 |
-| 新增 | `tools/performance-harness/tests/test_runtime_probe_gate.py`、`test_protocol_parity.py` | 覆盖 `UNAVAILABLE`/`REJECTED` 不入组、W6 文件/URL/下载、W7 progress/cancel/reconnect/ResourceLink 对照、100 次零失败和热稳定门禁。 |
-| 新增 | `tools/performance-harness/README.md` | 固定设备前置条件、ADB/Wi-Fi 采样配置、输出目录布局、B0 冻结及恢复执行方法，不含设备性能结论。 |
+| 修改 | `tools/performance-harness/localdream_perf_harness.py` | 新增 `capture-baseline` 与 `capture-quality` 子命令；前者仅在 `RuntimeProbe=VERIFIED` 时产出 `baseline-v1.json`，后者按下载后输出 SHA-256 产出 `quality-v1.json`。`run` 只消费同 GroupKey、模型摘要、超时、质量参考均精确匹配的工件。 |
+| 修改 | `tools/performance-harness/localdream_perf_models.py`、`localdream_perf_executor.py` | 将响应/下载的 Content-Type、PNG 魔数、尺寸、字节数、SHA-256、模型/seed/尺寸、资源和热采样写入原始样本；W4 必须记录可验证 `PROCESS_COLD` lifecycle。 |
+| 修改 | `tools/performance-harness/localdream_perf_protocol.py` | 固化 W7 的 `/v1` 与 MCP 同输入、20 个 diffusion step progress、cancel、replay/reconnect、稳定 `/assets/{assetId}` 与下载完整性合同。 |
+| 修改 | `tools/performance-harness/README.md` | 以真实包名、v4 场景、安全 token 文件/环境变量、经授权目标 ADB 串号、目录布局、采样配置和恢复步骤更新可执行说明；不得在命令行参数、报告或日志回显 token。 |
+| 修改 | `tools/performance-harness/tests/test_harness.py`、`test_device_executor.py`、`test_protocol_parity.py` | 覆盖探索层不要求 B0/质量/100，目标验证缺 B0/质量/输出完整性/模型摘要/主指标即拒绝，最终层才要求 100/30/60；B0/质量篡改、热态 warmup、独立 GroupKey、W4 lifecycle、W6/W7 PNG 下载与 token 安全入口。 |
 
-**实现步骤**
+**实施顺序**
 
-1. 执行前记录 app build、设备、网络、电量、屏幕、环境温度、harness 版本和 RuntimeProbe；每条样本记录 runId、序号、分段/端到端指标、资源、输出摘要和 Outcome。
-2. W4 固定冷启动及 A→B→A，W5 采集持续吞吐，W6 核验上采样/API/落盘/URL/下载，W7 在相同 fixture 下对 MCP 与 `/v1` 的 Tool/progress/cancel/reconnect/ResourceLink/下载逐项对照。
-3. 最终候选要求预热外 100 次零失败，跨三次冷启动并至少两轮热测；最后四分位吞吐相对首个稳定区间的下降超过 10%、出现 severe thermal、LMKD、持续 swap/泄漏或卸载后未回稳，都写失败报告。
-4. `--require-verified-runtime` 只接受 `VERIFIED`，非目标设备运行时报告结论固定为 `NOT_ACCEPTED_FOR_ONEPLUS13`，不输出性能阈值通过。
+1. `capture-baseline` 生成的每个条目必须含 `scenarioSha256`、`presetSnapshotSha256`、`runtimeFingerprint`、`coldState`、`absoluteTimeoutMs`、`qualityReferenceSha256`、`modelAssetSha256`。
+2. `capture-quality` 只接受 `BIT_EXACT` 或 `GOLDEN_SET`；`GOLDEN_SET` 固化 30 prompt × 4 seed、SSIM、LPIPS、CLIP 与盲测原始度量。NaN、Inf、破图、全黑、色序或 layout 错误一律失败。
+3. `EXPLORATORY` 仅输出候选事实；`TARGET_VALIDATED` 才消费 B0/质量并写资格候选工件；`FINAL_VALIDATED` 才执行每候选 100 次零失败、30 分钟筛选、60 分钟、3 次冷启动及至少两轮热测。
+4. 最后四分位吞吐相对首个稳定区间下降超过 10%、severe thermal、LMKD、持续 swap/泄漏或释放后未回稳，固定产生失败报告；不得通过重试掩盖失败。
 
 **验证命令**
 
 ```bash
+python3 tools/performance-harness/localdream_perf_harness.py validate-scenarios --scenario-dir tools/performance-harness/scenarios/v4
 python3 -m unittest discover -s tools/performance-harness/tests -p 'test_*.py'
-ANDROID_SERIAL="$ANDROID_SERIAL" python3 tools/performance-harness/localdream_perf_harness.py verify --require-verified-runtime --scenario-dir tools/performance-harness/scenarios/v1 --output-dir build/perf-verification
+python3 -m py_compile tools/performance-harness/localdream_perf_harness.py tools/performance-harness/localdream_perf_models.py tools/performance-harness/localdream_perf_executor.py tools/performance-harness/localdream_perf_protocol.py
 ```
 
-第二条命令仅在 07 阶段由已连接的一加 13 执行；03–06 只运行其拒绝路径和无推理测试。
+### P05：OpenAI/MCP 执行一致性、资产授权和传输保护
 
-### P05：将 snapshot 的预设配置接入真实执行路径
+**文件清单**
 
-**修改/新增文件**
-
-| 操作 | 文件 | 内容 |
+| 操作 | 文件 | 实施内容 |
 | --- | --- | --- |
-| 修改 | `app/src/main/java/io/github/xororz/localdream/openai/OpenAiApiController.kt`、`app/src/main/java/io/github/xororz/localdream/mcp/McpGenerationGateway.kt`、`app/src/main/java/io/github/xororz/localdream/service/BackgroundGenerationService.kt` | 在各入口受理时解析并传递同一份 immutable snapshot，显式 preset 无效时拒绝；无绑定时才选择 compatibility fallback。 |
-| 修改 | `app/src/main/java/io/github/xororz/localdream/openai/BackendRuntimeCoordinator.kt`、`app/src/main/java/io/github/xororz/localdream/service/BackendService.kt` | 将已解析 `sdxlLowRam`、`animaLowRam`、`animaSequentialDit` 带入本次启动请求，禁止服务层重新读取可变 SharedPreferences 覆盖 snapshot。 |
-| 修改 | `app/src/test/java/io/github/xororz/localdream/openai/InferenceArbiterTest.kt`、`app/src/test/java/io/github/xororz/localdream/mcp/McpGenerationGatewayTest.kt`、`app/src/test/java/io/github/xororz/localdream/service/NativeBackendCommandFactoryTest.kt` | 验证排队 Job 在预设编辑/删除后仍使用旧 snapshot，显式/模型/默认/fallback 优先级和三 engine 字段的命令可观察性。 |
+| 修改 | `app/src/main/java/io/github/xororz/localdream/openai/NativeBackendClient.kt`、`OpenAiApiController.kt` | 仅真实 diffusion step 形成 progress，不因订阅触发 VAE preview；W6 输出按 PNG 请求并验证下载响应。 |
+| 修改 | `app/src/main/java/io/github/xororz/localdream/mcp/McpHttpServer.kt`、`McpGenerationGateway.kt`、`McpToolRegistry.kt`、`McpTransportGuards.kt` | 统一 `/assets/{assetId}`；MCP 仅使用自身 Bearer token 和 `assets.read`；mutation 使用规范化参数的幂等键与 destructive dry-run；SSE 使用有界队列、活跃订阅保活、溢出 reset 与终态清理。有效 token 加对应 scope 可直接调用工具，不引入本机确认或一次性 confirmationId。 |
+| 修改 | `app/src/test/java/io/github/xororz/localdream/openai/DiffusionProgressNormalizerTest.kt`、`app/src/test/java/io/github/xororz/localdream/mcp/McpAuthorizationTest.kt`、`McpGenerationGatewayTest.kt`、`McpTransportGuardsTest.kt` | 覆盖 progress/preview 解耦、scope、幂等重放、dry-run、有界 SSE 的溢出、idle 保活和清理。 |
+| 修改 | `app/src/androidTest/java/io/github/xororz/localdream/mcp/McpProtocolIntegrationTest.kt`、`app/src/androidTest/java/io/github/xororz/localdream/openai/OpenAiHttpServerInstrumentedTest.kt` | 覆盖 MCP `/assets` 的 401/403/200、W7 响应形状、稳定下载与 OpenAI 兼容下载路径。 |
 
 **验证命令**
 
 ```bash
-./gradlew :app:testDebugUnitTest --tests 'io.github.xororz.localdream.openai.InferenceArbiterTest' --tests 'io.github.xororz.localdream.mcp.McpGenerationGatewayTest' --tests 'io.github.xororz.localdream.service.NativeBackendCommandFactoryTest'
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:testDebugUnitTest --tests 'io.github.xororz.localdream.openai.DiffusionProgressNormalizerTest' --tests 'io.github.xororz.localdream.mcp.McpAuthorizationTest' --tests 'io.github.xororz.localdream.mcp.McpGenerationGatewayTest' --tests 'io.github.xororz.localdream.mcp.McpTransportGuardsTest'
+python3 -m unittest tools/performance-harness/tests/test_protocol_parity.py -v
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:compileDebugAndroidTestKotlin
 ```
 
-### P06：预设 CRUD 消费面、发布与回滚证据
+### P06：预设 CRUD 消费面、运行快照与资格可见性
 
-**修改/新增文件**
+**文件清单**
 
-| 操作 | 文件 | 内容 |
+| 操作 | 文件 | 实施内容 |
 | --- | --- | --- |
-| 修改 | `app/src/main/java/io/github/xororz/localdream/mcp/McpPresetStore.kt`、`app/src/main/java/io/github/xororz/localdream/mcp/McpGenerationGateway.kt` | 将 delete 结果中的 `reboundBindingKeys` 返回给 MCP，导入前验证 v1，保留同名自动编号。 |
-| 新增 | `app/src/main/java/io/github/xororz/localdream/ui/screens/PerformancePresetScreen.kt` | 提供用户预设列表、创建、编辑、删除、导入/导出与默认/模型绑定；compatibility fallback 不提供编辑或删除动作；回退结果明确展示。 |
-| 修改 | `app/src/main/java/io/github/xororz/localdream/navigation/Navigation.kt`、`app/src/main/java/io/github/xororz/localdream/ui/screens/ModelRunScreen.kt` | 增加预设入口与模型绑定入口，运行页显示本次选择的 snapshot 名称/修订版本。 |
-| 新增 | `app/src/androidTest/java/io/github/xororz/localdream/ui/PerformancePresetScreenInstrumentedTest.kt` | 在不启动推理的前提下覆盖 CRUD、fallback 禁用、导入编号、绑定回退提示与运行页 snapshot 展示。 |
-| 修改 | `app/src/androidTest/java/io/github/xororz/localdream/mcp/McpProtocolIntegrationTest.kt` | 验证 MCP CRUD、删除回退字段与 W7 protocol parity 所需的响应结构。 |
+| 修改 | `app/src/main/java/io/github/xororz/localdream/ui/screens/PerformancePresetScreen.kt`、`ui/screens/ModelRunScreen.kt`、`navigation/Navigation.kt` | 提供用户预设创建、编辑、删除、导入/导出、默认/模型绑定以及资格层级/失效原因展示；fallback 无编辑和删除动作；运行页展示本次 snapshot 名称、revision 与探索/目标验证状态。 |
+| 修改 | `app/src/main/java/io/github/xororz/localdream/mcp/McpPresetStore.kt`、`McpGenerationGateway.kt` | 返回删除的 `reboundBindingKeys`，拒绝未验证自动绑定，保留显式探索请求，导入重名自动编号且不复制资格；不注册 `presets.import_qualification_evidence`，不暴露 `qualifications.write`。 |
+| 修改 | `app/src/main/java/io/github/xororz/localdream/remote/RemoteProtocol.kt`、`service/RemoteHostService.kt` | 受理时传递不可变 preset snapshot；宿主和服务不得重新读取可变偏好覆盖已受理 Job。 |
+| 修改 | `app/src/androidTest/java/io/github/xororz/localdream/ui/PerformancePresetScreenInstrumentedTest.kt`、`app/src/test/java/io/github/xororz/localdream/remote/RemotePresetExecutionTest.kt` | 覆盖 CRUD、fallback 禁用、资格门禁提示、绑定回退、导入副本无资格及远程 snapshot 不变。 |
 
 **验证命令**
 
 ```bash
-./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=io.github.xororz.localdream.ui.PerformancePresetScreenInstrumentedTest
-./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=io.github.xororz.localdream.mcp.McpProtocolIntegrationTest
-./gradlew :app:ktlintCheck :app:detekt :app:lintDebug :app:assembleDebug
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:testDebugUnitTest --tests 'io.github.xororz.localdream.remote.RemotePresetExecutionTest' --tests 'io.github.xororz.localdream.data.PerformancePresetRepositoryTest'
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:compileDebugAndroidTestKotlin
 ```
+
+### P07：本地验证、测试发布、回滚和 07 真机验收交接
+
+**04–06 本地验证**
+
+```bash
+python3 tools/performance-harness/localdream_perf_harness.py validate-scenarios --scenario-dir tools/performance-harness/scenarios/v4
+python3 -m unittest discover -s tools/performance-harness/tests -p 'test_*.py'
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:testDebugUnitTest
+./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process :app:ktlintCheck :app:detekt :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+cd app/src/main/cpp && ./build.sh
+```
+
+Android instrumentation 只在授权设备运行，本轮任何目标机操作均显式使用 `ANDROID_SERIAL=3B15C4018L500000`。执行前先核验该串号仍为 OnePlus / PJZ110 / SM8750 / Android 16；若不匹配则停止，不能换用其他设备。ColorOS 拒绝 instrumentation APK 时，保留失败码并用同一最终 APK 的正式 listener 协议回归补充该协议证据，不把它转写为目标机性能结论。
+
+**测试发布与回滚**
+
+1. 本仓是 GitHub Android 单仓，无 GitLab、`test` 分支、Pod、镜像或 HTTP 测试环境。仅在全部本地门禁通过后，以中文提交信息提交精确交付文件，推送 GitHub `master`；`docs/loop-records/` ledger 不纳入发布提交。
+2. 发布证据为提交 SHA、`git ls-remote origin refs/heads/master`、debug APK 路径、自动化命令结果和经授权 PJZ110 的协议/验收交接记录；协议回归不能替代性能、可靠性或热稳定性结论。
+3. 回滚恢复到本次提交之前已验证的 APK/提交；v7 migration 不做破坏性降级。发现问题时先停用新自动绑定及资格发布结论，保留 compatibility fallback 和已受理 Job snapshot，再以前进修复提交恢复，不删除用户数据库、不重写历史 snapshot、不静默重编译 Context。
+
+**07 业务验收命令边界**
+
+只有 PJZ110 `RuntimeProbe=VERIFIED`、v4 资产、B0/质量工件、环境温度和采样配置均已冻结时，才在 07 执行设备运行。认证仅由受保护文件或环境变量传入，不回显 token；每条 ADB 命令及 harness `--adb-serial` 必须是 `3B15C4018L500000`，并在执行前复核该串号仍为 OnePlus / PJZ110 / SM8750 / Android 16。目标机命令会在 P04 实现 `capture-baseline` 与 `capture-quality` 后固定为实际 CLI，不在本计划阶段盲跑。
+
+```bash
+ANDROID_SERIAL=3B15C4018L500000 python3 tools/performance-harness/localdream_perf_harness.py run --scenario-dir tools/performance-harness/scenarios/v4 --runtime-probe-file <private-runtime-probe.json> --base-url <openai-base-url> --fixture-dir tools/performance-harness/fixtures/v2 --output-dir build/perf-verification/<run-id> --preset-snapshot-sha256 <sha256> --run-context-file <private-run-context.json> --baseline-file <baseline-v1.json> --quality-evidence-file <quality-v1.json> --adb-serial 3B15C4018L500000 --app-package io.github.xororz.localdream --thermal-duration-minutes 30 --bearer-token-file <0600-token-file>
+```
+
+尖括号只表示由 07 的受保护工件替换的运行输入，不得把该命令的示例值、token 或设备输出写入版本库。目标机未满足前置条件时，harness 必须产出拒绝结果，不能输出性能、可靠性或热稳定性通过。
 
 ## 4. 高风险点与强制门禁
 
 | 风险 | 不可接受的结果 | 强制验证 |
 | --- | --- | --- |
-| 把 Redmi K30 或未采到 probe 的样本计入一加 13结果 | 伪造目标机性能结论 | `test_runtime_probe_gate.py` 断言 `UNAVAILABLE`/`REJECTED` 不入组；07 命令强制 `--require-verified-runtime`。 |
-| 预设只是 CRUD 而不改变执行 | 用户配置无效且结果不可追溯 | `NativeBackendLaunchConfigTest` 与 `NativeBackendCommandFactoryTest` 对三个 engine 字段做逐字段命令断言；排队 Job snapshot 测试。 |
-| 删除/迁移留下半条 binding 或修改旧数据 | 未来请求选择错误、历史运行不可重放 | v5→v6 instrumentation 迁移和故障注入回滚测试；Room transaction 测试。 |
-| W2/W2b、冷/热或不同 Context 混组 | 统计阈值失真 | scenario/统计测试比较完整分组键并拒绝混组。 |
-| 指标缺失被当成 0 或 SSE 破坏旧客户端 | 假改善或 API 回归 | native/API 集成测试同时断言旧字段保留、缺失新字段为 `UNAVAILABLE`。 |
-| W7 仅验证一条协议路径 | MCP 与 `/v1` 行为不一致 | `test_protocol_parity.py` 与 `McpProtocolIntegrationTest` 对同 fixture 的生成、下载、取消、重连、ResourceLink 全量比对。 |
+| 非 PJZ110、非 VERIFIED 或缺 native attestation 的样本进入目标统计 | 伪造一加13结论 | `RuntimeProbeTest`、harness 拒绝测试与 `--require-verified-runtime` 断言固定拒绝。 |
+| B0/质量来自手写、其他模型、其他 runtime 或其他 GroupKey | 候选比较失真 | `capture-baseline`/`capture-quality` 的生成、摘要篡改、模型/GroupKey 不一致测试。 |
+| 100 次可靠性阻断探索或反过来被探索结果宣称通过 | 错置业务优先级 | 分层报告测试：探索不要求 B0/质量/100，最终层缺任一深度证据必失败。 |
+| 预设编辑、导入或模型/runtime 变化后旧资格仍用于自动绑定 | 未验证组合成为默认 | qualification 唯一键、失效、导入无继承和 `PRESET_NOT_TARGET_VALIDATED` 测试。 |
+| 删除预设留下半条 binding 或修改排队 Job | 用户配置错误且结果不可重放 | Room migration/事务回滚测试与 Job snapshot 回归。 |
+| W6/W7 只校验 HTTP 200、MCP scope 或 SSE 慢消费者 | 损坏图片、越权读取或事件丢失 | PNG Content-Type/魔数/尺寸/SHA-256、401/403/200、SSE overflow/replay/idle 测试。 |
+| 使用非当前授权串号或未经预检的设备执行目标机命令 | 把非目标设备数据混入一加13工件 | 所有 07 命令显式 `ANDROID_SERIAL=3B15C4018L500000` 与 `--adb-serial=3B15C4018L500000`，运行前核验 OnePlus / PJZ110 / SM8750 / Android 16，并在 RunManifest 写入设备身份。 |
 
-## 5. 执行顺序与阶段验证
+## 5. 执行顺序
 
-1. P01 先建立可审计场景与纯主机测试，P02 再建立 schema、绑定和 migration 基座。
-2. P03 把 runtime/指标证据接入应用与 native，P05 以 immutable snapshot 打通 API、MCP、服务和命令行。
-3. P04 在上述接口稳定后对接 harness，P06 最后完成 UI/MCP 消费面及全部构建检查。
-4. 实现阶段结束前必须执行：
-
-```bash
-python3 -m unittest discover -s tools/performance-harness/tests -p 'test_*.py'
-./gradlew :app:testDebugUnitTest
-./gradlew :app:connectedDebugAndroidTest
-./gradlew :app:ktlintCheck :app:detekt :app:lintDebug :app:assembleDebug
-cd app/src/main/cpp && ./build.sh
-```
-
-## 6. 测试发布、回滚与设备验收边界
-
-本项目是 GitHub Android 单仓，不存在 GitLab、`test` 分支、Pod 或 HTTP 测试环境。实际测试发布链路固定为：完成本地自动化与 debug APK 构建，以中文提交信息提交精确交付文件，推送 GitHub `master`，再把最终 APK 安装到当前 Redmi K30 完成非推理 UI/协议检查。发布证据至少包括 commit、远端 `master` 对齐、APK、上述自动化命令结果和设备检查；`docs/loop-records/` ledger 不提交。没有一加 13 时，不得把这些证据标记为性能、可靠性或热稳定性验收通过。
-
-回滚只允许恢复到本次发布提交之前已验证的 APK/提交；数据库 v6 migration 不做破坏性降级。若发布后发现配置解析、binding 或 native 指标问题，先停用新预设选择和 harness 发布结论，保留既有 `Compatibility fallback` 与已受理 Job snapshot，再以前进修复提交处理。不得通过删除用户数据库、重写历史 snapshot 或静默重编译 Context 来回滚。
-
-07 业务验收的前置条件是：一加 13 已连接、`RuntimeProbe=VERIFIED`、对应 W1–W7 资产已安装，且能按 P04 命令生成原始 RunManifest、样本和报告。V79 重编译输入缺失、商店签名和最终用户生产发布仍不在本轮范围。
+1. P01 先固定 v4 场景、分组、统计和 RunManifest，再完成 P02 的 v7 数据库与资格门禁。
+2. P03 将真实 native runtime/指标证据接入应用，P04 在接口稳定后补齐 B0、质量、资源、热采样和分层报告。
+3. P05 对齐 OpenAI/MCP 传输、资产和 SSE 合同，P06 将资格门禁与不可变 snapshot 暴露给 CRUD/远程消费面。
+4. P07 运行本地门禁、debug APK 构建和 GitHub 测试发布。只有完成 P04 工件准备后，07 才可在 PJZ110 执行逐层真机验收。

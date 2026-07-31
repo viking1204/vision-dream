@@ -13,12 +13,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PromptTemplateEntity::class,
         PerformancePresetEntity::class,
         PerformancePresetBindingEntity::class,
+        PerformancePresetQualificationEntity::class,
         InferenceJobEntity::class,
         PresetSnapshotEntity::class,
         McpClientGrantEntity::class,
         McpAuditEventEntity::class,
     ],
-    version = 6,
+    version = 9,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -26,6 +27,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun promptTemplateDao(): PromptTemplateDao
     abstract fun performancePresetDao(): PerformancePresetDao
     abstract fun performancePresetBindingDao(): PerformancePresetBindingDao
+    abstract fun performancePresetQualificationDao(): PerformancePresetQualificationDao
     abstract fun inferenceJobDao(): InferenceJobDao
     abstract fun mcpClientGrantDao(): McpClientGrantDao
     abstract fun mcpAuditEventDao(): McpAuditEventDao
@@ -286,28 +288,180 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v6 -> v7 persists only audited preset qualification facts. Existing
+         * presets, bindings, jobs and history remain byte-for-byte untouched;
+         * old automatic bindings deliberately have no qualification and are
+         * therefore rejected by the v7 automatic-binding gate.
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS performance_preset_qualifications (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        presetId TEXT NOT NULL,
+                        presetRevision INTEGER NOT NULL,
+                        presetSnapshotSha256 TEXT NOT NULL,
+                        modelId TEXT NOT NULL,
+                        modelAssetSha256 TEXT NOT NULL,
+                        scenarioSetSha256 TEXT NOT NULL,
+                        runtimeFingerprint TEXT NOT NULL,
+                        appBuild TEXT NOT NULL,
+                        qualificationLevel TEXT NOT NULL,
+                        evidenceManifestSha256 TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        revokedAt INTEGER,
+                        FOREIGN KEY(presetId) REFERENCES performance_presets(id) ON UPDATE NO ACTION ON DELETE NO ACTION
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_performance_preset_qualifications_presetId_revokedAt " +
+                        "ON performance_preset_qualifications (presetId, revokedAt)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_performance_preset_qualifications_modelId_modelAssetSha256_runtimeFingerprint_scenarioSetSha256 " +
+                        "ON performance_preset_qualifications (modelId, modelAssetSha256, runtimeFingerprint, scenarioSetSha256)",
+                )
+                createPerformancePresetQualificationGuards(db)
+            }
+        }
+
+        /**
+         * v7 -> v8 adds the product-ownership flag without rewriting existing
+         * custom presets. The immutable catalog is seeded idempotently so a
+         * partially created database can recover on the next open.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE performance_presets ADD COLUMN isBuiltIn INTEGER NOT NULL DEFAULT 0",
+                )
+                seedBuiltInPerformancePresets(db)
+            }
+        }
+
+        /**
+         * v8 used one unique namespace for product-owned and user-owned names.
+         * That made a newly shipped built-in disappear silently when an older
+         * custom preset already used the same display name. Stable IDs are the
+         * real identity; repository rules continue to reject new user-name
+         * duplicates after this index is removed.
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP INDEX IF EXISTS index_performance_presets_name")
+                seedBuiltInPerformancePresets(db)
+            }
+        }
+
+        /**
+         * These rows are product defaults, not user content. Their stable IDs
+         * let a persisted job snapshot name the same preset across upgrades.
+         */
+        private fun seedBuiltInPerformancePresets(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                INSERT OR IGNORE INTO performance_presets
+                (id, name, selector, configJson, revision, isFallback, isBuiltIn, createdAt, updatedAt)
+                VALUES ('$COMPATIBILITY_FALLBACK_ID', 'Compatibility fallback',
+                        'COMPATIBILITY_FALLBACK', '{}', 1, 1, 1, 0, 0)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "UPDATE performance_presets SET isBuiltIn = 1 WHERE id = '$COMPATIBILITY_FALLBACK_ID'",
+            )
+            BUILT_IN_PERFORMANCE_PRESETS.forEach { preset ->
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO performance_presets
+                    (id, name, selector, configJson, revision, isFallback, isBuiltIn, createdAt, updatedAt)
+                    VALUES ('${preset.id}', '${preset.name}', '${preset.selector}', '${preset.configJson}',
+                            1, 0, 1, 0, 0)
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        /**
+         * Room does not model partial indices. Triggers preserve the required
+         * "one active qualification per immutable identity" invariant without
+         * adding an index that makes Room reject an otherwise valid migration.
+         */
+        private fun createPerformancePresetQualificationGuards(db: SupportSQLiteDatabase) {
+            val duplicateIdentityPredicate =
+                """
+                presetSnapshotSha256 = NEW.presetSnapshotSha256
+                AND modelAssetSha256 = NEW.modelAssetSha256
+                AND runtimeFingerprint = NEW.runtimeFingerprint
+                AND scenarioSetSha256 = NEW.scenarioSetSha256
+                AND qualificationLevel = NEW.qualificationLevel
+                AND revokedAt IS NULL
+                """.trimIndent()
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS reject_duplicate_active_preset_qualification_insert
+                BEFORE INSERT ON performance_preset_qualifications
+                WHEN NEW.revokedAt IS NULL AND EXISTS (
+                    SELECT 1
+                    FROM performance_preset_qualifications
+                    WHERE $duplicateIdentityPredicate
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'duplicate active performance preset qualification');
+                END
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS reject_duplicate_active_preset_qualification_update
+                BEFORE UPDATE OF presetSnapshotSha256, modelAssetSha256, runtimeFingerprint,
+                    scenarioSetSha256, qualificationLevel, revokedAt
+                ON performance_preset_qualifications
+                WHEN NEW.revokedAt IS NULL AND EXISTS (
+                    SELECT 1
+                    FROM performance_preset_qualifications
+                    WHERE $duplicateIdentityPredicate
+                      AND id <> OLD.id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'duplicate active performance preset qualification');
+                END
+                """.trimIndent(),
+            )
+        }
+
         fun get(context: Context): AppDatabase = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 "local_dream.db",
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7,
+                    MIGRATION_7_8,
+                    MIGRATION_8_9,
+                )
                 .addCallback(
                     object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
-                            // MIGRATION_4_5 creates this row for upgrades. A fresh v6
-                            // database skips migrations, so it needs the same safe
-                            // fallback before the first request can be accepted.
-                            db.execSQL(
-                                """
-                                INSERT OR IGNORE INTO performance_presets
-                                (id, name, selector, configJson, revision, isFallback, createdAt, updatedAt)
-                                VALUES ('00000000-0000-4000-8000-000000000000', 'Compatibility fallback',
-                                        'COMPATIBILITY_FALLBACK', '{}', 1, 1, 0, 0)
-                                """.trimIndent(),
-                            )
+                            seedBuiltInPerformancePresets(db)
+                            createPerformancePresetQualificationGuards(db)
+                        }
+
+                        override fun onOpen(db: SupportSQLiteDatabase) {
+                            super.onOpen(db)
+                            // Repairs a partial built-in seed and v7 databases created
+                            // by builds that predate the qualification guards.
+                            seedBuiltInPerformancePresets(db)
+                            createPerformancePresetQualificationGuards(db)
                         }
                     },
                 )
@@ -318,5 +472,41 @@ abstract class AppDatabase : RoomDatabase() {
                 .build()
                 .also { INSTANCE = it }
         }
+
+        private const val COMPATIBILITY_FALLBACK_ID = "00000000-0000-4000-8000-000000000000"
+
+        private data class BuiltInPerformancePreset(
+            val id: String,
+            val name: String,
+            val selector: String,
+            val configJson: String,
+        )
+
+        private val BUILT_IN_PERFORMANCE_PRESETS = listOf(
+            BuiltInPerformancePreset(
+                id = "10000000-0000-4000-8000-000000000001",
+                name = "省内存",
+                selector = "memory_saver",
+                configJson = "{\"schemaVersion\":2,\"engine\":{\"sdxlLowRam\":true,\"animaLowRam\":true,\"animaSequentialDit\":true,\"cpuClipThreads\":2,\"htpPowerMode\":\"POWER_SAVER\",\"htpDynamicPartitioning\":\"AUTO\"}}",
+            ),
+            BuiltInPerformancePreset(
+                id = "10000000-0000-4000-8000-000000000002",
+                name = "均衡",
+                selector = "balanced",
+                configJson = "{\"schemaVersion\":2,\"engine\":{\"sdxlLowRam\":false,\"animaLowRam\":false,\"animaSequentialDit\":false,\"cpuClipThreads\":4,\"htpPowerMode\":\"ADJUST_UP_DOWN\",\"htpDynamicPartitioning\":\"AUTO\"}}",
+            ),
+            BuiltInPerformancePreset(
+                id = "10000000-0000-4000-8000-000000000003",
+                name = "极致性能",
+                selector = "extreme_performance",
+                configJson = "{\"schemaVersion\":2,\"engine\":{\"sdxlLowRam\":false,\"animaLowRam\":false,\"animaSequentialDit\":false,\"cpuClipThreads\":8,\"htpPowerMode\":\"PERFORMANCE\",\"htpDynamicPartitioning\":\"ENABLED\"}}",
+            ),
+            BuiltInPerformancePreset(
+                id = "10000000-0000-4000-8000-000000000004",
+                name = "持续性能",
+                selector = "sustained_performance",
+                configJson = "{\"schemaVersion\":2,\"engine\":{\"sdxlLowRam\":true,\"animaLowRam\":true,\"animaSequentialDit\":true,\"cpuClipThreads\":8,\"htpPowerMode\":\"PERFORMANCE\",\"htpDynamicPartitioning\":\"ENABLED\"}}",
+            ),
+        )
     }
 }

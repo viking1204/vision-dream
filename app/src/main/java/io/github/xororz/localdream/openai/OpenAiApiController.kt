@@ -124,15 +124,37 @@ class OpenAiApiController(
                 .put("status", "ok")
                 .put("active", dispatcher.hasActiveTask)
                 .put("queued", dispatcher.queuedTaskCount)
+                // The harness compares this opaque digest with `adb shell cmd
+                // package path`.  It proves that authenticated health came
+                // from the same installed app instance that ADB samples,
+                // without exposing the private installation path.
+                .put(
+                    "installation",
+                    JSONObject()
+                        .put("appPackage", context.packageName)
+                        .put("packagePathSha256", sha256(context.applicationInfo.sourceDir)),
+                )
                 .put(
                     "runtimeProbe",
                     JSONObject()
                         .put("status", probe.status.name)
-                        .put("rejectionReasons", org.json.JSONArray(probe.rejectionReasons)),
+                        .put("rejectionReasons", org.json.JSONArray(probe.rejectionReasons))
+                        .put("deviceModel", probe.deviceModel)
+                        .put("soc", probe.soc)
+                        .put("abi", probe.abi)
+                        .put("qairtVersion", probe.qairtVersion)
+                        .put("htpTarget", probe.htpTarget)
+                        .put("contextFingerprint", probe.contextFingerprint)
+                        .put("loadedLibraryFingerprints", JSONObject(probe.loadedLibraryFingerprints))
+                        .put("nativeReady", probe.nativeReady),
                 )
                 .toString(),
         )
     }
+
+    private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(StandardCharsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
 
     private fun generation(request: HttpRequest): HttpResponse {
         requireJsonContentType(request)
@@ -514,6 +536,7 @@ class OpenAiApiController(
             OpenAiJson.images(
                 created = System.currentTimeMillis() / 1000L,
                 images = listOf(OpenAiImage(Base64.getEncoder().encodeToString(image.bytes))),
+                diagnostics = image.diagnostics,
             ),
             headers = mapOf("X-Request-Id" to requestId),
         )
@@ -540,6 +563,7 @@ class OpenAiApiController(
                 OpenAiJson.images(
                     created = System.currentTimeMillis() / 1000L,
                     images = listOf(OpenAiImage(url = url)),
+                    diagnostics = image.diagnostics,
                 ),
                 headers = mapOf("X-Request-Id" to requestId),
             )

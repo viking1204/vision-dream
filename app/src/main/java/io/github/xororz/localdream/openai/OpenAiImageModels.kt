@@ -31,6 +31,16 @@ data class GeneratedImage(
     val bytes: ByteArray,
     val mimeType: String,
     val seed: Long?,
+    val diagnostics: NativeGenerationDiagnostics? = null,
+)
+
+/**
+ * Read-only native stage diagnostics projected for local acceptance tooling.
+ * These values are supplied by the native complete event; callers must not
+ * derive them from HTTP elapsed time.
+ */
+data class NativeGenerationDiagnostics(
+    val unetMs: Long?,
 )
 
 class OpenAiRequestException(

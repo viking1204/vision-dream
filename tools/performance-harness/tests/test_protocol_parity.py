@@ -1,7 +1,9 @@
 import json
 import sys
 import unittest
+from http.client import RemoteDisconnected
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -12,6 +14,9 @@ from localdream_perf_protocol import (
     HttpResult,
     ProtocolExecutionError,
     SseEvent,
+    UrlLibTransport,
+    _UrlLibSseResponse,
+    execute_v1_generation,
     protocol_parity,
     scheduler_api_id,
 )
@@ -76,7 +81,7 @@ class FixtureTransport:
                 self.cancel_arguments = arguments
                 return HttpResult(200, {}, json.dumps({"result": {"jobId": job_id, "task": "cancelled"}}).encode())
         if method == "GET" and path.startswith("/assets/"):
-            return HttpResult(200, {"content-type": "image/png"}, b"png-bytes")
+            return HttpResult(200, {"content-type": "image/png"}, _png_bytes(1024, 1024))
         return HttpResult(200, {}, b'{"data":[{"url":"/v1/images/files/image-1"}]}')
 
     def open_sse(self, path, headers, timeout_ms):
@@ -117,6 +122,42 @@ class FixtureSseResponse:
 
 
 class ProtocolParityTest(unittest.TestCase):
+    def test_urllib_request_normalizes_connection_reset_without_reflecting_secret(self):
+        transport = UrlLibTransport("http://127.0.0.1:1", "secret-token")
+        with patch(
+            "localdream_perf_protocol.urlopen",
+            side_effect=RemoteDisconnected("Bearer secret-token disconnected"),
+        ):
+            with self.assertRaisesRegex(ProtocolExecutionError, "RemoteDisconnected") as error:
+                transport.request("GET", "/health")
+
+        self.assertNotIn("secret-token", str(error.exception))
+        self.assertNotIn("disconnected", str(error.exception))
+
+    def test_urllib_sse_open_and_read_normalize_recoverable_disconnects(self):
+        transport = UrlLibTransport("http://127.0.0.1:1", "secret-token")
+        with patch(
+            "localdream_perf_protocol.urlopen",
+            side_effect=ConnectionResetError("Bearer secret-token reset"),
+        ):
+            with self.assertRaisesRegex(ProtocolExecutionError, "ConnectionResetError") as error:
+                transport.open_sse("/mcp", {}, 1_000)
+        self.assertNotIn("secret-token", str(error.exception))
+
+        class TimeoutLines:
+            status = 200
+            headers = {}
+
+            def __iter__(self):
+                raise TimeoutError("Bearer secret-token timeout")
+
+            def close(self):
+                pass
+
+        with self.assertRaisesRegex(ProtocolExecutionError, "TimeoutError") as error:
+            list(_UrlLibSseResponse(TimeoutLines()).events())
+        self.assertNotIn("secret-token", str(error.exception))
+
     def setUp(self):
         self.scenario = validate_scenario(ROOT / "scenarios" / "v1" / "W7.json")
 
@@ -177,7 +218,9 @@ class ProtocolParityTest(unittest.TestCase):
         self.assertEqual({"Mcp-Session-Id": "session-1"}, stream_calls[0][3])
         self.assertEqual({"Mcp-Session-Id": "session-1", "Last-Event-ID": "1"}, stream_calls[1][3])
         self.assertIn(("GET", "/assets/history:1", {}, {}), mcp.calls)
-        self.assertEqual(b"png-bytes", result["mcp"]["download"])
+        self.assertEqual(_png_bytes(1024, 1024), result["mcp"]["download"])
+        self.assertEqual("image/png", result["mcp"]["downloadEvidence"]["contentType"])
+        self.assertEqual(1024, result["mcp"]["downloadEvidence"]["width"])
         self.assertEqual(20, len(result["mcp"]["progressEvents"]))
         self.assertEqual({"eventId": 2, "jobId": "job-1", "step": 1, "totalSteps": 20}, result["mcp"]["progressEvents"][0])
         self.assertEqual({"eventId": 21, "jobId": "job-1", "step": 20, "totalSteps": 20}, result["mcp"]["progressEvents"][-1])
@@ -272,6 +315,41 @@ class ProtocolParityTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ProtocolExecutionError, "jobId"):
             protocol_parity(FixtureTransport(), MissingJob(), self.scenario)
+
+    def test_w7_rejects_non_png_asset_download(self):
+        class HtmlAsset(FixtureTransport):
+            def request(self, method, path, body=None, headers=None, timeout_ms=30_000):
+                if method == "GET" and path.startswith("/assets/"):
+                    return HttpResult(200, {"content-type": "text/html"}, b"<html>expired</html>")
+                return super().request(method, path, body, headers, timeout_ms)
+
+        with self.assertRaisesRegex(ProtocolExecutionError, "not a PNG"):
+            protocol_parity(FixtureTransport(), HtmlAsset(), self.scenario)
+
+    def test_v1_generation_preserves_only_native_vendor_unet_diagnostics(self):
+        class NativeDiagnosticTransport(FixtureTransport):
+            def request(self, method, path, body=None, headers=None, timeout_ms=30_000):
+                if path == "/v1/images/generations":
+                    return HttpResult(
+                        200,
+                        {},
+                        b'{"data":[{"url":"/v1/images/files/image-1"}],"vendor_diagnostics":{"unet_ms":321}}',
+                    )
+                return super().request(method, path, body, headers, timeout_ms)
+
+        execution = execute_v1_generation(NativeDiagnosticTransport(), self.scenario)
+
+        self.assertEqual({"unetMs": 321.0}, execution.evidence["vendorDiagnostics"])
+
+
+def _png_bytes(width: int, height: int) -> bytes:
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + b"\x00\x00\x00\rIHDR"
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + b"\x08\x02\x00\x00\x00"
+    )
 
 
 if __name__ == "__main__":

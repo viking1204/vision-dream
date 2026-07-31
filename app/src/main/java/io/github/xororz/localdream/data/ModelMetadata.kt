@@ -107,10 +107,18 @@ data class ModelMetadata(
     val ratingEvidence: Set<String> = emptySet(),
     val source: ModelSourceMetadata? = null,
     val runtimeCompatibility: ModelRuntimeCompatibility? = null,
+    val displayName: String? = null,
+    val description: String? = null,
 ) {
     fun toJsonString(): String = JSONObject().apply {
         put(KEY_SCHEMA_VERSION, SCHEMA_VERSION)
         put(KEY_CONTENT_RATING, contentRating.serializedValue)
+        displayName?.trim()?.takeIf(String::isNotEmpty)?.let {
+            put(KEY_DISPLAY_NAME, it)
+        }
+        description?.trim()?.takeIf(String::isNotEmpty)?.let {
+            put(KEY_DESCRIPTION, it)
+        }
         ratingSource?.let { put(KEY_RATING_SOURCE, it.serializedValue) }
         if (ratingEvidence.isNotEmpty()) {
             put(
@@ -142,10 +150,12 @@ data class ModelMetadata(
     }.toString()
 
     companion object {
-        const val SCHEMA_VERSION = 3
+        const val SCHEMA_VERSION = 4
 
         private const val KEY_SCHEMA_VERSION = "schema_version"
         private const val KEY_CONTENT_RATING = "content_rating"
+        private const val KEY_DISPLAY_NAME = "display_name"
+        private const val KEY_DESCRIPTION = "description"
         private const val KEY_RATING_SOURCE = "rating_source"
         private const val KEY_RATING_EVIDENCE = "rating_evidence"
         private const val KEY_SOURCE = "source"
@@ -213,6 +223,12 @@ data class ModelMetadata(
                 ratingEvidence = evidence,
                 source = source,
                 runtimeCompatibility = runtimeCompatibility,
+                displayName = json.optString(KEY_DISPLAY_NAME)
+                    .trim()
+                    .takeIf(String::isNotEmpty),
+                description = json.optString(KEY_DESCRIPTION)
+                    .trim()
+                    .takeIf(String::isNotEmpty),
             )
         }
     }

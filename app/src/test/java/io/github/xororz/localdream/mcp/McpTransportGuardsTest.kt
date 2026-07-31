@@ -81,7 +81,7 @@ class McpTransportGuardsTest {
     }
 
     @Test
-    fun replayStateExpiresAndEvictsOldestSessionGlobally() {
+    fun replayStateEvictsOldestSessionGloballyAndRetainsActiveSubscriber() {
         var now = 0L
         val store = McpSseEventStore(clock = { now }, maxSessions = 2, replayIdleMillis = 100)
         val oldest = store.open("oldest", null)
@@ -93,8 +93,26 @@ class McpTransportGuardsTest {
         val expiring = store.open("expiring", null)
         now = 101L
         store.pruneExpired()
-        assertEquals(McpSseEventStore.CLOSED_EVENT, expiring.poll(100))
+        store.publish("expiring", "task", "{}")
+        assertEquals("task", expiring.poll(100)?.event)
         oldest.close()
         expiring.close()
+    }
+
+    @Test
+    fun activeQuietSubscriptionSurvivesReplayIdleTimeoutAndReceivesNextEvent() {
+        var now = 0L
+        val store = McpSseEventStore(clock = { now }, replayIdleMillis = 100)
+        val subscription = store.open("active", null)
+
+        now = 101L
+        store.pruneExpired()
+        store.publish("active", "task", "{\"task\":\"working\"}")
+
+        try {
+            assertEquals("task", subscription.poll(100)?.event)
+        } finally {
+            subscription.close()
+        }
     }
 }

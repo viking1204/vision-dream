@@ -63,6 +63,10 @@ struct ServerOptions {
   bool no_img2img = false;  // skip the VAE encoder entirely
   bool lowram = false;
   bool anima_seq_dit = false;  // (anima+lowram) never co-resident DiT halves
+  int cpu_clip_threads = 4;
+  QnnModel::HtpPowerMode htp_power_mode = QnnModel::HtpPowerMode::kPerformance;
+  enum class HtpDynamicPartitioning { kAuto, kEnabled, kDisabled };
+  HtpDynamicPartitioning htp_dynamic_partitioning = HtpDynamicPartitioning::kAuto;
   bool upscaler_mode = false;
   bool convert_mode = false;
   bool convert_clip_skip_2 = false;
@@ -105,6 +109,11 @@ static void showHelp() {
          "  --lowram               (sdxl/anima) load/release models per stage\n"
          "  --anima_seq_dit        (anima+lowram) never keep both DiT halves "
          "resident; for 12GB devices\n"
+         "  --cpu_clip_threads <1-8> CPU threads for MNN CLIP sessions\n"
+         "  --htp_power_mode <performance|adjust_up_down|power_saver>\n"
+         "                         QNN HTP DCVS V3 policy\n"
+         "  --htp_dynamic_partitioning <auto|enabled|disabled>\n"
+         "                         QNN HTP device configuration\n"
          "  --clip_skip_2          (convert) export CLIP with skip 2\n"
          "  --log_level <n>        QNN log level\n"
          "  --version              Print QNN SDK build id\n"
@@ -136,6 +145,9 @@ static ServerOptions processCommandLine(int argc, char **argv) {
     OPT_UPSCALER_MODE,
     OPT_LOWRAM,
     OPT_ANIMA_SEQ_DIT,
+    OPT_CPU_CLIP_THREADS,
+    OPT_HTP_POWER_MODE,
+    OPT_HTP_DYNAMIC_PARTITIONING,
     OPT_LOG_LEVEL
   };
   static struct pal::Option s_longOptions[] = {
@@ -155,6 +167,9 @@ static ServerOptions processCommandLine(int argc, char **argv) {
       {"upscaler_mode", pal::no_argument, NULL, OPT_UPSCALER_MODE},
       {"lowram", pal::no_argument, NULL, OPT_LOWRAM},
       {"anima_seq_dit", pal::no_argument, NULL, OPT_ANIMA_SEQ_DIT},
+      {"cpu_clip_threads", pal::required_argument, NULL, OPT_CPU_CLIP_THREADS},
+      {"htp_power_mode", pal::required_argument, NULL, OPT_HTP_POWER_MODE},
+      {"htp_dynamic_partitioning", pal::required_argument, NULL, OPT_HTP_DYNAMIC_PARTITIONING},
       {"log_level", pal::required_argument, NULL, OPT_LOG_LEVEL},
       {NULL, 0, NULL, 0}};
 
@@ -216,6 +231,39 @@ static ServerOptions processCommandLine(int argc, char **argv) {
       case OPT_ANIMA_SEQ_DIT:
         opts.anima_seq_dit = true;
         break;
+      case OPT_CPU_CLIP_THREADS:
+        try {
+          opts.cpu_clip_threads = std::stoi(pal::g_optArg);
+        } catch (const std::exception &) {
+          showHelpAndExit("Invalid --cpu_clip_threads");
+        }
+        if (opts.cpu_clip_threads < 1 || opts.cpu_clip_threads > 8)
+          showHelpAndExit("--cpu_clip_threads must be between 1 and 8");
+        break;
+      case OPT_HTP_POWER_MODE: {
+        const std::string value = pal::g_optArg;
+        if (value == "performance")
+          opts.htp_power_mode = QnnModel::HtpPowerMode::kPerformance;
+        else if (value == "adjust_up_down")
+          opts.htp_power_mode = QnnModel::HtpPowerMode::kAdjustUpDown;
+        else if (value == "power_saver")
+          opts.htp_power_mode = QnnModel::HtpPowerMode::kPowerSaver;
+        else
+          showHelpAndExit("Invalid --htp_power_mode");
+        break;
+      }
+      case OPT_HTP_DYNAMIC_PARTITIONING: {
+        const std::string value = pal::g_optArg;
+        if (value == "auto")
+          opts.htp_dynamic_partitioning = ServerOptions::HtpDynamicPartitioning::kAuto;
+        else if (value == "enabled")
+          opts.htp_dynamic_partitioning = ServerOptions::HtpDynamicPartitioning::kEnabled;
+        else if (value == "disabled")
+          opts.htp_dynamic_partitioning = ServerOptions::HtpDynamicPartitioning::kDisabled;
+        else
+          showHelpAndExit("Invalid --htp_dynamic_partitioning");
+        break;
+      }
       case OPT_LOG_LEVEL:
         logLevel = sample_app::parseLogLevel(pal::g_optArg);
         if (logLevel != QNN_LOG_LEVEL_MAX) {
@@ -440,16 +488,16 @@ static void registerGenerateEndpoint(httplib::Server &svr, Pipeline *pipeline) {
                          .count()
                   << "ms\n";
               // Keep the legacy top-level timings stable for existing clients.
-              // Stage timers that this native core cannot observe yet are
-              // explicit UNAVAILABLE values, never fabricated zeroes.  The
-              // host harness therefore treats them as diagnostics rather than
-              // a OnePlus 13 performance measurement.
+              // `unet_ms` is measured at Pipeline's actual UNet invocation
+              // boundaries. Other unavailable native stages stay explicit;
+              // neither HTTP elapsed time nor a synthetic zero may replace
+              // them in the target-device acceptance report.
               nlohmann::json stage_metrics = {
                   {"end_to_end_ms", result.generation_time_ms},
                   {"first_step_ms", result.first_step_time_ms},
                   {"context_load_ms", { {"status", "UNAVAILABLE"} }},
                   {"clip_ms", { {"status", "UNAVAILABLE"} }},
-                  {"unet_ms", { {"status", "UNAVAILABLE"} }},
+                  {"unet_ms", result.unet_time_ms},
                   {"vae_decode_ms", { {"status", "UNAVAILABLE"} }},
                   {"peak_pss_kb", { {"status", "UNAVAILABLE"} }},
                   {"htp_spill_fill", { {"status", "UNAVAILABLE"} }},
@@ -706,6 +754,12 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   ServerOptions opts = processCommandLine(argc, argv);
+
+  setCpuClipThreads(opts.cpu_clip_threads);
+  qnn_runtime::configureHtpPerformance(
+      opts.htp_power_mode,
+      opts.htp_dynamic_partitioning != ServerOptions::HtpDynamicPartitioning::kAuto,
+      opts.htp_dynamic_partitioning == ServerOptions::HtpDynamicPartitioning::kEnabled);
 
   if (opts.convert_mode) {
     runConvertMode(opts);

@@ -36,6 +36,20 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 
 /**
+ * Converts an accepted remote snapshot into the exact BackendService extras.
+ * Keeping the mapping pure makes all v2 values regression-testable before the
+ * service writes them to the Android Intent.
+ */
+internal fun io.github.xororz.localdream.data.PerformancePresetEngineConfig.remoteBackendExtras(): Map<String, Any> = buildMap {
+    put(BackendService.EXTRA_SDXL_LOW_RAM, sdxlLowRam)
+    put(BackendService.EXTRA_ANIMA_LOW_RAM, animaLowRam)
+    put(BackendService.EXTRA_ANIMA_SEQUENTIAL_DIT, animaSequentialDit)
+    cpuClipThreads?.let { put(BackendService.EXTRA_CPU_CLIP_THREADS, it) }
+    htpPowerMode?.let { put(BackendService.EXTRA_HTP_POWER_MODE, it.name) }
+    htpDynamicPartitioning?.let { put(BackendService.EXTRA_HTP_DYNAMIC_PARTITIONING, it.name) }
+}
+
+/**
  * Host-mode (controlled device, "A") foreground service.
  *
  * Runs the small authenticated control API ([RemoteHostServer]) that lets a
@@ -214,12 +228,14 @@ class RemoteHostService : Service() {
                 putExtra("width", width)
                 putExtra("height", height)
                 presetExecution?.let { execution ->
-                    putExtra(BackendService.EXTRA_SDXL_LOW_RAM, execution.engineConfig.sdxlLowRam)
-                    putExtra(BackendService.EXTRA_ANIMA_LOW_RAM, execution.engineConfig.animaLowRam)
-                    putExtra(
-                        BackendService.EXTRA_ANIMA_SEQUENTIAL_DIT,
-                        execution.engineConfig.animaSequentialDit,
-                    )
+                    execution.engineConfig.remoteBackendExtras().forEach { (key, value) ->
+                        when (value) {
+                            is Boolean -> putExtra(key, value)
+                            is Int -> putExtra(key, value)
+                            is String -> putExtra(key, value)
+                            else -> error("Unsupported remote backend extra: $key")
+                        }
+                    }
                 }
             }
             // Plain startService: BackendService is already a live foreground

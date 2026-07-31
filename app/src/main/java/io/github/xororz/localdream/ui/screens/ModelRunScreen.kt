@@ -2105,6 +2105,18 @@ fun ModelRunScreen(
                                                         BackendService.EXTRA_ANIMA_SEQUENTIAL_DIT,
                                                         engineConfig.animaSequentialDit,
                                                     )
+                                                    engineConfig.cpuClipThreads?.let {
+                                                        putExtra(BackendService.EXTRA_CPU_CLIP_THREADS, it)
+                                                    }
+                                                    engineConfig.htpPowerMode?.let {
+                                                        putExtra(BackendService.EXTRA_HTP_POWER_MODE, it.name)
+                                                    }
+                                                    engineConfig.htpDynamicPartitioning?.let {
+                                                        putExtra(
+                                                            BackendService.EXTRA_HTP_DYNAMIC_PARTITIONING,
+                                                            it.name,
+                                                        )
+                                                    }
                                                 },
                                             )
                                         }

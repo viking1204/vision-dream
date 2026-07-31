@@ -12,6 +12,7 @@ data class PerformancePreset(
     val configJson: String,
     val revision: Long,
     val isFallback: Boolean = false,
+    val isBuiltIn: Boolean = false,
 )
 
 data class PresetSnapshot(
@@ -67,7 +68,10 @@ interface PerformancePresetStore {
 /**
  * 性能预设领域规则。持久层适配器必须在单个 Room transaction 内调用这些写操作。
  */
-class PerformancePresetRepository(private val store: PerformancePresetStore) {
+class PerformancePresetRepository(
+    private val store: PerformancePresetStore,
+    private val qualifications: PerformancePresetQualificationStore? = null,
+) {
     init {
         if (store.get(COMPATIBILITY_FALLBACK_ID) == null) {
             store.save(
@@ -78,6 +82,7 @@ class PerformancePresetRepository(private val store: PerformancePresetStore) {
                     configJson = "{}",
                     revision = 1,
                     isFallback = true,
+                    isBuiltIn = true,
                 ),
             )
         }
@@ -117,33 +122,52 @@ class PerformancePresetRepository(private val store: PerformancePresetStore) {
     ): PerformancePreset = synchronized(this) {
         validate(name, selector, configJson)
         val current = requireNotNull(store.get(id)) { "Preset not found" }
-        require(!current.isFallback) { "Compatibility fallback cannot be modified" }
+        require(!current.isBuiltIn) { "Built-in preset cannot be modified" }
         require(current.revision == expectedRevision) { "Preset revision conflict" }
-        val sameName = store.getByName(name.trim())
-        require(sameName == null || sameName.id == id) { "Preset name already exists" }
+        val normalizedName = name.trim()
+        if (normalizedName != current.name) {
+            require(store.getByName(normalizedName) == null) { "Preset name already exists" }
+        }
+        qualifications?.revokeForPreset(current.id)
         current.copy(
-            name = name.trim(),
+            name = normalizedName,
             selector = selector.trim(),
             configJson = configJson.trim(),
             revision = current.revision + 1,
         ).also(store::save)
     }
 
-    fun bind(bindingKey: String, presetId: String): PerformancePresetBinding = synchronized(this) {
+    fun bind(
+        bindingKey: String,
+        presetId: String,
+        qualificationContext: PresetQualificationContext? = null,
+    ): PerformancePresetBinding = synchronized(this) {
         require(PerformancePresetBinding.isValid(bindingKey)) { "Preset binding key is invalid" }
         val preset = requireNotNull(store.get(presetId)) { "Preset not found" }
         require(!preset.isFallback && PerformancePresetConfig.parse(preset.configJson).isSupported) {
             "Only a supported user preset can be bound"
         }
+        requireAutomaticBindingQualified(preset, qualificationContext)
         PerformancePresetBinding(bindingKey = bindingKey, presetId = presetId).also(store::saveBinding)
     }
 
-    fun resolve(explicitPresetId: String? = null, modelId: String? = null): PresetSnapshot = synchronized(this) {
-        val selectedId = explicitPresetId?.takeIf(String::isNotBlank)
-            ?: modelId?.let(PerformancePresetBinding::model)?.let(store::binding)?.presetId
-            ?: store.binding(PerformancePresetBinding.DEFAULT)?.presetId
-            ?: COMPATIBILITY_FALLBACK_ID
+    fun resolve(
+        explicitPresetId: String? = null,
+        modelId: String? = null,
+        qualificationContext: PresetQualificationContext? = null,
+    ): PresetSnapshot = synchronized(this) {
+        val explicitId = explicitPresetId?.takeIf(String::isNotBlank)
+        val automaticBinding = if (explicitId == null) {
+            modelId?.let(PerformancePresetBinding::model)?.let(store::binding)
+                ?: store.binding(PerformancePresetBinding.DEFAULT)
+        } else {
+            null
+        }
+        val selectedId = explicitId ?: automaticBinding?.presetId ?: COMPATIBILITY_FALLBACK_ID
         val preset = requireNotNull(store.get(selectedId)) { "Preset not found" }
+        if (automaticBinding != null && !preset.isFallback) {
+            requireAutomaticBindingQualified(preset, qualificationContext)
+        }
         val parsed = PerformancePresetConfig.parse(preset.configJson)
         require(parsed.isSupported || (preset.isFallback && parsed.status == PresetConfigParseStatus.LEGACY_COMPATIBILITY)) {
             "Preset config is not executable"
@@ -153,8 +177,17 @@ class PerformancePresetRepository(private val store: PerformancePresetStore) {
 
     fun delete(id: String): PresetDeleteResult = synchronized(this) {
         val preset = store.get(id) ?: return PresetDeleteResult(deleted = false)
-        if (preset.isFallback) return PresetDeleteResult(deleted = false)
-        store.deleteUserPresetAndRebind(id, COMPATIBILITY_FALLBACK_ID)
+        if (preset.isBuiltIn) return PresetDeleteResult(deleted = false)
+        store.deleteUserPresetAndRebind(id, COMPATIBILITY_FALLBACK_ID).also { result ->
+            if (result.deleted) qualifications?.revokeForPreset(id)
+        }
+    }
+
+    fun isAutomaticBindingQualified(
+        preset: PerformancePreset,
+        qualificationContext: PresetQualificationContext,
+    ): Boolean = synchronized(this) {
+        qualifications?.hasActiveTargetQualification(preset, qualificationContext) == true
     }
 
     fun snapshot(id: String): PresetSnapshot = synchronized(this) {
@@ -181,6 +214,15 @@ class PerformancePresetRepository(private val store: PerformancePresetStore) {
         require(selector.trim().matches(SELECTOR)) { "Preset selector is invalid" }
         require(PerformancePresetConfig.parse(configJson.trim()).isSupported) {
             "Preset config must be a strict supported v1 schema"
+        }
+    }
+
+    private fun requireAutomaticBindingQualified(
+        preset: PerformancePreset,
+        qualificationContext: PresetQualificationContext?,
+    ) {
+        if (qualificationContext == null || !isAutomaticBindingQualified(preset, qualificationContext)) {
+            throw PresetNotTargetValidatedException()
         }
     }
 

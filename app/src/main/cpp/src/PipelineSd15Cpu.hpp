@@ -41,7 +41,7 @@ class PipelineSd15Cpu : public Pipeline {
       throw std::runtime_error(
           "Failed to create temporary MNN CLIP interpreter!");
 
-    MnnSessionOptions opts;  // CLIP always runs on CPU
+    MnnSessionOptions opts = cpuClipSessionOptions();
     MNN::Session *session = createMnnSession(interpreter, opts);
     if (!session) {
       delete interpreter;
@@ -142,7 +142,7 @@ class PipelineSd15Cpu : public Pipeline {
 
   void runUnetStep(const GenerationRequest &req, const float *latents_batch2,
                    float timestep_f, bool /*skip_uncond*/, Conditioning &cond,
-                   float *out_batch2) override {
+                   float *out_batch2, int64_t &unet_execution_ms) override {
     const int timestep = static_cast<int>(timestep_f);
     auto samp = unet_interpreter_->getSessionInput(unet_session_, "sample");
     auto ts = unet_interpreter_->getSessionInput(unet_session_, "timestep");
@@ -167,7 +167,9 @@ class PipelineSd15Cpu : public Pipeline {
     enc->copyFromHostTensor(enc_nchw_tensor);
 
     // Single batch inference for both negative and positive conditions.
-    unet_interpreter_->runSession(unet_session_);
+    measureUnetExecutionMillis(unet_execution_ms, [&] {
+      unet_interpreter_->runSession(unet_session_);
+    });
 
     auto output =
         unet_interpreter_->getSessionOutput(unet_session_, "out_sample");

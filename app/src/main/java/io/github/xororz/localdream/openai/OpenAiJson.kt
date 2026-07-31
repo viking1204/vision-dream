@@ -72,6 +72,7 @@ object OpenAiJson {
     fun images(
         created: Long,
         images: List<OpenAiImage>,
+        diagnostics: NativeGenerationDiagnostics? = null,
     ): String {
         require(created >= 0L) { "created must not be negative" }
         return buildString {
@@ -90,7 +91,13 @@ object OpenAiJson {
                 }
                 append('}')
             }
-            append("]}")
+            append("]")
+            diagnostics?.unetMs?.takeIf { it > 0L }?.let { unetMs ->
+                append(",\"vendor_diagnostics\":{\"unet_ms\":")
+                append(unetMs)
+                append('}')
+            }
+            append('}')
         }
     }
 

@@ -35,6 +35,7 @@
 #include "Scheduler.hpp"
 #include "TextEncoder.hpp"
 #include "Tiling.hpp"
+#include "UnetExecutionTiming.hpp"
 
 // All per-request parameters. Image/mask buffers are pre-decoded by the
 // request parser:
@@ -213,7 +214,8 @@ class Pipeline {
   virtual void runUnetStep(const GenerationRequest &req,
                            const float *latents_batch2, float timestep,
                            bool skip_uncond, Conditioning &cond,
-                           float *out_batch2) = 0;
+                           float *out_batch2,
+                           int64_t &unet_execution_ms) = 0;
 
   // --- capabilities ------------------------------------------------------
   // With cfg = 1.0, noise_pred = uncond + 1*(txt - uncond) = txt, so the
@@ -292,12 +294,14 @@ class Pipeline {
   xt::xarray<float> runUnetTiled(const GenerationRequest &req,
                                  const xt::xarray<float> &latents_scaled,
                                  int timestep, bool skip_uncond,
-                                 Conditioning &cond);
+                                 Conditioning &cond,
+                                 int64_t &unet_execution_ms);
   xt::xarray<float> ultrafixInvertNoise(const GenerationRequest &req,
                                         const xt::xarray<float> &z0,
                                         const xt::xarray<float> &timesteps,
                                         int start_step, Conditioning &cond,
-                                        const std::function<void()> &on_hop);
+                                        const std::function<void()> &on_hop,
+                                        int64_t &unet_time_ms);
 
   bool useTiledVae(const GenerationRequest &req) const {
     return vaeTilingSupported() &&
@@ -641,7 +645,8 @@ inline xt::xarray<float> Pipeline::decodeToPixels(
 // (DPM history, ancestral noise) see exactly one image-wide trajectory.
 inline xt::xarray<float> Pipeline::runUnetTiled(
     const GenerationRequest &req, const xt::xarray<float> &latents_scaled,
-    int timestep, bool skip_uncond, Conditioning &cond) {
+    int timestep, bool skip_uncond, Conditioning &cond,
+    int64_t &unet_execution_ms) {
   const int tile_px = req.ultrafix_tile;
   const int tile_lat = tile_px / 8;
   const int full_w = sample_width;
@@ -701,7 +706,7 @@ inline xt::xarray<float> Pipeline::runUnetTiled(
     }
 
     runUnetStep(req, tile_in.data(), timestep, skip_uncond, cond,
-                tile_out.data());
+                tile_out.data(), unet_execution_ms);
 
     xt::xarray<float> pred;
     if (skip_uncond) {
@@ -778,7 +783,7 @@ inline std::vector<int> ultrafixInversionLadder(int num_timesteps,
 inline xt::xarray<float> Pipeline::ultrafixInvertNoise(
     const GenerationRequest &req, const xt::xarray<float> &z0,
     const xt::xarray<float> &timesteps, int start_step, Conditioning &cond,
-    const std::function<void()> &on_hop) {
+    const std::function<void()> &on_hop, int64_t &unet_time_ms) {
   const auto &abar = trainAlphasCumprod();
   const auto ladder =
       ultrafixInversionLadder((int)timesteps.size(), start_step);
@@ -794,7 +799,8 @@ inline xt::xarray<float> Pipeline::ultrafixInvertNoise(
         k == 0 ? t_tgt : std::clamp((int)timesteps(ladder[k - 1]), 0, 999);
 
     xt::xarray<float> model_out =
-        runUnetTiled(req, z, t_eval, /*skip_uncond=*/true, cond);
+        runUnetTiled(req, z, t_eval, /*skip_uncond=*/true, cond,
+                     unet_time_ms);
     xt::xarray<float> eps;
     if (use_v_pred_) {
       // v-prediction: eps = sqrt(abar)*v + sqrt(1-abar)*z at the source.
@@ -885,6 +891,7 @@ inline GenerationResult Pipeline::generate(
   try {
     auto start_time = std::chrono::high_resolution_clock::now();
     int first_step_time_ms = 0;
+    int64_t unet_time_ms = 0;
     int total_run_steps = req.steps + (req.img2img ? 1 : 0) + 2;
     int current_step = 0;
     const int batch_size = 2;
@@ -971,7 +978,7 @@ inline GenerationResult Pipeline::generate(
             req, original_latents, timesteps, start_step, cond, [&]() {
               current_step++;
               progress_callback(current_step, total_run_steps, "");
-            });
+            }, unet_time_ms);
         std::cout << "Ultrafix inversion dur: " << elapsedMs(inv_start)
                   << "ms\n";
       }
@@ -1044,7 +1051,7 @@ inline GenerationResult Pipeline::generate(
       if (unet_tiled) {
         noise_pred =
             runUnetTiled(req, latents_scaled, static_cast<int>(current_ts),
-                         skip_uncond, cond);
+                         skip_uncond, cond, unet_time_ms);
       } else {
         std::vector<float> latents_in_vec;
         latents_in_vec.reserve(batch_size * single_latent_size);
@@ -1055,7 +1062,7 @@ inline GenerationResult Pipeline::generate(
         std::vector<float> unet_out_latents(batch_size * single_latent_size);
 
         runUnetStep(req, latents_in_vec.data(), current_ts, skip_uncond, cond,
-                    unet_out_latents.data());
+                    unet_out_latents.data(), unet_time_ms);
 
         if (skip_uncond) {
           // cfg = 1 path: only the cond half of unet_out_latents was filled.
@@ -1071,7 +1078,6 @@ inline GenerationResult Pipeline::generate(
           noise_pred = xt::eval(uncond + req.cfg * (txt - uncond));
         }
       }
-
       auto step_dur = elapsedMs(step_start_time);
       if (i == start_step) first_step_time_ms = (int)step_dur;
       std::cout << "UNET step " << i << " dur: " << step_dur << "ms\n";
@@ -1269,7 +1275,8 @@ inline GenerationResult Pipeline::generate(
                             final_height,
                             3,
                             static_cast<int>(total_time),
-                            first_step_time_ms};
+                            first_step_time_ms,
+                            static_cast<int>(unet_time_ms)};
   } catch (const std::exception &e) {
     QNN_ERROR("Image generation error: %s", e.what());
     throw;

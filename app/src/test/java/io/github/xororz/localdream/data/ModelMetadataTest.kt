@@ -28,6 +28,8 @@ class ModelMetadataTest {
                 htpTarget = "v79",
                 contextFingerprint = "a".repeat(64),
             ),
+            displayName = "写实人像 XL",
+            description = "风格：写实摄影；适合：人像、电影感场景。",
         )
 
         ModelMetadataStore.write(directory, expected)
@@ -51,7 +53,7 @@ class ModelMetadataTest {
         assertEquals(null, ModelMetadataStore.read(directory))
 
         directory.resolve(ModelMetadataStore.FILE_NAME).writeText(
-            """{"schema_version":4,"content_rating":"nsfw"}""",
+            """{"schema_version":5,"content_rating":"nsfw"}""",
         )
         assertEquals(null, ModelMetadataStore.read(directory))
     }

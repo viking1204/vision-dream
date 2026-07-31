@@ -35,6 +35,10 @@ internal object BackendServiceStateHolder {
     val servingModelId = MutableStateFlow<String?>(null)
     val servingResolution = MutableStateFlow<Pair<Int, Int>?>(null)
     val servingImageInputEnabled = MutableStateFlow<Boolean?>(null)
+
+    // Published independently of model identity because the OpenAI gateway may
+    // switch only a performance preset while keeping the same model/canvas.
+    val servingRuntimeConfigSignature = MutableStateFlow<String?>(null)
     val openAiPreparation = MutableStateFlow(BackendService.OpenAiPreparation())
     val commandResult = MutableStateFlow(BackendService.BackendCommandResult())
     val currentLog = MutableStateFlow("")
@@ -121,6 +125,10 @@ class BackendService : Service() {
         const val EXTRA_SDXL_LOW_RAM = "sdxl_low_ram"
         const val EXTRA_ANIMA_LOW_RAM = "anima_low_ram"
         const val EXTRA_ANIMA_SEQUENTIAL_DIT = "anima_sequential_dit"
+        const val EXTRA_CPU_CLIP_THREADS = "cpu_clip_threads"
+        const val EXTRA_HTP_POWER_MODE = "htp_power_mode"
+        const val EXTRA_HTP_DYNAMIC_PARTITIONING = "htp_dynamic_partitioning"
+        const val EXTRA_RUNTIME_CONFIG_SIGNATURE = "runtime_config_signature"
         const val EXTRA_EXPECTED_MODEL_ID = "expected_model_id"
         const val REQUEST_OWNER_OPENAI_API = "openai_api"
 
@@ -153,6 +161,9 @@ class BackendService : Service() {
         val servingImageInputEnabled: StateFlow<Boolean?> =
             BackendServiceStateHolder.servingImageInputEnabled
 
+        val servingRuntimeConfigSignature: StateFlow<String?> =
+            BackendServiceStateHolder.servingRuntimeConfigSignature
+
         val openAiPreparation: StateFlow<OpenAiPreparation> = BackendServiceStateHolder.openAiPreparation
         val commandResult: StateFlow<BackendCommandResult> = BackendServiceStateHolder.commandResult
 
@@ -169,6 +180,7 @@ class BackendService : Service() {
             BackendServiceStateHolder.servingModelId.value = config?.modelId
             BackendServiceStateHolder.servingResolution.value = config?.let { Pair(it.width, it.height) }
             BackendServiceStateHolder.servingImageInputEnabled.value = config?.imageInputEnabled
+            BackendServiceStateHolder.servingRuntimeConfigSignature.value = config?.runtimeConfigSignature
         }
 
         private fun publishCommandResult(
@@ -231,6 +243,10 @@ class BackendService : Service() {
         val sdxlLowRam: Boolean,
         val animaLowRam: Boolean,
         val animaSequentialDit: Boolean,
+        val cpuClipThreads: Int?,
+        val htpPowerMode: io.github.xororz.localdream.data.HtpPowerMode?,
+        val htpDynamicPartitioning: io.github.xororz.localdream.data.HtpDynamicPartitioning?,
+        val runtimeConfigSignature: String?,
     )
 
     override fun onCreate() {
@@ -364,6 +380,16 @@ class BackendService : Service() {
             animaSequentialDit = intent.takeIf { it.hasExtra(EXTRA_ANIMA_SEQUENTIAL_DIT) }
                 ?.getBooleanExtra(EXTRA_ANIMA_SEQUENTIAL_DIT, false)
                 ?: preferences.getBoolean("anima_seq_dit", false),
+            cpuClipThreads = intent.takeIf { it.hasExtra(EXTRA_CPU_CLIP_THREADS) }
+                ?.getIntExtra(EXTRA_CPU_CLIP_THREADS, 0)
+                ?.takeIf { it in 1..8 },
+            htpPowerMode = intent.getStringExtra(EXTRA_HTP_POWER_MODE)?.let {
+                runCatching { io.github.xororz.localdream.data.HtpPowerMode.valueOf(it) }.getOrNull()
+            },
+            htpDynamicPartitioning = intent.getStringExtra(EXTRA_HTP_DYNAMIC_PARTITIONING)?.let {
+                runCatching { io.github.xororz.localdream.data.HtpDynamicPartitioning.valueOf(it) }.getOrNull()
+            },
+            runtimeConfigSignature = intent.getStringExtra(EXTRA_RUNTIME_CONFIG_SIGNATURE),
         )
     }
 
@@ -706,6 +732,9 @@ class BackendService : Service() {
                     sdxlLowRam = config.sdxlLowRam,
                     animaLowRam = config.animaLowRam,
                     animaSequentialDit = config.animaSequentialDit,
+                    cpuClipThreads = config.cpuClipThreads,
+                    htpPowerMode = config.htpPowerMode,
+                    htpDynamicPartitioning = config.htpDynamicPartitioning,
                 ),
                 usesUnifiedCli = usesUnifiedCli,
             )

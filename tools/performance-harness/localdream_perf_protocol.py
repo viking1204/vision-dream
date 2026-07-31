@@ -9,6 +9,8 @@ connected Android device while making a real-device run use the exact path.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from http.client import HTTPException
+import hashlib
 import json
 from pathlib import Path
 import time
@@ -101,7 +103,14 @@ class UrlLibTransport:
                 error.read(),
             )
         except URLError as error:
-            raise ProtocolExecutionError(f"transport error for {method} {path}: {error.reason}") from error
+            raise _transport_error(method, path, error) from error
+        except (OSError, HTTPException) as error:
+            # http.client.RemoteDisconnected, connection resets and socket
+            # timeouts are all OSError subclasses.  They are expected device
+            # transport failures, not harness bugs, and their raw text can
+            # contain a URL or proxy details.  Keep the report replayable
+            # without ever reflecting credentials or connection metadata.
+            raise _transport_error(method, path, error) from error
 
     def open_sse(self, path: str, headers: dict[str, str], timeout_ms: int) -> SseResponse:
         request_headers = dict(headers)
@@ -118,7 +127,9 @@ class UrlLibTransport:
                 error.read(),
             )
         except URLError as error:
-            raise ProtocolExecutionError(f"transport error for SSE {path}: {error.reason}") from error
+            raise _transport_error("SSE", path, error) from error
+        except (OSError, HTTPException) as error:
+            raise _transport_error("SSE", path, error) from error
 
 
 class _UrlLibSseResponse:
@@ -128,7 +139,10 @@ class _UrlLibSseResponse:
         self.headers = {name.lower(): value for name, value in response.headers.items()}
 
     def events(self) -> Iterator[SseEvent]:
-        yield from _parse_sse_lines(self._response)
+        try:
+            yield from _parse_sse_lines(self._response)
+        except (OSError, HTTPException) as error:
+            raise _transport_error("SSE read", "/mcp", error) from error
 
     def close(self) -> None:
         self._response.close()
@@ -149,6 +163,13 @@ class _StaticSseResponse:
 
 class ProtocolExecutionError(RuntimeError):
     pass
+
+
+def _transport_error(operation: str, path: str, error: BaseException) -> ProtocolExecutionError:
+    """Normalizes recoverable stdlib transport failures without leaking details."""
+    return ProtocolExecutionError(
+        f"transport failure for {operation} {path} ({type(error).__name__})",
+    )
 
 
 SCHEDULER_API_IDS = {
@@ -181,7 +202,7 @@ class ProtocolExecution:
     status: int
     output_url: str | None
     output_bytes: int
-    evidence: dict[str, str | int | bool]
+    evidence: dict[str, object]
 
 
 def openai_payload(scenario: dict) -> dict:
@@ -221,8 +242,23 @@ def execute_v1_generation(transport: HttpTransport, scenario: dict) -> ProtocolE
         status=result.status,
         output_url=image.get("url"),
         output_bytes=len(image.get("b64_json", "")),
-        evidence={"hasData": bool(response.get("data")), "hasUrl": bool(image.get("url"))},
+        evidence={
+            "hasData": bool(response.get("data")),
+            "hasUrl": bool(image.get("url")),
+            "vendorDiagnostics": _vendor_diagnostics(response),
+        },
     )
+
+
+def _vendor_diagnostics(response: dict) -> dict[str, float]:
+    """Accept only native-supplied numeric stage evidence from the response."""
+    value = response.get("vendor_diagnostics")
+    if not isinstance(value, dict):
+        return {}
+    unet_ms = value.get("unet_ms")
+    if not isinstance(unet_ms, (int, float)) or isinstance(unet_ms, bool) or unet_ms <= 0:
+        return {}
+    return {"unetMs": float(unet_ms)}
 
 
 def execute_mcp_generation(
@@ -383,8 +419,7 @@ def protocol_parity_with_cancel(
     )
     reconnect_image_path = _required_resource_link(reconnected, mcp.evidence["jobId"])
     download = transport_mcp.request("GET", reconnect_image_path, timeout_ms=scenario["timeoutMs"])
-    if download.status != 200 or not download.body:
-        raise ProtocolExecutionError("MCP asset download failed")
+    download_evidence = _verified_png_download(download, scenario, "MCP asset")
     return {
         "v1": v1,
         "mcp": {
@@ -398,6 +433,7 @@ def protocol_parity_with_cancel(
             "cancelReplay": cancel_replay,
             "reconnected": reconnected,
             "download": download.body,
+            "downloadEvidence": download_evidence,
         },
         "parity": {
             "tool": mcp.evidence["tool"] == "generation.create",
@@ -411,7 +447,7 @@ def protocol_parity_with_cancel(
             "cancelReplay": cancel_replay.get("task") == "cancelled",
             "reconnect": reconnected.get("jobId") == mcp.evidence["jobId"],
             "resourceLink": image_path == reconnect_image_path,
-            "download": bool(download.body),
+            "download": bool(download_evidence),
             "sharedModel": openai_payload(scenario)["model"] == scenario["model"]["selector"],
             "fixtureParity": _mcp_can_express_full_fixture(scenario),
         },
@@ -432,6 +468,21 @@ def protocol_parity(
         scenario,
         mutation_namespace=mutation_namespace,
     )
+
+
+def _verified_png_download(download: HttpResult, scenario: dict, label: str) -> dict:
+    if download.status != 200 or not download.body:
+        raise ProtocolExecutionError(f"{label} download failed")
+    content_type = _header(download.headers, "content-type").split(";", 1)[0].strip().lower()
+    if content_type != "image/png" or not download.body.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ProtocolExecutionError(f"{label} download is not a PNG")
+    if len(download.body) < 24 or download.body[12:16] != b"IHDR":
+        raise ProtocolExecutionError(f"{label} PNG is truncated")
+    width = int.from_bytes(download.body[16:20], "big")
+    height = int.from_bytes(download.body[20:24], "big")
+    if width <= 0 or height <= 0 or (width, height) != (scenario["request"]["width"], scenario["request"]["height"]):
+        raise ProtocolExecutionError(f"{label} PNG dimensions do not match scenario")
+    return {"contentType": content_type, "magic": "PNG", "width": width, "height": height, "bytes": len(download.body), "sha256": hashlib.sha256(download.body).hexdigest()}
 
 
 def _w7_idempotency_key(scenario: dict, operation: str, mutation_namespace: str) -> str:

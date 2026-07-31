@@ -35,6 +35,7 @@ class BackendRuntimeCoordinator(private val context: Context) {
         presetEngineConfig: PerformancePresetEngineConfig? = null,
     ): Pair<Int, Int> {
         val dimensions = resolveDimensions(entry, requestedWidth, requestedHeight)
+        val runtimeConfigSignature = runtimeConfigSignature(presetEngineConfig)
         val intent = Intent(context, BackendService::class.java).apply {
             putExtra("modelId", entry.id)
             putExtra("backendType", entry.backendType)
@@ -49,10 +50,16 @@ class BackendRuntimeCoordinator(private val context: Context) {
                 BackendService.EXTRA_REQUEST_OWNER,
                 BackendService.REQUEST_OWNER_OPENAI_API,
             )
+            putExtra(BackendService.EXTRA_RUNTIME_CONFIG_SIGNATURE, runtimeConfigSignature)
             presetEngineConfig?.let { config ->
                 putExtra(BackendService.EXTRA_SDXL_LOW_RAM, config.sdxlLowRam)
                 putExtra(BackendService.EXTRA_ANIMA_LOW_RAM, config.animaLowRam)
                 putExtra(BackendService.EXTRA_ANIMA_SEQUENTIAL_DIT, config.animaSequentialDit)
+                config.cpuClipThreads?.let { putExtra(BackendService.EXTRA_CPU_CLIP_THREADS, it) }
+                config.htpPowerMode?.let { putExtra(BackendService.EXTRA_HTP_POWER_MODE, it.name) }
+                config.htpDynamicPartitioning?.let {
+                    putExtra(BackendService.EXTRA_HTP_DYNAMIC_PARTITIONING, it.name)
+                }
             }
         }
         context.startService(intent)
@@ -61,6 +68,7 @@ class BackendRuntimeCoordinator(private val context: Context) {
             dimensions,
             entry.kind == InstalledModelCatalog.Kind.GENERATION &&
                 entry.supportsImageInput,
+            runtimeConfigSignature,
         )
         return dimensions
     }
@@ -117,6 +125,7 @@ class BackendRuntimeCoordinator(private val context: Context) {
         modelId: String,
         dimensions: Pair<Int, Int>,
         imageInputEnabled: Boolean,
+        runtimeConfigSignature: String?,
     ) {
         val startedAt = System.currentTimeMillis()
         var errorStreak = 0
@@ -141,7 +150,12 @@ class BackendRuntimeCoordinator(private val context: Context) {
             val matches = state is BackendService.BackendState.Running &&
                 BackendService.servingModelId.value == modelId &&
                 BackendService.servingResolution.value == dimensions &&
-                BackendService.servingImageInputEnabled.value == imageInputEnabled
+                BackendService.servingImageInputEnabled.value == imageInputEnabled &&
+                // Without this comparison an unchanged model/canvas can make
+                // a new preset request observe the old backend as healthy just
+                // before its queued teardown. The following /generate then
+                // races the terminating process and becomes a spurious 500.
+                BackendService.servingRuntimeConfigSignature.value == runtimeConfigSignature
             if (matches && isHealthy()) return
 
             if (System.currentTimeMillis() - startedAt >= READY_TIMEOUT_MS) {
@@ -167,6 +181,17 @@ class BackendRuntimeCoordinator(private val context: Context) {
         } catch (_: Exception) {
             false
         }
+    }
+
+    private fun runtimeConfigSignature(config: PerformancePresetEngineConfig?): String? = config?.let {
+        listOf(
+            it.sdxlLowRam,
+            it.animaLowRam,
+            it.animaSequentialDit,
+            it.cpuClipThreads,
+            it.htpPowerMode?.name,
+            it.htpDynamicPartitioning?.name,
+        ).joinToString(separator = "|")
     }
 
     companion object {

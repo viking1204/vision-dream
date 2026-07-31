@@ -1,6 +1,8 @@
 package io.github.xororz.localdream.inference
 
 import io.github.xororz.localdream.openai.BoundedSerialExecutor
+import java.util.IdentityHashMap
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ThreadFactory
 
 /**
@@ -15,6 +17,8 @@ class InferenceDispatcher(
 ) {
     private val monitor = Any()
     private val preferredAffinityKey = preferredAffinityKey
+    private val leaseCompletionBarriers =
+        IdentityHashMap<CompletableFuture<Unit>, CompletableFuture<Unit>>()
     private var executor = newExecutor(waitingCapacity)
 
     /**
@@ -96,16 +100,37 @@ class InferenceDispatcher(
         executor.submit(affinityKey = affinityKey, ownerId = ownerId, operation = operation).also {
             if (it is BoundedSerialExecutor.Submission.Accepted) {
                 val jobLease = leases.acquire(ownerId, BackendRuntimeLeaseManager.Kind.JOB)
-                it.executionFinished.whenComplete { _, _ -> jobLease.close() }
+                val leaseReleased = CompletableFuture<Unit>()
+                leaseCompletionBarriers[it.executionFinished] = leaseReleased
+                it.executionFinished.whenComplete { _, error ->
+                    jobLease.close()
+                    synchronized(monitor) {
+                        leaseCompletionBarriers.remove(it.executionFinished)
+                    }
+                    if (error == null) {
+                        leaseReleased.complete(Unit)
+                    } else {
+                        leaseReleased.completeExceptionally(error)
+                    }
+                }
+                return@synchronized BoundedSerialExecutor.Submission.Accepted(
+                    future = it.future,
+                    executionFinished = leaseReleased,
+                )
             }
         }
     }
 
     /**
      * Cancels one owner and returns its real execution-completion barriers.
-     * A cancelled future is not proof that a native call has stopped.
+     * A barrier completes only after both the native operation and its runtime
+     * lease have finished; a cancelled result future proves neither.
      */
-    fun cancelOwner(ownerId: String) = executor.cancelOwner(ownerId)
+    fun cancelOwner(ownerId: String): List<CompletableFuture<Unit>> = synchronized(monitor) {
+        executor.cancelOwner(ownerId).map { executionFinished ->
+            leaseCompletionBarriers[executionFinished] ?: executionFinished
+        }
+    }
 
     companion object {
         private const val DEFAULT_WAITING_CAPACITY = 3

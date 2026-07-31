@@ -229,19 +229,23 @@ class PipelineAnima : public PipelineQnn {
 
   void runUnetStep(const GenerationRequest &, const float *latents_batch2,
                    float timestep, bool skip_uncond, Conditioning &cond,
-                   float *out_batch2) override {
+                   float *out_batch2, int64_t &unet_execution_ms) override {
     const int single = anima_latent_channels * sample_width * sample_height;
     float *in = const_cast<float *>(latents_batch2);
 
     if (seq_dit_) {
-      runUnetStepSeqDit(in, single, timestep, skip_uncond, cond, out_batch2);
+      runUnetStepSeqDit(in, single, timestep, skip_uncond, cond, out_batch2,
+                         unet_execution_ms);
       return;
     }
 
     if (!unet_part1_ || !unet_part2_)
       throw std::runtime_error("Anima UNet parts missing");
-    if (!skip_uncond) runUnetHalf(in, timestep, cond.negHidden(), out_batch2);
-    runUnetHalf(in + single, timestep, cond.posHidden(), out_batch2 + single);
+    if (!skip_uncond)
+      runUnetHalf(in, timestep, cond.negHidden(), out_batch2,
+                  unet_execution_ms);
+    runUnetHalf(in + single, timestep, cond.posHidden(), out_batch2 + single,
+                unet_execution_ms);
   }
 
   void endDenoise() override {
@@ -282,21 +286,27 @@ class PipelineAnima : public PipelineQnn {
   // app re-supplies timestep + context (it already has both) so they cross the
   // split as graph inputs in the compiler-preferred layout (big HTP speedup).
   void runUnetPart1(float *sample, float timestep, float *context,
-                    std::vector<std::vector<float>> &inter) {
-    if (StatusCode::SUCCESS !=
-        unet_part1_->executeAnimaUnetPart1(sample, timestep, context, inter))
+                    std::vector<std::vector<float>> &inter,
+                    int64_t &unet_execution_ms) {
+    const auto status = unet_part1_->executeAnimaUnetPart1(
+        sample, timestep, context, inter, unet_execution_ms);
+    if (StatusCode::SUCCESS != status)
       throw std::runtime_error("Anima UNet part1 failed");
   }
   void runUnetPart2(std::vector<std::vector<float>> &inter, float timestep,
-                    float *context, float *out) {
-    if (StatusCode::SUCCESS !=
-        unet_part2_->executeAnimaUnetPart2(inter, timestep, context, out))
+                    float *context, float *out, int64_t &unet_execution_ms) {
+    const auto status = unet_part2_->executeAnimaUnetPart2(
+        inter, timestep, context, out, unet_execution_ms);
+    if (StatusCode::SUCCESS != status)
       throw std::runtime_error("Anima UNet part2 failed");
   }
 
-  void runUnetHalf(float *sample, float timestep, float *context, float *out) {
-    runUnetPart1(sample, timestep, context, split_intermediates_);
-    runUnetPart2(split_intermediates_, timestep, context, out);
+  void runUnetHalf(float *sample, float timestep, float *context, float *out,
+                   int64_t &unet_execution_ms) {
+    runUnetPart1(sample, timestep, context, split_intermediates_,
+                 unet_execution_ms);
+    runUnetPart2(split_intermediates_, timestep, context, out,
+                 unet_execution_ms);
   }
 
   // Sequential-DiT step: hold at most one DiT half resident. Run part1 for both
@@ -305,20 +315,21 @@ class PipelineAnima : public PipelineQnn {
   // (much slower), but the two halves never co-reside, so 12GB devices fit.
   void runUnetStepSeqDit(float *in, int single, float timestep,
                          bool skip_uncond, Conditioning &cond,
-                         float *out_batch2) {
+                         float *out_batch2, int64_t &unet_execution_ms) {
     loadUnetPart1Alone();
     if (!skip_uncond)
-      runUnetPart1(in, timestep, cond.negHidden(), seq_intermediates_neg_);
+      runUnetPart1(in, timestep, cond.negHidden(), seq_intermediates_neg_,
+                   unet_execution_ms);
     runUnetPart1(in + single, timestep, cond.posHidden(),
-                 seq_intermediates_pos_);
+                 seq_intermediates_pos_, unet_execution_ms);
     releaseUnetPart1();
 
     loadUnetPart2Alone();
     if (!skip_uncond)
       runUnetPart2(seq_intermediates_neg_, timestep, cond.negHidden(),
-                   out_batch2);
+                   out_batch2, unet_execution_ms);
     runUnetPart2(seq_intermediates_pos_, timestep, cond.posHidden(),
-                 out_batch2 + single);
+                 out_batch2 + single, unet_execution_ms);
     releaseUnetPart2();
   }
 

@@ -1,9 +1,12 @@
 package io.github.xororz.localdream.data.db
 
+import android.database.sqlite.SQLiteConstraintException
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.xororz.localdream.data.PresetNotTargetValidatedException
+import io.github.xororz.localdream.data.RoomInferenceJobRepository
 import io.github.xororz.localdream.mcp.McpAuditEvent
 import io.github.xororz.localdream.mcp.McpTransport
 import io.github.xororz.localdream.mcp.RoomMcpAuditSink
@@ -13,6 +16,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -38,7 +42,7 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migrationFrom3To6PreservesHistoryAndCreatesPresetBindingStructure() {
+    fun migrationFrom3To9PreservesHistoryAndSeedsImmutablePerformancePresets() {
         createVersion3Database()
 
         val migrated = Room.databaseBuilder(
@@ -46,7 +50,14 @@ class AppDatabaseMigrationTest {
             AppDatabase::class.java,
             DATABASE_NAME,
         )
-            .addMigrations(AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6)
+            .addMigrations(
+                AppDatabase.MIGRATION_3_4,
+                AppDatabase.MIGRATION_4_5,
+                AppDatabase.MIGRATION_5_6,
+                AppDatabase.MIGRATION_6_7,
+                AppDatabase.MIGRATION_7_8,
+                AppDatabase.MIGRATION_8_9,
+            )
             .allowMainThreadQueries()
             .build()
         roomDatabase = migrated
@@ -96,6 +107,11 @@ class AppDatabaseMigrationTest {
         }
 
         runBlocking {
+            assertTrue(migrated.performancePresetQualificationDao().list().isEmpty())
+        }
+        assertActiveQualificationIdentityIsUnique(migrated)
+
+        runBlocking {
             val prompt = PromptTemplateEntity(
                 title = "Portrait",
                 prompt = "portrait",
@@ -112,12 +128,31 @@ class AppDatabaseMigrationTest {
         }
 
         migrated.openHelper.writableDatabase.query(
-            "SELECT selector, isFallback FROM performance_presets WHERE id = ?",
+            "SELECT selector, isFallback, isBuiltIn FROM performance_presets WHERE id = ?",
             arrayOf("00000000-0000-4000-8000-000000000000"),
         ).use { cursor ->
             assertTrue(cursor.moveToFirst())
             assertEquals("COMPATIBILITY_FALLBACK", cursor.getString(0))
             assertEquals(1, cursor.getInt(1))
+            assertEquals(1, cursor.getInt(2))
+        }
+        migrated.openHelper.writableDatabase.query(
+            "SELECT name, selector, isBuiltIn FROM performance_presets WHERE isFallback = 0 ORDER BY id",
+        ).use { cursor ->
+            assertEquals(4, cursor.count)
+            assertTrue(cursor.moveToFirst())
+            assertEquals("省内存", cursor.getString(0))
+            assertEquals(1, cursor.getInt(2))
+            assertTrue(cursor.moveToLast())
+            assertEquals("持续性能", cursor.getString(0))
+            assertEquals("sustained_performance", cursor.getString(1))
+            assertEquals(1, cursor.getInt(2))
+        }
+        migrated.openHelper.writableDatabase.query("PRAGMA index_list(performance_presets)").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            while (cursor.moveToNext()) {
+                assertTrue(cursor.getString(nameIndex) != "index_performance_presets_name")
+            }
         }
 
         runBlocking {
@@ -144,6 +179,61 @@ class AppDatabaseMigrationTest {
             assertEquals(1L, migrated.inferenceJobDao().snapshotFor(job.id)?.revision)
             migrated.inferenceJobDao().updateStatus(job.id, "succeeded", 60)
             assertEquals("succeeded", migrated.inferenceJobDao().getById(job.id)?.status)
+        }
+    }
+
+    private fun assertActiveQualificationIdentityIsUnique(database: AppDatabase) {
+        val sql =
+            """
+            INSERT INTO performance_preset_qualifications
+            (id, presetId, presetRevision, presetSnapshotSha256, modelId, modelAssetSha256,
+             scenarioSetSha256, runtimeFingerprint, appBuild, qualificationLevel,
+             evidenceManifestSha256, createdAt, revokedAt)
+            VALUES (?, '00000000-0000-4000-8000-000000000000', 1, 'preset-sha', 'model',
+                    'model-sha', 'scenario-sha', 'runtime', 'build',
+                    'TARGET_VALIDATED', 'evidence-sha', 1, NULL)
+            """.trimIndent()
+        val writableDatabase = database.openHelper.writableDatabase
+        writableDatabase.execSQL(sql, arrayOf("qualification-1"))
+        try {
+            writableDatabase.execSQL(sql, arrayOf("qualification-2"))
+            fail("Expected duplicate active qualification to be rejected")
+        } catch (_: SQLiteConstraintException) {
+            // Expected: revoked history is retained, but only one matching row may stay active.
+        }
+        writableDatabase.execSQL(
+            "UPDATE performance_preset_qualifications SET revokedAt = 2 WHERE id = 'qualification-1'",
+        )
+        writableDatabase.execSQL(sql, arrayOf("qualification-2"))
+    }
+
+    @Test
+    fun historicalAutomaticBindingFailsClosedWithoutQualification() = runBlocking {
+        val database = Room.databaseBuilder(context, AppDatabase::class.java, DATABASE_NAME)
+            .allowMainThreadQueries()
+            .build()
+        roomDatabase = database
+        database.performancePresetDao().insert(
+            PerformancePresetEntity(
+                id = "target-preset",
+                name = "Target preset",
+                selector = "target",
+                configJson = """{"schemaVersion":1,"engine":{"sdxlLowRam":true,"animaLowRam":false,"animaSequentialDit":false}}""",
+                revision = 1,
+                isFallback = false,
+                createdAt = 1,
+                updatedAt = 1,
+            ),
+        )
+        database.performancePresetBindingDao().save(
+            PerformancePresetBindingEntity("DEFAULT", "target-preset", 1),
+        )
+
+        try {
+            RoomInferenceJobRepository(database, nowMillis = { 2 }).accept(ownerId = "migration-test", modelId = "model")
+            throw AssertionError("Expected PRESET_NOT_TARGET_VALIDATED")
+        } catch (error: PresetNotTargetValidatedException) {
+            assertEquals("PRESET_NOT_TARGET_VALIDATED", error.message)
         }
     }
 

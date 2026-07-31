@@ -32,6 +32,9 @@ struct GenerationResult {
   int channels;
   int generation_time_ms;
   int first_step_time_ms;
+  // Accumulated at Pipeline's actual UNet invocation boundaries.  This is
+  // deliberately distinct from the request-wide generation_time_ms.
+  int unet_time_ms;
 };
 
 inline std::string base64_encode(const std::string &in) {
