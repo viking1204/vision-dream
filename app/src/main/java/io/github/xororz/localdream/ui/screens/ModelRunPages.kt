@@ -443,6 +443,8 @@ internal fun ModelRunHistoryPage(
     onItemInfoClick: ((HistoryItem) -> Unit)? = null,
     onCopyPrompts: ((HistoryItem) -> Unit)? = null,
     onGoCreate: (() -> Unit)? = null,
+    initialScroll: Pair<Int, Int> = 0 to 0,
+    onAssetScroll: ((index: Int, offset: Int) -> Unit)? = null,
 ) {
     // Handle back button in selection mode
     BackHandler(enabled = isSelectionMode && !isBatchSaving) {
@@ -533,6 +535,8 @@ internal fun ModelRunHistoryPage(
                     onShowInfo = onItemInfoClick,
                     onCopyPrompts = onCopyPrompts,
                     onLongClick = onItemLongClick,
+                    initialScroll = initialScroll,
+                    onAssetScroll = onAssetScroll,
                 )
             }
 

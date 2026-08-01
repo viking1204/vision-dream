@@ -42,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -117,7 +118,15 @@ fun HistoryScreen(
     val msgPromptCopied = stringResource(R.string.asset_prompt_copied)
     val sensitiveContentDesc = stringResource(R.string.asset_sensitive_content_desc)
 
-    var historyFilter by remember { mutableStateOf(HistoryFilter()) }
+    val restoredFilterJson = assetBrowserPreferences.getHistoryFilterJson()
+    var historyFilter by remember {
+        mutableStateOf(
+            restoredFilterJson?.let { HistoryFilter.fromJson(it) } ?: HistoryFilter(),
+        )
+    }
+    LaunchedEffect(historyFilter) {
+        assetBrowserPreferences.setHistoryFilterJson(historyFilter.toJson())
+    }
     val pagedItems = remember(historyFilter) { historyManager.pager(historyFilter) }
         .collectAsLazyPagingItems()
     val totalCount by remember(historyFilter) { historyManager.observeCount(historyFilter) }
@@ -366,6 +375,13 @@ fun HistoryScreen(
                 },
                 onGoCreate = {
                     navController.navigate(Screen.ChatGeneration.route)
+                },
+                initialScroll = remember {
+                    assetBrowserPreferences.getAssetScrollIndex() to
+                        assetBrowserPreferences.getAssetScrollOffset()
+                },
+                onAssetScroll = { index, offset ->
+                    assetBrowserPreferences.setAssetScroll(index, offset)
                 },
             )
         }

@@ -3,6 +3,8 @@ package io.github.xororz.localdream.data
 import androidx.compose.runtime.Immutable
 import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.sqlite.db.SupportSQLiteQuery
+import org.json.JSONArray
+import org.json.JSONObject
 
 enum class GenerationMode {
     TXT2IMG,
@@ -126,5 +128,52 @@ data class HistoryFilter(
         val sql = "SELECT $projection FROM generation_history $whereClause $orderClause $limitClause"
 
         return SimpleSQLiteQuery(sql, args.toTypedArray())
+    }
+
+    fun toJson(): String = JSONObject().apply {
+        modelIds?.let { put(KEY_MODEL_IDS, JSONArray(it.toList())) }
+        modes?.let { put(KEY_MODES, JSONArray(it.map { m -> m.name })) }
+        from?.let { put(KEY_FROM, it) }
+        to?.let { put(KEY_TO, it) }
+        sizes?.let { put(KEY_SIZES, JSONArray(it.toList())) }
+        schedulers?.let { put(KEY_SCHEDULERS, JSONArray(it.toList())) }
+        devices?.let { put(KEY_DEVICES, JSONArray(it.map { d -> d.name })) }
+        promptSubstring?.let { put(KEY_PROMPT, it) }
+        favorites?.let { put(KEY_FAVORITES, JSONArray(it.map { f -> f.name })) }
+        put(KEY_DESCENDING, descending)
+    }.toString()
+
+    companion object {
+        private const val KEY_MODEL_IDS = "modelIds"
+        private const val KEY_MODES = "modes"
+        private const val KEY_FROM = "from"
+        private const val KEY_TO = "to"
+        private const val KEY_SIZES = "sizes"
+        private const val KEY_SCHEDULERS = "schedulers"
+        private const val KEY_DEVICES = "devices"
+        private const val KEY_PROMPT = "promptSubstring"
+        private const val KEY_FAVORITES = "favorites"
+        private const val KEY_DESCENDING = "descending"
+
+        fun fromJson(raw: String): HistoryFilter? = runCatching {
+            val json = JSONObject(raw)
+            HistoryFilter(
+                modelIds = json.optJSONArray(KEY_MODEL_IDS)?.toSetOrNull { arr, i -> arr.getString(i) },
+                modes = json.optJSONArray(KEY_MODES)?.toSetOrNull { arr, i -> GenerationMode.fromString(arr.getString(i)) },
+                from = json.optLong(KEY_FROM, 0L).takeIf { it != 0L },
+                to = json.optLong(KEY_TO, 0L).takeIf { it != 0L },
+                sizes = json.optJSONArray(KEY_SIZES)?.toSetOrNull { arr, i -> arr.getString(i) },
+                schedulers = json.optJSONArray(KEY_SCHEDULERS)?.toSetOrNull { arr, i -> arr.getString(i) },
+                devices = json.optJSONArray(KEY_DEVICES)?.toSetOrNull { arr, i -> DeviceFilter.valueOf(arr.getString(i)) },
+                promptSubstring = json.optString(KEY_PROMPT).takeIf { it.isNotEmpty() },
+                favorites = json.optJSONArray(KEY_FAVORITES)?.toSetOrNull { arr, i -> FavoriteFilter.valueOf(arr.getString(i)) },
+                descending = json.optBoolean(KEY_DESCENDING, true),
+            )
+        }.getOrNull()
+
+        private inline fun <T> JSONArray.toSetOrNull(transform: (JSONArray, Int) -> T): Set<T>? {
+            if (length() == 0) return null
+            return (0 until length()).map { transform(this, it) }.toSet()
+        }
     }
 }

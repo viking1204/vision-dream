@@ -16,8 +16,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -34,7 +37,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,6 +63,7 @@ import io.github.xororz.localdream.data.HistoryItem
 import io.github.xororz.localdream.ui.components.RevealableImage
 import java.text.SimpleDateFormat
 import java.util.Date
+import kotlinx.coroutines.flow.drop
 
 @Composable
 internal fun AssetHistoryCollection(
@@ -70,7 +79,50 @@ internal fun AssetHistoryCollection(
     onShowInfo: ((HistoryItem) -> Unit)?,
     onCopyPrompts: ((HistoryItem) -> Unit)? = null,
     onLongClick: (HistoryItem) -> Unit,
+    initialScroll: Pair<Int, Int> = 0 to 0,
+    onAssetScroll: ((index: Int, offset: Int) -> Unit)? = null,
 ) {
+    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
+    val staggeredState = rememberLazyStaggeredGridState()
+    var scrollRestored by remember { mutableStateOf(false) }
+
+    LaunchedEffect(initialScroll.first, pagedItems.itemCount) {
+        if (!scrollRestored && onAssetScroll != null &&
+            initialScroll.first > 0 && pagedItems.itemCount > initialScroll.first
+        ) {
+            when (layoutMode) {
+                AssetLayoutMode.WATERFALL ->
+                    staggeredState.scrollToItem(initialScroll.first, initialScroll.second)
+
+                AssetLayoutMode.LIST ->
+                    listState.scrollToItem(initialScroll.first, initialScroll.second)
+
+                AssetLayoutMode.GRID ->
+                    gridState.scrollToItem(initialScroll.first, initialScroll.second)
+            }
+            scrollRestored = true
+        }
+    }
+
+    if (onAssetScroll != null) {
+        LaunchedEffect(listState) {
+            snapshotFlow {
+                listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+            }.drop(1).collect { (index, offset) -> onAssetScroll.invoke(index, offset) }
+        }
+        LaunchedEffect(gridState) {
+            snapshotFlow {
+                gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+            }.drop(1).collect { (index, offset) -> onAssetScroll.invoke(index, offset) }
+        }
+        LaunchedEffect(staggeredState) {
+            snapshotFlow {
+                staggeredState.firstVisibleItemIndex to staggeredState.firstVisibleItemScrollOffset
+            }.drop(1).collect { (index, offset) -> onAssetScroll.invoke(index, offset) }
+        }
+    }
+
     val itemContent: @Composable (Int) -> Unit = { index ->
         pagedItems[index]?.let { item ->
             AssetHistoryCard(
@@ -101,6 +153,7 @@ internal fun AssetHistoryCollection(
         AssetLayoutMode.WATERFALL -> {
             LazyVerticalStaggeredGrid(
                 columns = StaggeredGridCells.Fixed(2),
+                state = staggeredState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -117,6 +170,7 @@ internal fun AssetHistoryCollection(
 
         AssetLayoutMode.LIST -> {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -133,6 +187,7 @@ internal fun AssetHistoryCollection(
         AssetLayoutMode.GRID -> {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
+                state = gridState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
