@@ -18,8 +18,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PresetSnapshotEntity::class,
         McpClientGrantEntity::class,
         McpAuditEventEntity::class,
+        PromptSampleSeedEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -357,6 +358,37 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v10 turns generated prompt samples into normal editable rows. Model
+         * and sampling columns keep picker behavior intact, while the separate
+         * seed marker prevents a user-deleted sample from reappearing.
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE prompt_templates ADD COLUMN modelId TEXT")
+                db.execSQL("ALTER TABLE prompt_templates ADD COLUMN sampleKey TEXT")
+                db.execSQL("ALTER TABLE prompt_templates ADD COLUMN steps INTEGER")
+                db.execSQL("ALTER TABLE prompt_templates ADD COLUMN cfg REAL")
+                db.execSQL("ALTER TABLE prompt_templates ADD COLUMN scheduler TEXT")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_prompt_templates_modelId " +
+                        "ON prompt_templates (modelId)",
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_prompt_templates_sampleKey " +
+                        "ON prompt_templates (sampleKey)",
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS prompt_sample_seed_models (
+                        modelId TEXT NOT NULL PRIMARY KEY,
+                        seededAt INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        /**
          * These rows are product defaults, not user content. Their stable IDs
          * let a persisted job snapshot name the same preset across upgrades.
          */
@@ -447,6 +479,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_6_7,
                     MIGRATION_7_8,
                     MIGRATION_8_9,
+                    MIGRATION_9_10,
                 )
                 .addCallback(
                     object : RoomDatabase.Callback() {

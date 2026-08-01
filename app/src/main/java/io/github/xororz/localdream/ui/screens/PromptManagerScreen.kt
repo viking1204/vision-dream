@@ -24,6 +24,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -33,6 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,10 +54,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import io.github.xororz.localdream.R
+import io.github.xororz.localdream.data.GenerationDefaults
+import io.github.xororz.localdream.data.GenerationPreferences
+import io.github.xororz.localdream.data.ModelPromptSamples
+import io.github.xororz.localdream.data.ModelRepository
+import io.github.xororz.localdream.data.PromptLibraryItem
 import io.github.xororz.localdream.data.PromptRepository
-import io.github.xororz.localdream.data.db.PromptTemplateEntity
 import io.github.xororz.localdream.navigation.popBackStackIfResumed
 import io.github.xororz.localdream.utils.ParamShare
+import io.github.xororz.localdream.utils.schedulerDisplayName
 import kotlinx.coroutines.launch
 
 /**
@@ -69,16 +76,27 @@ fun PromptManagerScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { PromptRepository(context) }
+    val generationPreferences = remember { GenerationPreferences(context) }
+    val modelRepository = remember { ModelRepository.getInstance(context) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
     var query by rememberSaveable { mutableStateOf("") }
-    var editingTemplate by remember { mutableStateOf<PromptTemplateEntity?>(null) }
+    var editingTemplate by remember { mutableStateOf<PromptLibraryItem?>(null) }
     var showCreateDialog by remember { mutableStateOf(false) }
-    var deletingTemplate by remember { mutableStateOf<PromptTemplateEntity?>(null) }
-    val templates by remember(query) { repository.observeSearch(query) }
+    var deletingTemplate by remember { mutableStateOf<PromptLibraryItem?>(null) }
+    var showGlobalNegativePromptDialog by remember { mutableStateOf(false) }
+    val userTemplates by remember { repository.observeAll() }
         .collectAsState(initial = emptyList())
+    val globalNegativePrompt by remember { generationPreferences.observeGlobalNegativePrompt() }
+        .collectAsState(initial = GenerationDefaults.DEFAULT_NEGATIVE_PROMPT)
+    LaunchedEffect(modelRepository) {
+        modelRepository.ensureLoaded()
+    }
+    val templates = remember(userTemplates, query) {
+        ModelPromptSamples.libraryItems(userTemplates, query)
+    }
 
     val saveFailedMessage = stringResource(R.string.prompt_manager_save_failed)
     val deleteFailedMessage = stringResource(R.string.prompt_manager_delete_failed)
@@ -116,6 +134,27 @@ fun PromptManagerScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "全局负面提示词",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        text = globalNegativePrompt,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedButton(onClick = { showGlobalNegativePromptDialog = true }) {
+                        Text("配置全局负面提示词")
+                    }
+                }
+            }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -169,7 +208,7 @@ fun PromptManagerScreen(
                 ) {
                     items(
                         items = templates,
-                        key = { it.id },
+                        key = { it.stableId },
                         contentType = { "prompt_template" },
                     ) { template ->
                         PromptTemplateCard(
@@ -208,7 +247,12 @@ fun PromptManagerScreen(
             onSave = { title, prompt, negativePrompt ->
                 scope.launch {
                     runCatching {
-                        repository.update(template.id, title, prompt, negativePrompt)
+                        repository.update(
+                            template.templateId,
+                            title,
+                            prompt,
+                            negativePrompt,
+                        )
                     }.onSuccess { updated ->
                         if (updated == null) {
                             snackbarHostState.showSnackbar(saveFailedMessage)
@@ -240,7 +284,7 @@ fun PromptManagerScreen(
                     onClick = {
                         scope.launch {
                             runCatching {
-                                repository.delete(template.id)
+                                repository.delete(template.templateId)
                             }.onSuccess { deleted ->
                                 if (!deleted) {
                                     snackbarHostState.showSnackbar(deleteFailedMessage)
@@ -262,11 +306,24 @@ fun PromptManagerScreen(
             },
         )
     }
+
+    if (showGlobalNegativePromptDialog) {
+        GlobalNegativePromptDialog(
+            currentValue = globalNegativePrompt,
+            onDismissRequest = { showGlobalNegativePromptDialog = false },
+            onSave = { value ->
+                scope.launch {
+                    generationPreferences.setGlobalNegativePrompt(value)
+                    showGlobalNegativePromptDialog = false
+                }
+            },
+        )
+    }
 }
 
 @Composable
 private fun PromptTemplateCard(
-    template: PromptTemplateEntity,
+    template: PromptLibraryItem,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -319,6 +376,15 @@ private fun PromptTemplateCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            template.sampling?.let { sampling ->
+                Text(
+                    text = "${sampling.steps} 步 · CFG ${sampling.cfg} · " +
+                        schedulerDisplayName(sampling.scheduler),
+                    modifier = Modifier.padding(end = 16.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
             Text(
                 text = pluralStringResource(
                     R.plurals.prompt_manager_usage_count,
@@ -334,20 +400,20 @@ private fun PromptTemplateCard(
 
 @Composable
 private fun PromptEditorDialog(
-    template: PromptTemplateEntity?,
+    template: PromptLibraryItem?,
     onDismissRequest: () -> Unit,
     onSave: (title: String, prompt: String, negativePrompt: String) -> Unit,
 ) {
-    var title by remember(template?.id) { mutableStateOf(template?.title.orEmpty()) }
-    var prompt by remember(template?.id) {
+    var title by remember(template?.stableId) { mutableStateOf(template?.title.orEmpty()) }
+    var prompt by remember(template?.stableId) {
         val text = template?.prompt.orEmpty()
         mutableStateOf(TextFieldValue(text, TextRange(text.length)))
     }
-    var negativePrompt by remember(template?.id) {
+    var negativePrompt by remember(template?.stableId) {
         val text = template?.negativePrompt.orEmpty()
         mutableStateOf(TextFieldValue(text, TextRange(text.length)))
     }
-    var showPromptError by remember(template?.id) { mutableStateOf(false) }
+    var showPromptError by remember(template?.stableId) { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismissRequest,
@@ -453,6 +519,48 @@ private fun PromptEditorDialog(
                     }
                 },
             ) {
+                Text(stringResource(R.string.save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
+    )
+}
+
+@Composable
+private fun GlobalNegativePromptDialog(
+    currentValue: String,
+    onDismissRequest: () -> Unit,
+    onSave: (String) -> Unit,
+) {
+    var value by remember(currentValue) {
+        mutableStateOf(TextFieldValue(currentValue, TextRange(currentValue.length)))
+    }
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text("全局负面提示词") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "在本地创作、后台服务、HTTP 和 MCP 请求未提供负面提示词时自动使用。清空后恢复内置默认值。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("负面提示词") },
+                    minLines = 4,
+                    maxLines = 8,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(value.text) }) {
                 Text(stringResource(R.string.save))
             }
         },

@@ -96,11 +96,7 @@
     <string name="delete">削除</string>
     <string name="delete_model">モデルの消去</string>
     <string name="delete_confirm">指定された %s のモデルを削除しますか？この操作は取り消せません！</string>
-    <string name="got_it">わかった</string>
     <string name="yes">はい</string>
-    <string name="about_app">重要</string>
-    <string name="must_read">Vision Dream は、CPU/GPU および一部の Qualcomm NPU 上で Stable Diffusion による画像生成を実行できます。\n\nSD1.5 モデルは、Hexagon V68 アーキテクチャ以降の Snapdragon NPU で動作します。\n\nSDXL モデルは、Snapdragon 8 Gen 3 以降のデバイスで動作します。\n\n上記に該当しないチップでは、CPU/GPU のみで実行します。\n\nソースコードと Issue：https://github.com/viking1204/vision-dream</string>
-    <string name="help">ヘルプ</string>
     <string name="more_options">その他</string>
 
     <!-- Model List Screen -->
@@ -117,7 +113,6 @@
     <string name="downloaded">ダウンロード済み</string>
     <string name="delete_success">削除完了</string>
     <string name="delete_failed">削除エラー</string>
-    <string name="cannot_download">ダウンロードできません</string>
     <string name="cannot_download_hint">モデルをダウンロード中です。お待ちください。</string>
     <string name="download_model">モデルをダウンロード</string>
     <string name="download_model_hint">%s をダウンロードしますか？\nモデルのサイズが大きいため、Wi-Fi 環境でのダウンロードをおすすめします。\nダウンロード中はアプリを終了しないでください。\n\n現在、すべての Qualcomm 製チップ向けに NPU モデルのダウンロードを開放していますが、\nお使いのチップが古い場合、正常に動作しない可能性があります。</string>
@@ -224,7 +219,6 @@
     <string name="basic_mode">モード: %s</string>
     <string name="basic_denoise">ノイズ除去強度: %.2f</string>
     <string name="basic_time">時間: %s</string>
-    <string name="opencl_warning">GPUランタイムに関する警告：各解像度での最初の実行はキャッシュファイルを生成するため、処理速度が遅くなります。その後の実行は大幅に高速化されます。</string>
 
     <!-- Parameter Share -->
     <string name="share">共有</string>
@@ -284,7 +278,12 @@
     <string name="custom_model">カスタムモデル</string>
     <string name="custom_model_name">モデル名</string>
     <string name="custom_model_name_hint">モデル名を入力</string>
+    <string name="custom_model_id_invalid">有効なモデル ID を作成できるよう、英字または数字を含む名前を入力してください。</string>
     <string name="custom_model_id_reserved">この名前は組み込みモデルと競合します。別の名前を使用してください。</string>
+    <string name="model_id_preview">モデル ID：%1$s</string>
+    <string name="model_id_label">ID</string>
+    <string name="copy_model_id">モデル ID をコピー</string>
+    <string name="model_id_copied">モデル ID をコピーしました：%1$s</string>
     <string name="pin_to_top">トップに固定</string>
     <string name="unpin_from_top">固定を解除</string>
     <string name="rename">名前を変更</string>
@@ -441,7 +440,6 @@
     <string name="permission_notification_required">バックグラウンドでの画像生成には通知許可が必要です</string>
 
     <!-- Run Screen extras -->
-    <string name="gpu_runtime_warning_title">GPU ランタイムの警告</string>
     <string name="please_crop_first">先に画像を切り抜いてください</string>
     <string name="no_image_available">利用できる画像がありません</string>
     <string name="image_load_failed">画像の読み込みに失敗しました</string>

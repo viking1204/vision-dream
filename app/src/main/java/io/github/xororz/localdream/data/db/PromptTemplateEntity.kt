@@ -10,6 +10,8 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["updatedAt"]),
         Index(value = ["lastUsedAt"]),
+        Index(value = ["modelId"]),
+        Index(value = ["sampleKey"], unique = true),
     ],
 )
 data class PromptTemplateEntity(
@@ -23,4 +25,9 @@ data class PromptTemplateEntity(
     val lastUsedAt: Long?,
     @ColumnInfo(defaultValue = "0")
     val useCount: Int = 0,
+    val modelId: String? = null,
+    val sampleKey: String? = null,
+    val steps: Int? = null,
+    val cfg: Float? = null,
+    val scheduler: String? = null,
 )

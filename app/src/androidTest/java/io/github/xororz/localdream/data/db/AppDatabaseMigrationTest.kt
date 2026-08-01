@@ -41,7 +41,7 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migrationFrom3To9PreservesHistoryAndSeedsImmutablePerformancePresets() {
+    fun migrationFrom3To10PreservesHistoryAndAddsEditablePromptSamples() {
         createVersion3Database()
 
         val migrated = Room.databaseBuilder(
@@ -56,6 +56,7 @@ class AppDatabaseMigrationTest {
                 AppDatabase.MIGRATION_6_7,
                 AppDatabase.MIGRATION_7_8,
                 AppDatabase.MIGRATION_8_9,
+                AppDatabase.MIGRATION_9_10,
             )
             .allowMainThreadQueries()
             .build()
@@ -124,6 +125,23 @@ class AppDatabaseMigrationTest {
             assertEquals("Portrait", loaded?.title)
             assertEquals(0, loaded?.useCount)
             assertNull(loaded?.lastUsedAt)
+            assertNull(loaded?.modelId)
+            assertNull(loaded?.sampleKey)
+            assertNull(loaded?.steps)
+            assertNull(loaded?.cfg)
+            assertNull(loaded?.scheduler)
+
+            val sample = prompt.copy(
+                title = "Model sample",
+                modelId = "model",
+                sampleKey = "model-sample:model:v1:0",
+                steps = 30,
+                cfg = 5.5f,
+                scheduler = "dpm_sde_karras",
+            )
+            assertTrue(migrated.promptTemplateDao().seedModelOnce("model", listOf(sample), 20))
+            assertTrue(migrated.promptTemplateDao().isModelSeeded("model"))
+            assertEquals(-1L, migrated.promptTemplateDao().insertSamples(listOf(sample)).single())
         }
 
         migrated.openHelper.writableDatabase.query(

@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -11,6 +12,27 @@ import kotlinx.coroutines.flow.Flow
 interface PromptTemplateDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(template: PromptTemplateEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertSamples(templates: List<PromptTemplateEntity>): List<Long>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertSeedMarker(marker: PromptSampleSeedEntity)
+
+    @Query("SELECT EXISTS(SELECT 1 FROM prompt_sample_seed_models WHERE modelId = :modelId)")
+    suspend fun isModelSeeded(modelId: String): Boolean
+
+    @Transaction
+    suspend fun seedModelOnce(
+        modelId: String,
+        templates: List<PromptTemplateEntity>,
+        seededAt: Long,
+    ): Boolean {
+        if (isModelSeeded(modelId)) return false
+        insertSamples(templates)
+        insertSeedMarker(PromptSampleSeedEntity(modelId, seededAt))
+        return true
+    }
 
     @Update
     suspend fun update(template: PromptTemplateEntity): Int

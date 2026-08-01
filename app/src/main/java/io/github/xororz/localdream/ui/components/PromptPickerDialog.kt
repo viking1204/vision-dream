@@ -26,9 +26,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,25 +40,36 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.xororz.localdream.R
+import io.github.xororz.localdream.data.ModelPromptSamples
+import io.github.xororz.localdream.data.ModelRepository
+import io.github.xororz.localdream.data.PromptLibraryItem
 import io.github.xororz.localdream.data.PromptRepository
-import io.github.xororz.localdream.data.db.PromptTemplateEntity
+import io.github.xororz.localdream.utils.schedulerDisplayName
 import kotlinx.coroutines.launch
 
 /**
- * Selects a persisted prompt pair and records its use before returning it.
+ * Selects an editable prompt pair, including model-specific seeded examples.
  */
 @Composable
 fun PromptPickerDialog(
     onDismissRequest: () -> Unit,
-    onTemplateSelected: (PromptTemplateEntity) -> Unit,
+    onTemplateSelected: (PromptLibraryItem) -> Unit,
+    modelId: String? = null,
 ) {
     val context = LocalContext.current
     val repository = remember { PromptRepository(context) }
+    val modelRepository = remember { ModelRepository.getInstance(context) }
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
-    var selectingId by remember { mutableLongStateOf(NO_SELECTION) }
-    val templates by remember(query) { repository.observeSearch(query) }
+    var selectingId by remember { mutableStateOf<String?>(null) }
+    val userTemplates by remember { repository.observeAll() }
         .collectAsState(initial = emptyList())
+    LaunchedEffect(modelRepository) {
+        modelRepository.ensureLoaded()
+    }
+    val templates = remember(userTemplates, query, modelId) {
+        ModelPromptSamples.libraryItems(userTemplates, query, modelId)
+    }
 
     AlertDialog(
         onDismissRequest = onDismissRequest,
@@ -116,21 +127,19 @@ fun PromptPickerDialog(
                     ) {
                         items(
                             items = templates,
-                            key = { it.id },
+                            key = { it.stableId },
                             contentType = { "prompt_template" },
                         ) { template ->
                             PromptPickerRow(
                                 template = template,
-                                selecting = selectingId == template.id,
-                                enabled = selectingId == NO_SELECTION,
+                                selecting = selectingId == template.stableId,
+                                enabled = selectingId == null,
                                 onClick = {
-                                    if (selectingId == NO_SELECTION) {
-                                        selectingId = template.id
+                                    if (selectingId == null) {
+                                        selectingId = template.stableId
                                         scope.launch {
-                                            runCatching {
-                                                repository.markUsed(template.id)
-                                            }
-                                            selectingId = NO_SELECTION
+                                            runCatching { repository.markUsed(template.templateId) }
+                                            selectingId = null
                                             onTemplateSelected(template)
                                         }
                                     }
@@ -152,7 +161,7 @@ fun PromptPickerDialog(
 
 @Composable
 private fun PromptPickerRow(
-    template: PromptTemplateEntity,
+    template: PromptLibraryItem,
     selecting: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
@@ -186,6 +195,14 @@ private fun PromptPickerRow(
                         )
                     }
                 }
+                template.sampling?.let { sampling ->
+                    Text(
+                        text = "${sampling.steps} 步 · CFG ${sampling.cfg} · " +
+                            schedulerDisplayName(sampling.scheduler),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         },
         trailingContent = {
@@ -202,5 +219,3 @@ private fun PromptPickerRow(
         ),
     )
 }
-
-private const val NO_SELECTION = -1L

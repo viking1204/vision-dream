@@ -32,6 +32,7 @@ class GenerationPreferences(private val context: Context) {
 
     private val BASE_URL_KEY = stringPreferencesKey("base_url")
     private val SELECTED_SOURCE_KEY = stringPreferencesKey("selected_source")
+    private val GLOBAL_NEGATIVE_PROMPT_KEY = stringPreferencesKey("global_negative_prompt")
     private val SHARE_USE_BASE64_KEY = booleanPreferencesKey("share_use_base64")
     private val SHARE_CLEAR_CLIPBOARD_KEY =
         booleanPreferencesKey("share_clear_clipboard_on_import")
@@ -116,6 +117,32 @@ class GenerationPreferences(private val context: Context) {
         .map { preferences ->
             preferences[SELECTED_SOURCE_KEY] ?: "huggingface"
         }.first()
+
+    /**
+     * The app-wide fallback used when an image request omits its negative prompt.
+     * A blank value deliberately clears the override and restores the bundled
+     * quality guardrails, so every entry point still has a usable default.
+     */
+    fun observeGlobalNegativePrompt(): Flow<String> = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { preferences ->
+            preferences[GLOBAL_NEGATIVE_PROMPT_KEY]
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?: GenerationDefaults.DEFAULT_NEGATIVE_PROMPT
+        }
+
+    suspend fun getGlobalNegativePrompt(): String = observeGlobalNegativePrompt().first()
+
+    suspend fun setGlobalNegativePrompt(value: String) {
+        context.dataStore.edit { preferences ->
+            value.trim().takeIf(String::isNotEmpty)?.let {
+                preferences[GLOBAL_NEGATIVE_PROMPT_KEY] = it
+            } ?: preferences.remove(GLOBAL_NEGATIVE_PROMPT_KEY)
+        }
+    }
 
     suspend fun saveAllFields(
         modelId: String,

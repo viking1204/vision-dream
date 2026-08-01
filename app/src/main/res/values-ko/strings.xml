@@ -96,11 +96,7 @@
     <string name="delete">삭제</string>
     <string name="delete_model">모델 삭제</string>
     <string name="delete_confirm">선택한 모델 %s개를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.</string>
-    <string name="got_it">알겠습니다!</string>
     <string name="yes">예</string>
-    <string name="about_app">참고</string>
-    <string name="must_read">Vision Dream은 CPU/GPU와 일부 Qualcomm NPU에서 Stable Diffusion 이미지 생성을 실행할 수 있습니다.\n\nSD1.5 모델은 Hexagon V68 아키텍처 이상의 Snapdragon NPU에서 지원됩니다.\n\nSDXL 모델은 Snapdragon 8 Gen 3 이상 기기에서 지원됩니다.\n\n사용 중인 칩이 위 범위에 해당하지 않으면 CPU/GPU에서 실행합니다.\n\n소스 코드 및 이슈: https://github.com/viking1204/vision-dream</string>
-    <string name="help">도움말</string>
     <string name="more_options">더보기</string>
 
     <!-- Model List Screen -->
@@ -117,7 +113,6 @@
     <string name="downloaded">다운로드 완료</string>
     <string name="delete_success">삭제됨</string>
     <string name="delete_failed">삭제 중 오류 발생</string>
-    <string name="cannot_download">다운로드할 수 없음</string>
     <string name="cannot_download_hint">모델을 다운로드하는 중입니다. 잠시 기다려 주세요.</string>
     <string name="download_model">모델 다운로드</string>
     <string name="download_model_hint">%s을(를) 다운로드하시겠습니까? 다운로드 중에는 앱을 종료하지 마세요.\n\n현재는 모든 Qualcomm 칩에서 NPU 모델을 다운로드할 수 있지만, 오래된 칩에서는 실행되지 않을 수 있습니다.</string>
@@ -224,7 +219,6 @@
     <string name="basic_mode">모드: %s</string>
     <string name="basic_denoise">디노이징 강도: %.2f</string>
     <string name="basic_time">소요 시간: %s</string>
-    <string name="opencl_warning">GPU 런타임 경고: 각 해상도에서 처음 실행할 때 캐시 파일을 생성하므로 느릴 수 있습니다. 이후 실행은 훨씬 빨라집니다.</string>
 
     <!-- Parameter Share -->
     <string name="share">공유</string>
@@ -284,7 +278,12 @@
     <string name="custom_model">사용자 지정 모델</string>
     <string name="custom_model_name">모델 이름</string>
     <string name="custom_model_name_hint">모델 이름 입력</string>
+    <string name="custom_model_id_invalid">유효한 모델 ID를 만들 수 있도록 영문자나 숫자가 포함된 이름을 입력하세요.</string>
     <string name="custom_model_id_reserved">이 이름은 내장 모델과 충돌합니다. 다른 이름을 선택하세요.</string>
+    <string name="model_id_preview">모델 ID: %1$s</string>
+    <string name="model_id_label">ID</string>
+    <string name="copy_model_id">모델 ID 복사</string>
+    <string name="model_id_copied">모델 ID 복사됨: %1$s</string>
     <string name="pin_to_top">상단 고정</string>
     <string name="unpin_from_top">고정 해제</string>
     <string name="rename">이름 변경</string>
@@ -441,7 +440,6 @@
     <string name="permission_notification_required">백그라운드 이미지 생성에는 알림 권한이 필요합니다</string>
 
     <!-- Run Screen extras -->
-    <string name="gpu_runtime_warning_title">GPU 런타임 경고</string>
     <string name="please_crop_first">먼저 이미지를 자르세요</string>
     <string name="no_image_available">사용할 수 있는 이미지가 없습니다</string>
     <string name="image_load_failed">이미지를 로드하지 못했습니다</string>

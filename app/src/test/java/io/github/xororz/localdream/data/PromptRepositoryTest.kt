@@ -1,9 +1,11 @@
 package io.github.xororz.localdream.data
 
+import io.github.xororz.localdream.data.db.PromptSampleSeedEntity
 import io.github.xororz.localdream.data.db.PromptTemplateDao
 import io.github.xororz.localdream.data.db.PromptTemplateEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -52,8 +54,33 @@ class PromptRepositoryTest {
         assertNull(repository.get(created.id))
     }
 
+    @Test
+    fun `editable model samples seed once and stay deleted`() = runBlocking {
+        val repository = PromptRepository(FakePromptTemplateDao())
+        val model = Model(
+            id = "installed",
+            name = "Installed",
+            description = "photo",
+            baseUrl = "",
+            isDownloaded = true,
+        )
+
+        assertEquals(1, repository.ensureEditableModelSamples(listOf(model), now = 100))
+        assertEquals(0, repository.ensureEditableModelSamples(listOf(model), now = 200))
+        val seeded = repository.observeAll().first()
+        assertEquals(3, seeded.size)
+        assertTrue(seeded.all { it.modelId == model.id })
+        assertTrue(seeded.all { it.sampleKey?.startsWith("model-sample:${model.id}:") == true })
+        assertTrue(seeded.all { it.steps != null && it.cfg != null && it.scheduler != null })
+
+        assertTrue(repository.delete(seeded.first().id))
+        assertEquals(0, repository.ensureEditableModelSamples(listOf(model), now = 300))
+        assertEquals(2, repository.observeAll().first().size)
+    }
+
     private class FakePromptTemplateDao : PromptTemplateDao {
         private val rows = linkedMapOf<Long, PromptTemplateEntity>()
+        private val seedMarkers = linkedMapOf<String, PromptSampleSeedEntity>()
         private val state = MutableStateFlow<List<PromptTemplateEntity>>(emptyList())
         private var nextId = 1L
 
@@ -63,6 +90,22 @@ class PromptRepositoryTest {
             publish()
             return id
         }
+
+        override suspend fun insertSamples(templates: List<PromptTemplateEntity>): List<Long> = templates.map { template ->
+            val duplicate = template.sampleKey?.let { key -> rows.values.any { it.sampleKey == key } } == true
+            if (duplicate) {
+                -1L
+            } else {
+                insert(template)
+            }
+        }
+
+        override suspend fun insertSeedMarker(marker: PromptSampleSeedEntity) {
+            check(marker.modelId !in seedMarkers)
+            seedMarkers[marker.modelId] = marker
+        }
+
+        override suspend fun isModelSeeded(modelId: String): Boolean = modelId in seedMarkers
 
         override suspend fun update(template: PromptTemplateEntity): Int {
             if (template.id !in rows) return 0

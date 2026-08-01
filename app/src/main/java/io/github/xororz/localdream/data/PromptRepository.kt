@@ -30,6 +30,39 @@ class PromptRepository internal constructor(
         negativePrompt = negativePrompt.trim(),
     )
 
+    /**
+     * Creates each installed model's editable examples exactly once. The DAO
+     * stores a separate model marker transactionally, so deleting an example
+     * is a durable user choice rather than an invitation to recreate it.
+     */
+    suspend fun ensureEditableModelSamples(
+        models: List<Model>,
+        now: Long = System.currentTimeMillis(),
+    ): Int {
+        var seededCount = 0
+        models.filter { it.isDownloaded }.forEach { model ->
+            val templates = ModelPromptSamples.samplesFor(model).map { sample ->
+                PromptTemplateEntity(
+                    title = sample.title,
+                    prompt = sample.prompt,
+                    negativePrompt = sample.negativePrompt,
+                    createdAt = now,
+                    updatedAt = now,
+                    lastUsedAt = null,
+                    modelId = sample.modelId,
+                    sampleKey = sample.seedKey,
+                    steps = sample.sampling.steps,
+                    cfg = sample.sampling.cfg,
+                    scheduler = sample.sampling.scheduler,
+                )
+            }
+            if (dao.seedModelOnce(model.id, templates, now)) {
+                seededCount += 1
+            }
+        }
+        return seededCount
+    }
+
     suspend fun create(
         title: String,
         prompt: String,

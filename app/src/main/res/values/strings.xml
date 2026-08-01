@@ -98,11 +98,7 @@
     <string name="delete">Delete</string>
     <string name="delete_model">Delete Model</string>
     <string name="delete_confirm">Delete selected %s models? This action cannot be undone.</string>
-    <string name="got_it">Got It!</string>
     <string name="yes">Yes</string>
-    <string name="about_app">Note</string>
-    <string name="must_read">Vision Dream supports Stable Diffusion image generation on CPU/GPU and selected Qualcomm NPUs.\n\nSD1.5 models are supported on Snapdragon NPUs with Hexagon V68 architecture or newer.\n\nSDXL models are supported on Snapdragon 8 Gen 3 and newer devices.\n\nIf your chip is outside the above scope, generation uses CPU/GPU only.\n\nSource code and issue tracking: https://github.com/viking1204/vision-dream</string>
-    <string name="help">Help</string>
     <string name="more_options">More</string>
 
     <!-- Model List Screen -->
@@ -120,7 +116,6 @@
     <string name="downloaded">Downloaded</string>
     <string name="delete_success">Deleted</string>
     <string name="delete_failed">Error in deletion</string>
-    <string name="cannot_download">Cannot Download</string>
     <string name="cannot_download_hint">A model is being downloaded, please wait.</string>
     <string name="download_model">Download Model</string>
     <string name="download_model_hint">Are you sure to download %s ? Please do not exit the application during the download process.\n\nWe currently allow NPU model downloads for all Qualcomm chips, but older chips may not be able to run them.</string>
@@ -246,7 +241,6 @@
     <string name="basic_mode">Mode: %s</string>
     <string name="basic_denoise">Denoise strength: %.2f</string>
     <string name="basic_time">Time: %s</string>
-    <string name="opencl_warning">GPU runtime warning: The first run at each resolution will be slow as it generates cache files. Subsequent runs will be much faster.</string>
 
     <!-- Parameter Share -->
     <string name="share">Share</string>
@@ -307,7 +301,12 @@
     <string name="custom_model">Custom Model</string>
     <string name="custom_model_name">Model Name</string>
     <string name="custom_model_name_hint">Enter model name</string>
+    <string name="custom_model_id_invalid">Enter a name containing letters or numbers so a valid model ID can be created.</string>
     <string name="custom_model_id_reserved">This name conflicts with a built-in model. Please choose a different one.</string>
+    <string name="model_id_preview">Model ID: %1$s</string>
+    <string name="model_id_label">ID</string>
+    <string name="copy_model_id">Copy model ID</string>
+    <string name="model_id_copied">Model ID copied: %1$s</string>
     <string name="pin_to_top">Pin to top</string>
     <string name="unpin_from_top">Unpin</string>
     <string name="rename">Rename</string>
@@ -467,7 +466,6 @@
     <string name="permission_notification_required">Notification permission is required for background image generation</string>
 
     <!-- Run Screen extras -->
-    <string name="gpu_runtime_warning_title">GPU Runtime Warning</string>
     <string name="please_crop_first">Please crop the image first</string>
     <string name="no_image_available">No image available</string>
     <string name="image_load_failed">Failed to load image</string>

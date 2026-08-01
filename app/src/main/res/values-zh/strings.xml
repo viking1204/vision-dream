@@ -96,11 +96,7 @@
     <string name="delete">删除</string>
     <string name="delete_model">删除模型</string>
     <string name="delete_confirm">确定要删除选中的 %s 个模型吗？此操作不可恢复</string>
-    <string name="got_it">知道了!</string>
     <string name="yes">是</string>
-    <string name="about_app">须知</string>
-    <string name="must_read">Vision Dream 支持在 CPU/GPU 和部分高通 NPU 上运行 Stable Diffusion 图像生成。\n\n支持在 Hexagon V68 架构及以上的骁龙 NPU 上运行 SD1.5 模型。\n\n支持在骁龙 8 Gen 3 及更新的设备上运行 SDXL 模型。\n\n若芯片不在上述范围内，则使用 CPU/GPU 运行。\n\n源代码与问题反馈：https://github.com/viking1204/vision-dream</string>
-    <string name="help">帮助</string>
     <string name="more_options">更多</string>
 
     <!-- Model List Screen -->
@@ -117,7 +113,6 @@
     <string name="downloaded">已下载</string>
     <string name="delete_success">删除成功</string>
     <string name="delete_failed">删除过程出错</string>
-    <string name="cannot_download">无法下载</string>
     <string name="cannot_download_hint">当前有模型正在下载，请等待下载完成后再尝试</string>
     <string name="download_model">下载模型</string>
     <string name="download_model_hint">确定要下载 %s 吗？模型较大，建议使用WiFi网络下载。下载过程请勿退出应用程序。\n\n我们目前对所有高通芯片开放NPU模型下载，如果你的芯片较旧，可能无法运行</string>
@@ -224,7 +219,6 @@
     <string name="basic_mode">模式: %s</string>
     <string name="basic_denoise">降噪强度: %.2f</string>
     <string name="basic_time">耗时: %s</string>
-    <string name="opencl_warning">GPU运行时警告：每个分辨率的首次运行会比较慢，这会生成缓存文件。后续运行会快一些。</string>
 
     <!-- Parameter Share -->
     <string name="share">分享</string>
@@ -284,7 +278,12 @@
     <string name="custom_model">自定义模型</string>
     <string name="custom_model_name">模型名称</string>
     <string name="custom_model_name_hint">输入模型名称</string>
+    <string name="custom_model_id_invalid">名称需包含英文字母或数字，才能生成有效的模型 ID</string>
     <string name="custom_model_id_reserved">该名称与内置模型冲突，请使用其他名称</string>
+    <string name="model_id_preview">模型 ID：%1$s</string>
+    <string name="model_id_label">ID</string>
+    <string name="copy_model_id">复制模型 ID</string>
+    <string name="model_id_copied">已复制模型 ID：%1$s</string>
     <string name="pin_to_top">置顶</string>
     <string name="unpin_from_top">取消置顶</string>
     <string name="rename">重命名</string>
@@ -441,7 +440,6 @@
     <string name="permission_notification_required">后台生成图像需要通知权限</string>
 
     <!-- Run Screen extras -->
-    <string name="gpu_runtime_warning_title">GPU 运行时警告</string>
     <string name="please_crop_first">请先裁剪图像</string>
     <string name="no_image_available">没有可用的图像</string>
     <string name="image_load_failed">加载图像失败</string>
