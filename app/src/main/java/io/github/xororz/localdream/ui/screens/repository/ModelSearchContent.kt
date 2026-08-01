@@ -91,14 +91,19 @@ fun ModelSearchContent(
 
         when (state.status) {
             SearchStatus.IDLE -> IdleHint()
+
             SearchStatus.SEARCHING -> SearchingStatus()
+
             SearchStatus.ALL_FAILED -> AllFailedStatus(onRetry = { onEvent(ModelSearchEvent.RetryFailed) })
+
             SearchStatus.EMPTY -> EmptyStatus()
+
             SearchStatus.SUCCESS -> ResultsList(
                 state = state,
                 onInstall = { onEvent(ModelSearchEvent.InstallModel(it)) },
                 onLoadMore = { onEvent(ModelSearchEvent.LoadMore) },
             )
+
             SearchStatus.PARTIAL_FAILURE -> Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),

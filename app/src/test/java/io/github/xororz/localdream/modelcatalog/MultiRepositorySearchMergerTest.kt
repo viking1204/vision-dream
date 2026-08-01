@@ -223,6 +223,7 @@ class MultiRepositorySearchMergerTest {
                     "ok" -> listOf(
                         result(localModelId = "portrait", displayName = "OK Portrait", repositoryConfigId = config.id),
                     )
+
                     else -> emptyList()
                 }
             },
@@ -254,9 +255,11 @@ class MultiRepositorySearchMergerTest {
             customSearcher = { config, _, _ ->
                 when (config.id) {
                     "broken" -> throw IOException("broken searcher blew up")
+
                     "ok" -> listOf(
                         result(localModelId = "portrait-ok", displayName = "OK", repositoryConfigId = config.id),
                     )
+
                     else -> emptyList()
                 }
             },
@@ -367,8 +370,7 @@ class MultiRepositorySearchMergerTest {
      * network, so the built-in [HuggingFaceModelCatalogClient] fails
      * deterministically and hermetically.
      */
-    private fun failingOkHttpClient(message: String): OkHttpClient =
-        OkHttpClient.Builder()
-            .addInterceptor { _ -> throw IOException(message) }
-            .build()
+    private fun failingOkHttpClient(message: String): OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor { _ -> throw IOException(message) }
+        .build()
 }

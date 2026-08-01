@@ -1,11 +1,11 @@
 package io.github.xororz.localdream.modelcatalog
 
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Status of a multi-repository search after every enabled repository has been
@@ -198,7 +198,6 @@ class MultiRepositorySearchClient(
             config: RepositoryConfig,
             keyword: String,
             limit: Int,
-        ): List<ModelCatalogSearchResult> =
-            HuggingFaceModelCatalogClient(config.baseUrl).searchCompatible(keyword, limit = limit)
+        ): List<ModelCatalogSearchResult> = HuggingFaceModelCatalogClient(config.baseUrl).searchCompatible(keyword, limit = limit)
     }
 }
