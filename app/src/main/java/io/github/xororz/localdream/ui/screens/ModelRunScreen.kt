@@ -202,6 +202,8 @@ fun ModelRunScreen(
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val generationPreferences = remember { GenerationPreferences(context) }
+    val globalNegativePrompt by remember { generationPreferences.observeGlobalNegativePrompt() }
+        .collectAsState(initial = GenerationDefaults.DEFAULT_NEGATIVE_PROMPT)
     val performancePresetResolver = remember {
         AndroidPerformancePresetResolver(context.applicationContext)
     }
@@ -244,6 +246,9 @@ fun ModelRunScreen(
     } else {
         remember(modelRepository.models) { modelRepository.models.find { it.id == modelId } }
     }
+    val modelDefaultNegativePrompt = model?.codeDefaults?.negativePrompt
+        ?: model?.configDefaults?.negativePrompt
+        ?: globalNegativePrompt
     LaunchedEffect(Unit) {
         if (!isRemote) {
             modelRepository.ensureLoaded()
@@ -261,7 +266,6 @@ fun ModelRunScreen(
     }
 
     var showResetConfirmDialog by remember { mutableStateOf(false) }
-    var showOpenCLWarningDialog by remember { mutableStateOf(false) }
     var showInterruptDialog by remember { mutableStateOf(false) }
 
     var currentBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -1238,7 +1242,7 @@ fun ModelRunScreen(
         }
     }
 
-    LaunchedEffect(modelId, model) {
+    LaunchedEffect(modelId, model, globalNegativePrompt) {
         if (!hasInitialized && model != null) {
             val prefs = generationPreferences.getPreferences(modelId).first()
             val isFirstRun = !prefs.hasSaved
@@ -1246,7 +1250,7 @@ fun ModelRunScreen(
 
             promptField.replaceText(if (isFirstRun) defaults.prompt else prefs.prompt)
             negativePromptField.replaceText(
-                if (isFirstRun) defaults.negativePrompt else prefs.negativePrompt,
+                if (isFirstRun) modelDefaultNegativePrompt else prefs.negativePrompt,
             )
 
             steps = if (isFirstRun) defaults.steps else prefs.steps
@@ -1523,19 +1527,6 @@ fun ModelRunScreen(
             onDismiss = { showInterruptDialog = false },
         )
     }
-    if (showOpenCLWarningDialog) {
-        ModelRunConfirmDialog(
-            title = stringResource(R.string.gpu_runtime_warning_title),
-            text = stringResource(R.string.opencl_warning),
-            onConfirm = {
-                showOpenCLWarningDialog = false
-                useOpenCL = true
-                saveAllFields()
-            },
-            onDismiss = { showOpenCLWarningDialog = false },
-        )
-    }
-
     if (showCustomAspectRatioDialog) {
         CustomAspectRatioDialog(
             onConfirm = { newRatio ->
@@ -1643,13 +1634,13 @@ fun ModelRunScreen(
                 scheduler = defaults.scheduler
                 aspectRatio = defaults.aspectRatio
                 promptField.replaceText(defaults.prompt)
-                negativePromptField.replaceText(defaults.negativePrompt)
+                negativePromptField.replaceText(modelDefaultNegativePrompt)
                 denoiseStrength = defaults.denoiseStrength
                 scope.launch(Dispatchers.IO) {
                     generationPreferences.saveAllFields(
                         modelId = modelId,
                         prompt = defaults.prompt,
-                        negativePrompt = defaults.negativePrompt,
+                        negativePrompt = modelDefaultNegativePrompt,
                         steps = defaults.steps,
                         cfg = defaults.cfg,
                         seed = defaults.seed,
@@ -1677,9 +1668,15 @@ fun ModelRunScreen(
     if (showSavedPromptPicker) {
         PromptPickerDialog(
             onDismissRequest = { showSavedPromptPicker = false },
+            modelId = modelId,
             onTemplateSelected = { template ->
                 promptField.replaceText(template.prompt)
                 negativePromptField.replaceText(template.negativePrompt)
+                template.sampling?.let { sampling ->
+                    steps = sampling.steps.toFloat()
+                    cfg = sampling.cfg
+                    scheduler = sampling.scheduler
+                }
                 saveAllFields()
                 showSavedPromptPicker = false
             },
@@ -1887,7 +1884,10 @@ fun ModelRunScreen(
                                         useOpenCL = false
                                         saveAllFields()
                                     },
-                                    onGpuSelected = { showOpenCLWarningDialog = true },
+                                    onGpuSelected = {
+                                        useOpenCL = true
+                                        saveAllFields()
+                                    },
                                     onBatchCountsChange = onBatchCountsChange,
                                     onDenoiseStrengthChange = onDenoiseStrengthChange,
                                     onSeedChange = onSeedChange,

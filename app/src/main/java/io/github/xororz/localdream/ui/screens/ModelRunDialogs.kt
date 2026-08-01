@@ -27,7 +27,7 @@ import io.github.xororz.localdream.ui.components.SmoothLinearWavyProgressIndicat
 
 /**
  * Shared confirm/cancel dialog used by the run screen (exit, reset, delete,
- * batch operations, runtime warnings). [destructiveConfirm] tints the confirm
+ * and batch operations). [destructiveConfirm] tints the confirm
  * action with the error color.
  */
 @Composable

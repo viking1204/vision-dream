@@ -55,6 +55,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -80,6 +81,7 @@ import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.AssetOrigin
 import io.github.xororz.localdream.data.GenerationDefaults
 import io.github.xororz.localdream.data.GenerationMode
+import io.github.xororz.localdream.data.GenerationPreferences
 import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.navigation.popBackStackIfResumed
 import io.github.xororz.localdream.openai.BackendRuntimeCoordinator
@@ -167,6 +169,7 @@ fun ChatGenerationScreen(
     val coordinator = remember { BackendRuntimeCoordinator(context) }
     val backendClient = remember { NativeBackendClient() }
     val historyManager = remember { HistoryManager(context) }
+    val generationPreferences = remember { GenerationPreferences(context) }
     val messages = remember { mutableStateListOf<ChatGenerationMessage>() }
     val listState = rememberLazyListState()
 
@@ -182,6 +185,8 @@ fun ChatGenerationScreen(
     var negativePrompt by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(GenerationDefaults.GLOBAL.negativePrompt))
     }
+    val globalNegativePrompt by generationPreferences.observeGlobalNegativePrompt()
+        .collectAsState(initial = GenerationDefaults.DEFAULT_NEGATIVE_PROMPT)
     var widthText by rememberSaveable { mutableStateOf("512") }
     var heightText by rememberSaveable { mutableStateOf("512") }
     var stepsText by rememberSaveable { mutableStateOf("20") }
@@ -194,6 +199,17 @@ fun ChatGenerationScreen(
     var isGenerating by remember { mutableStateOf(false) }
     var activeJob by remember { mutableStateOf<Job?>(null) }
     var nextMessageId by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(globalNegativePrompt) {
+        if (negativePrompt.text.isBlank() ||
+            negativePrompt.text == GenerationDefaults.DEFAULT_NEGATIVE_PROMPT
+        ) {
+            negativePrompt = TextFieldValue(
+                globalNegativePrompt,
+                TextRange(globalNegativePrompt.length),
+            )
+        }
+    }
 
     val selectedModel = installedModels.firstOrNull { it.id == selectedModelId }
     val busyMessage = stringResource(R.string.chat_generation_busy)
@@ -282,7 +298,9 @@ fun ChatGenerationScreen(
             }
 
             else -> {
-                val submittedNegativePrompt = negativePrompt.text.trim()
+                val submittedNegativePrompt = negativePrompt.text.trim().ifBlank {
+                    globalNegativePrompt
+                }
                 messages += ChatGenerationMessage.User(nextId(), submittedPrompt)
                 prompt = TextFieldValue()
                 keyboardController?.hide()
@@ -556,6 +574,7 @@ fun ChatGenerationScreen(
     if (showPromptPicker) {
         PromptPickerDialog(
             onDismissRequest = { showPromptPicker = false },
+            modelId = selectedModelId,
             onTemplateSelected = { template ->
                 prompt = TextFieldValue(
                     template.prompt,
@@ -565,6 +584,11 @@ fun ChatGenerationScreen(
                     template.negativePrompt,
                     TextRange(template.negativePrompt.length),
                 )
+                template.sampling?.let { sampling ->
+                    stepsText = sampling.steps.toString()
+                    cfgText = sampling.cfg.toString()
+                    scheduler = sampling.scheduler
+                }
                 showPromptPicker = false
             },
         )

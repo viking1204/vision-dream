@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.xororz.localdream.R
+import io.github.xororz.localdream.modelcatalog.LocalModelId
 import io.github.xororz.localdream.service.ModelDownloadService
 import java.io.File
 import kotlin.coroutines.cancellation.CancellationException
@@ -99,9 +100,9 @@ sealed class DownloadResult {
 sealed class RenameResult {
     data object Success : RenameResult()
 
-    // Caller decides messaging; BlankName/Reserved/Exists are recoverable input
-    // errors, Io means the on-disk move failed.
-    enum class Reason { BlankName, Reserved, Exists, Io }
+    // Caller decides messaging; input errors are recoverable, while Io means
+    // the on-disk move failed.
+    enum class Reason { BlankName, InvalidId, Reserved, Exists, Io }
     data class Error(val reason: Reason) : RenameResult()
 }
 
@@ -201,10 +202,16 @@ data class Model(
     // pinned list. The model directory is moved first because scanCustomModels()
     // keys off it; if that move fails nothing else is touched.
     suspend fun rename(context: Context, newName: String): RenameResult = withContext(Dispatchers.IO) {
-        val newId = newName.replace(" ", "")
+        if (newName.isBlank()) {
+            return@withContext RenameResult.Error(RenameResult.Reason.BlankName)
+        }
+        // Renaming is another model-install boundary. Reuse the same canonical
+        // id policy as catalog downloads and manual imports so a display name
+        // can never introduce spaces or client-sensitive punctuation into the
+        // HTTP/MCP model identity.
+        val newId = LocalModelId.normalize(newName)
+            ?: return@withContext RenameResult.Error(RenameResult.Reason.InvalidId)
         when {
-            newId.isEmpty() -> return@withContext RenameResult.Error(RenameResult.Reason.BlankName)
-
             newId == id -> return@withContext RenameResult.Success
 
             ModelRepository.isReservedModelId(newId) ->
@@ -227,6 +234,11 @@ data class Model(
         // must not be reported as a failed rename, since the model HAS been
         // renamed. Cancellation must still propagate.
         try {
+            val metadata = ModelMetadataStore.read(newDir) ?: ModelMetadata()
+            ModelMetadataStore.write(
+                newDir,
+                metadata.copy(displayName = newName.trim()),
+            )
             HistoryManager(context).renameModel(id, newId)
             GenerationPreferences(context).migratePreferencesForModel(id, newId)
             PinnedModels.rename(context, id, newId)
@@ -886,7 +898,7 @@ class ModelRepository private constructor(private val context: Context) {
     }
 
     suspend fun refreshModelState(modelId: String) {
-        refreshMutex.withLock {
+        val refreshedModels = refreshMutex.withLock {
             val current = models
             models = withContext(Dispatchers.IO) {
                 current.map { model ->
@@ -909,15 +921,21 @@ class ModelRepository private constructor(private val context: Context) {
                     }
                 }
             }
+            models
         }
+        PromptRepository(context).ensureEditableModelSamples(
+            refreshedModels.filter { it.id == modelId },
+        )
     }
 
     suspend fun refreshAllModels() {
-        refreshMutex.withLock {
+        val refreshedModels = refreshMutex.withLock {
             baseUrl = generationPreferences.getBaseUrl()
             models = withContext(Dispatchers.IO) { initializeModels() }
             isLoaded = true
+            models
         }
+        PromptRepository(context).ensureEditableModelSamples(refreshedModels)
     }
 
     companion object {

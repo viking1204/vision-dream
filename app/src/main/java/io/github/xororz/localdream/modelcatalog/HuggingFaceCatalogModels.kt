@@ -145,6 +145,7 @@ data class ModelCatalogSearchResult(
         contentRating = contentRating,
         ratingSource = ratingSource,
         ratingEvidence = ratingEvidence,
+        displayName = displayName,
         source = ModelSourceMetadata(
             repositoryId = repositoryId,
             revision = repositoryRevision,

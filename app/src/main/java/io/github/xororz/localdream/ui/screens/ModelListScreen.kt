@@ -1,5 +1,7 @@
 package io.github.xororz.localdream.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -37,7 +39,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Help
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
@@ -64,6 +65,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -73,6 +75,7 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -87,6 +90,7 @@ import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.*
 import io.github.xororz.localdream.data.DarkModePreference
 import io.github.xororz.localdream.modelcatalog.BoundedModelZipExtractor
+import io.github.xororz.localdream.modelcatalog.LocalModelId
 import io.github.xororz.localdream.modelcatalog.PreparedModelValidator
 import io.github.xororz.localdream.modelcatalog.TransactionalModelInstaller
 import io.github.xororz.localdream.navigation.Screen
@@ -197,18 +201,18 @@ private fun RenameModelDialog(
     onDismiss: () -> Unit,
 ) {
     var name by remember { mutableStateOf(currentName) }
-    // The id is the directory name: spaces are stripped, matching how custom
-    // models are created. Validate against that derived id.
-    val newId = name.replace(" ", "")
-    val isBlank = newId.isEmpty()
-    val isReserved = ModelRepository.isReservedModelId(newId)
-    val isTaken = newId in existingIds
+    val newId = LocalModelId.normalize(name)
+    val isBlank = name.isBlank()
+    val isInvalid = !isBlank && newId == null
+    val isReserved = newId?.let(ModelRepository::isReservedModelId) == true
+    val isTaken = newId != null && newId in existingIds
     val errorText = when {
+        isInvalid -> stringResource(R.string.custom_model_id_invalid)
         isReserved -> stringResource(R.string.custom_model_id_reserved)
         isTaken -> stringResource(R.string.rename_name_exists)
         else -> null
     }
-    val canConfirm = !isBlank && !isReserved && !isTaken
+    val canConfirm = newId != null && !isReserved && !isTaken
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -221,7 +225,17 @@ private fun RenameModelDialog(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 isError = errorText != null,
-                supportingText = errorText?.let { { Text(it) } },
+                supportingText = when {
+                    errorText != null -> {
+                        { Text(errorText) }
+                    }
+
+                    newId != null -> {
+                        { Text(stringResource(R.string.model_id_preview, newId)) }
+                    }
+
+                    else -> null
+                },
             )
         },
         confirmButton = {
@@ -279,6 +293,8 @@ fun ModelListScreen(
     val msgRemoteOffline = stringResource(R.string.remote_banner_offline)
     val msgApiRequestBusy = stringResource(R.string.openai_api_request_busy)
     val msgModelUnloadBusy = stringResource(R.string.model_unload_busy)
+    val msgModelIdCopied = stringResource(R.string.model_id_copied)
+    val msgCannotDownload = stringResource(R.string.cannot_download_hint)
 
     var downloadingModel by remember { mutableStateOf<Model?>(null) }
     var currentProgress by remember { mutableStateOf<DownloadProgress?>(null) }
@@ -328,13 +344,6 @@ fun ModelListScreen(
     val apiStatus by OpenAiApiService.status.collectAsState()
     val inAppGenerationRunning by BackgroundGenerationService.isServiceRunning.collectAsState()
     val backendBusy = apiStatus.active || apiStatus.queued > 0 || inAppGenerationRunning
-
-    var showHelpDialog by remember { mutableStateOf(false) }
-
-    val isFirstLaunch = remember {
-        context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-            .getBoolean("is_first_launch", true)
-    }
 
     // Collected (not keyed on the state) so a state transition cannot cancel
     // an in-flight handler: with LaunchedEffect(state) the Success snackbar
@@ -408,13 +417,6 @@ fun ModelListScreen(
     }
 
     LaunchedEffect(Unit) {
-        if (isFirstLaunch) {
-            showHelpDialog = true
-            // Written here instead of inside remember: composition may be
-            // discarded, effects only run once it is committed.
-            context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-                .edit { putBoolean("is_first_launch", false) }
-        }
         scope.launch {
             currentBaseUrl = generationPreferences.getBaseUrl()
             selectedSource = generationPreferences.getSelectedSource()
@@ -488,57 +490,6 @@ fun ModelListScreen(
             }
         }
     }
-    if (showHelpDialog) {
-        AlertDialog(
-            onDismissRequest = { },
-            title = { Text(stringResource(R.string.about_app)) },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(vertical = 8.dp),
-                ) {
-                    val mustReadText = stringResource(R.string.must_read)
-                    val linkColor = MaterialTheme.colorScheme.primary
-
-                    val annotatedString = buildAnnotatedString {
-                        var position = 0
-                        for (match in Regex("""https://\S+""").findAll(mustReadText)) {
-                            append(mustReadText.substring(position, match.range.first))
-                            withLink(
-                                LinkAnnotation.Url(
-                                    url = match.value,
-                                    styles = TextLinkStyles(
-                                        style = SpanStyle(
-                                            color = linkColor,
-                                            textDecoration = TextDecoration.Underline,
-                                        ),
-                                    ),
-                                ),
-                            ) {
-                                append(match.value)
-                            }
-                            position = match.range.last + 1
-                        }
-                        append(mustReadText.substring(position))
-                    }
-
-                    Text(
-                        text = annotatedString,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(bottom = 12.dp),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showHelpDialog = false }) {
-                    Text(stringResource(R.string.got_it))
-                }
-            },
-        )
-    }
-
     LaunchedEffect(showSettingsDialog) {
         if (showSettingsDialog) {
             tempBaseUrl = currentBaseUrl
@@ -862,43 +813,30 @@ fun ModelListScreen(
     }
 
     showDownloadConfirm?.let { model ->
-        if (downloadingModel != null) {
-            AlertDialog(
-                onDismissRequest = { showDownloadConfirm = null },
-                title = { Text(stringResource(R.string.cannot_download)) },
-                text = { Text(stringResource(R.string.cannot_download_hint)) },
-                confirmButton = {
-                    TextButton(onClick = { showDownloadConfirm = null }) {
-                        Text(stringResource(R.string.confirm))
-                    }
-                },
-            )
-        } else {
-            AlertDialog(
-                onDismissRequest = { showDownloadConfirm = null },
-                title = { Text(stringResource(R.string.download_model)) },
-                text = {
-                    Text(stringResource(R.string.download_model_hint, model.name))
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            showDownloadConfirm = null
-                            downloadingModel = model
-                            currentProgress = null
-                            model.startDownload(context)
-                        },
-                    ) {
-                        Text(stringResource(R.string.confirm))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showDownloadConfirm = null }) {
-                        Text(stringResource(R.string.cancel))
-                    }
-                },
-            )
-        }
+        AlertDialog(
+            onDismissRequest = { showDownloadConfirm = null },
+            title = { Text(stringResource(R.string.download_model)) },
+            text = {
+                Text(stringResource(R.string.download_model_hint, model.name))
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDownloadConfirm = null
+                        downloadingModel = model
+                        currentProgress = null
+                        model.startDownload(context)
+                    },
+                ) {
+                    Text(stringResource(R.string.confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDownloadConfirm = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 
     showUpgradeConfirm?.let { model ->
@@ -1039,16 +977,6 @@ fun ModelListScreen(
                             expanded = menuExpanded,
                             onDismissRequest = { menuExpanded = false },
                         ) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.help)) },
-                                leadingIcon = {
-                                    Icon(Icons.AutoMirrored.Filled.Help, contentDescription = null)
-                                },
-                                onClick = {
-                                    menuExpanded = false
-                                    showHelpDialog = true
-                                },
-                            )
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.settings)) },
                                 leadingIcon = {
@@ -1268,7 +1196,13 @@ fun ModelListScreen(
                                     }
                                 } else {
                                     if (!model.isDownloaded) {
-                                        showDownloadConfirm = model
+                                        if (downloadingModel != null) {
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar(msgCannotDownload)
+                                            }
+                                        } else {
+                                            showDownloadConfirm = model
+                                        }
                                     } else if (apiStatus.active || apiStatus.queued > 0) {
                                         scope.launch {
                                             snackbarHostState.showSnackbar(msgApiRequestBusy)
@@ -1303,6 +1237,19 @@ fun ModelListScreen(
                                                 BackendService.EXTRA_EXPECTED_MODEL_ID,
                                                 model.id,
                                             ),
+                                    )
+                                }
+                            },
+                            onCopyIdClick = {
+                                val clipboard = context.getSystemService(
+                                    Context.CLIPBOARD_SERVICE,
+                                ) as? ClipboardManager
+                                clipboard?.setPrimaryClip(
+                                    ClipData.newPlainText("Vision Dream model ID", model.id),
+                                )
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        msgModelIdCopied.format(model.id),
                                     )
                                 }
                             },
@@ -2255,6 +2202,7 @@ fun ModelCard(
     isLoaded: Boolean = false,
     unloadEnabled: Boolean = true,
     onUnloadClick: () -> Unit = {},
+    onCopyIdClick: () -> Unit = {},
 ) {
     val isDisabledInSelection = !model.isDownloaded && isSelectionMode
 
@@ -2377,6 +2325,45 @@ fun ModelCard(
                     overflow = TextOverflow.Ellipsis,
                     color = secondaryContent,
                 )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            shape = MaterialTheme.shapes.small,
+                        )
+                        .padding(start = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.model_id_label),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = secondaryContent,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = model.id,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("model-id-${model.id}"),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = primaryContent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    IconButton(
+                        onClick = onCopyIdClick,
+                        modifier = Modifier.testTag("copy-model-id-${model.id}"),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = stringResource(R.string.copy_model_id),
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
@@ -2998,8 +2985,9 @@ fun CustomNpuModelDialog(
     var modelName by remember { mutableStateOf("") }
     var selectedZipUri by remember { mutableStateOf<Uri?>(null) }
     var isNsfw by remember { mutableStateOf(false) }
-    val isIdReserved = modelName.isNotBlank() &&
-        ModelRepository.isReservedModelId(modelName.replace(" ", ""))
+    val proposedModelId = LocalModelId.normalize(modelName)
+    val isIdInvalid = modelName.isNotBlank() && proposedModelId == null
+    val isIdReserved = proposedModelId?.let(ModelRepository::isReservedModelId) == true
 
     val zipPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -3059,11 +3047,21 @@ fun CustomNpuModelDialog(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     placeholder = { Text(stringResource(R.string.custom_model_name_hint)) },
-                    isError = isIdReserved,
-                    supportingText = if (isIdReserved) {
-                        { Text(stringResource(R.string.custom_model_id_reserved)) }
-                    } else {
-                        null
+                    isError = isIdInvalid || isIdReserved,
+                    supportingText = when {
+                        isIdInvalid -> {
+                            { Text(stringResource(R.string.custom_model_id_invalid)) }
+                        }
+
+                        isIdReserved -> {
+                            { Text(stringResource(R.string.custom_model_id_reserved)) }
+                        }
+
+                        proposedModelId != null -> {
+                            { Text(stringResource(R.string.model_id_preview, proposedModelId)) }
+                        }
+
+                        else -> null
                     },
                 )
 
@@ -3102,11 +3100,11 @@ fun CustomNpuModelDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (modelName.isNotBlank() && selectedZipUri != null && !isIdReserved) {
+                    if (proposedModelId != null && selectedZipUri != null && !isIdReserved) {
                         onModelAdded(modelName, selectedZipUri!!, isNsfw)
                     }
                 },
-                enabled = modelName.isNotBlank() && selectedZipUri != null && !isIdReserved,
+                enabled = proposedModelId != null && selectedZipUri != null && !isIdReserved,
             ) {
                 Text(stringResource(R.string.add_model))
             }
@@ -3131,8 +3129,9 @@ fun CustomModelDialog(
     var clipSkip by remember { mutableIntStateOf(1) }
     var selectedLoraFiles by remember { mutableStateOf<List<LoRAFile>>(emptyList()) }
     var isNsfw by remember { mutableStateOf(false) }
-    val isIdReserved = modelName.isNotBlank() &&
-        ModelRepository.isReservedModelId(modelName.replace(" ", ""))
+    val proposedModelId = LocalModelId.normalize(modelName)
+    val isIdInvalid = modelName.isNotBlank() && proposedModelId == null
+    val isIdReserved = proposedModelId?.let(ModelRepository::isReservedModelId) == true
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -3176,11 +3175,21 @@ fun CustomModelDialog(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     placeholder = { Text(stringResource(R.string.custom_model_name_hint)) },
-                    isError = isIdReserved,
-                    supportingText = if (isIdReserved) {
-                        { Text(stringResource(R.string.custom_model_id_reserved)) }
-                    } else {
-                        null
+                    isError = isIdInvalid || isIdReserved,
+                    supportingText = when {
+                        isIdInvalid -> {
+                            { Text(stringResource(R.string.custom_model_id_invalid)) }
+                        }
+
+                        isIdReserved -> {
+                            { Text(stringResource(R.string.custom_model_id_reserved)) }
+                        }
+
+                        proposedModelId != null -> {
+                            { Text(stringResource(R.string.model_id_preview, proposedModelId)) }
+                        }
+
+                        else -> null
                     },
                 )
 
@@ -3360,7 +3369,7 @@ fun CustomModelDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (modelName.isNotBlank() && selectedFileUri != null && !isIdReserved) {
+                    if (proposedModelId != null && selectedFileUri != null && !isIdReserved) {
                         onModelAdded(
                             modelName,
                             selectedFileUri!!,
@@ -3370,7 +3379,7 @@ fun CustomModelDialog(
                         )
                     }
                 },
-                enabled = modelName.isNotBlank() && selectedFileUri != null && !isIdReserved,
+                enabled = proposedModelId != null && selectedFileUri != null && !isIdReserved,
             ) {
                 Text(stringResource(R.string.add_model))
             }
@@ -3476,6 +3485,7 @@ suspend fun extractNpuModel(
                 ModelMetadata(
                     contentRating = if (isNsfw) ModelContentRating.NSFW else ModelContentRating.SFW,
                     ratingSource = ModelRatingSource.USER,
+                    displayName = modelName.trim(),
                 ),
             )
             TransactionalModelInstaller.Result.Installed(staging.name, layout.backendType)
@@ -3536,6 +3546,7 @@ fun EmbeddingManagerDialog(
         uri?.let {
             scope.launch {
                 importEmbedding(context, it, {
+                    errorMessage = null
                     loadEmbeddings()
                     onEmbeddingImported()
                 }) { error ->
@@ -3543,19 +3554,6 @@ fun EmbeddingManagerDialog(
                 }
             }
         }
-    }
-
-    if (errorMessage != null) {
-        AlertDialog(
-            onDismissRequest = { errorMessage = null },
-            title = { Text(stringResource(R.string.embedding_import_failed, "")) },
-            text = { Text(errorMessage ?: "") },
-            confirmButton = {
-                TextButton(onClick = { errorMessage = null }) {
-                    Text(stringResource(R.string.confirm))
-                }
-            },
-        )
     }
 
     LaunchedEffect(Unit) {
@@ -3608,6 +3606,14 @@ fun EmbeddingManagerDialog(
                     .fillMaxWidth()
                     .height(400.dp),
             ) {
+                errorMessage?.let { message ->
+                    Text(
+                        text = stringResource(R.string.embedding_import_failed, message),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                }
                 if (isLoading) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -3956,6 +3962,7 @@ suspend fun convertCustomModel(
                     ModelMetadata(
                         contentRating = if (isNsfw) ModelContentRating.NSFW else ModelContentRating.SFW,
                         ratingSource = ModelRatingSource.USER,
+                        displayName = modelName.trim(),
                     ),
                 )
                 val convertedFiles = modelDir.listFiles()

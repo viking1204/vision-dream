@@ -1,3 +1,6 @@
+import org.gradle.api.execution.TaskExecutionGraph
+import org.gradle.api.execution.TaskExecutionGraphListener
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -159,3 +162,34 @@ dependencies {
     // (the standalone ktlint plugin's no-unused-imports does not flag them).
     detektPlugins(libs.detekt.formatting)
 }
+
+// Physical Android devices used for daily work hold real private assets.
+// Android's connected test task installs/uninstalls the target package, so it
+// is deliberately blocked unless the caller has taken a verified snapshot and
+// explicitly opted in.
+gradle.taskGraph.addTaskExecutionGraphListener(
+    object : TaskExecutionGraphListener {
+        override fun graphPopulated(graph: TaskExecutionGraph) {
+            val destructiveTasks = graph.allTasks.filter { task ->
+                task.name.matches(Regex("""connected.+AndroidTest""")) ||
+                    task.name.startsWith("uninstall", ignoreCase = true)
+            }
+            if (destructiveTasks.isEmpty()) return
+
+            val optedIn = providers.gradleProperty("allowDestructiveDeviceTests").orNull == "true"
+            val snapshot = providers.gradleProperty("deviceSnapshot").orNull
+                ?.let(::file)
+                ?.takeIf { it.isFile }
+
+            if (!optedIn || snapshot == null) {
+                val taskList = destructiveTasks.joinToString { it.path }
+                throw GradleException(
+                    "已拦截可能卸载真机 APP 的任务：$taskList。\n" +
+                        "先运行 tools/device-safe-install.sh 创建快照；如确需仪器测试，" +
+                        "显式传入 -PallowDestructiveDeviceTests=true " +
+                        "-PdeviceSnapshot=/绝对路径/manifest.json。",
+                )
+            }
+        }
+    },
+)
