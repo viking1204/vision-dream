@@ -677,4 +677,12 @@
     <string name="repository_url_invalid">Please enter a valid URL</string>
     <string name="repository_duplicate">This repository already exists</string>
     <string name="repository_delete_confirm">Deleting will not affect installed models, but source associations will be marked as invalid.</string>
+
+    <!-- Multi-repository model search -->
+    <string name="model_search_hint">Enter keywords to search</string>
+    <string name="model_search_no_results">No matching models found</string>
+    <string name="model_search_failed">Search failed, tap to retry</string>
+    <string name="model_search_repo_failed">Load failed, tap to retry</string>
+    <string name="model_search_load_more">Load more</string>
+    <string name="model_search_install">Install</string>
 </resources>

@@ -671,4 +671,12 @@
     <string name="repository_url_invalid">有効な URL を入力してください</string>
     <string name="repository_duplicate">このリポジトリは既に存在します</string>
     <string name="repository_delete_confirm">削除してもインストール済みモデルには影響しませんが、ソースの関連付けは無効としてマークされます。</string>
+
+    <!-- Multi-repository model search -->
+    <string name="model_search_hint">キーワードを入力して検索</string>
+    <string name="model_search_no_results">一致するモデルが見つかりません</string>
+    <string name="model_search_failed">検索に失敗しました。タップして再試行</string>
+    <string name="model_search_repo_failed">読み込みに失敗しました。タップして再試行</string>
+    <string name="model_search_load_more">もっと読み込む</string>
+    <string name="model_search_install">インストール</string>
 </resources>

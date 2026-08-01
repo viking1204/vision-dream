@@ -671,4 +671,12 @@
     <string name="repository_url_invalid">请输入有效的 URL</string>
     <string name="repository_duplicate">该仓库已存在</string>
     <string name="repository_delete_confirm">删除后已安装模型不受影响，但来源关联将标记为失效。</string>
+
+    <!-- Multi-repository model search -->
+    <string name="model_search_hint">输入关键词搜索模型</string>
+    <string name="model_search_no_results">未找到匹配模型</string>
+    <string name="model_search_failed">搜索失败，点击重试</string>
+    <string name="model_search_repo_failed">加载失败，点击重试</string>
+    <string name="model_search_load_more">加载更多</string>
+    <string name="model_search_install">安装</string>
 </resources>
