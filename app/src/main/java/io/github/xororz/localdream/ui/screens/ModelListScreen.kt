@@ -75,7 +75,6 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -298,6 +297,7 @@ fun ModelListScreen(
 
     var downloadingModel by remember { mutableStateOf<Model?>(null) }
     var currentProgress by remember { mutableStateOf<DownloadProgress?>(null) }
+    var localSearchQuery by remember { mutableStateOf("") }
     var downloadError by remember { mutableStateOf<String?>(null) }
     var showDownloadConfirm by remember { mutableStateOf<Model?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -469,8 +469,8 @@ fun ModelListScreen(
     }
 
     val tabTitles = listOf(
-        stringResource(R.string.cpu_models),
         stringResource(R.string.npu_models),
+        stringResource(R.string.cpu_models),
     )
 
     if (isSelectionMode) {
@@ -1078,6 +1078,30 @@ fun ModelListScreen(
                     }
                 }
             }
+
+            if (!remoteActive) {
+                OutlinedTextField(
+                    value = localSearchQuery,
+                    onValueChange = { localSearchQuery = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    placeholder = { Text(stringResource(R.string.search_local_models)) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = if (localSearchQuery.isNotEmpty()) {
+                        {
+                            IconButton(onClick = { localSearchQuery = "" }) {
+                                Icon(Icons.Default.Close, stringResource(R.string.clear))
+                            }
+                        }
+                    } else {
+                        null
+                    },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.large,
+                )
+            }
+
             PrimaryTabRow(
                 selectedTabIndex = pagerState.currentPage,
                 modifier = Modifier.fillMaxWidth(),
@@ -1104,7 +1128,11 @@ fun ModelListScreen(
                 state = pagerState,
                 modifier = Modifier.weight(1f),
             ) { page ->
-                val models = if (page == 0) cpuModels else npuModels
+                val models = (if (page == 0) npuModels else cpuModels).filter {
+                    localSearchQuery.isBlank() ||
+                        it.name.contains(localSearchQuery, ignoreCase = true) ||
+                        it.id.contains(localSearchQuery, ignoreCase = true)
+                }
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -1126,8 +1154,8 @@ fun ModelListScreen(
 
                     if (page == 0 && !remoteActive) {
                         item {
-                            AddCustomModelButton(
-                                onClick = { showCustomModelDialog = true },
+                            AddCustomNpuModelButton(
+                                onClick = { showCustomNpuModelDialog = true },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
@@ -1135,8 +1163,8 @@ fun ModelListScreen(
 
                     if (page == 1 && !remoteActive) {
                         item {
-                            AddCustomNpuModelButton(
-                                onClick = { showCustomNpuModelDialog = true },
+                            AddCustomModelButton(
+                                onClick = { showCustomModelDialog = true },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
@@ -1253,6 +1281,11 @@ fun ModelListScreen(
                                     )
                                 }
                             },
+                            onRenameClick = { renameTarget = model },
+                            onDeleteClick = {
+                                selectedModels = setOf(model)
+                                showDeleteConfirm = true
+                            },
                         )
                     }
 
@@ -1279,9 +1312,9 @@ fun ModelListScreen(
                                     )
                                     Text(
                                         text = if (page == 0) {
-                                            stringResource(R.string.no_cpu_models)
-                                        } else {
                                             stringResource(R.string.no_npu_models)
+                                        } else {
+                                            stringResource(R.string.no_cpu_models)
                                         },
                                         style = MaterialTheme.typography.bodyLarge,
                                         textAlign = TextAlign.Center,
@@ -2188,6 +2221,13 @@ fun TabPageIndicator(pageCount: Int, currentPage: Int, modifier: Modifier = Modi
     }
 }
 
+private fun backendLabel(model: Model): String = when (model.backendType) {
+    "anima" -> "Anima"
+    "sdxl" -> "SDXL"
+    "sd15cpu" -> "SD1.5 CPU"
+    else -> "SD1.5 NPU"
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ModelCard(
@@ -2203,6 +2243,8 @@ fun ModelCard(
     unloadEnabled: Boolean = true,
     onUnloadClick: () -> Unit = {},
     onCopyIdClick: () -> Unit = {},
+    onRenameClick: () -> Unit = {},
+    onDeleteClick: () -> Unit = {},
 ) {
     val isDisabledInSelection = !model.isDownloaded && isSelectionMode
 
@@ -2284,7 +2326,7 @@ fun ModelCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(12.dp),
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -2300,10 +2342,12 @@ fun ModelCard(
                     }
                     Text(
                         text = model.name,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Normal,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
                         color = primaryContent,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .testTag("model-id-${model.id}"),
                     )
                     if (model.isNsfw) {
                         Badge(
@@ -2317,50 +2361,64 @@ fun ModelCard(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = model.description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = secondaryContent,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            shape = MaterialTheme.shapes.small,
-                        )
-                        .padding(start = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                Spacer(modifier = Modifier.height(2.dp))
+                if (model.description.isNotBlank()) {
                     Text(
-                        text = stringResource(R.string.model_id_label),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = secondaryContent,
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = model.id,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("model-id-${model.id}"),
+                        text = model.description,
                         style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = primaryContent,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        color = secondaryContent,
                     )
-                    IconButton(
-                        onClick = onCopyIdClick,
-                        modifier = Modifier.testTag("copy-model-id-${model.id}"),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = stringResource(R.string.copy_model_id),
-                            modifier = Modifier.size(18.dp),
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SuggestionChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                text = backendLabel(model),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        },
+                        border = null,
+                        colors = SuggestionChipDefaults.suggestionChipColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            labelColor = secondaryContent,
+                        ),
+                    )
+                    if (model.isDownloaded) {
+                        SuggestionChip(
+                            onClick = {},
+                            label = {
+                                Text(
+                                    text = stringResource(R.string.model_cap_img2img),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            },
+                            border = null,
+                            colors = SuggestionChipDefaults.suggestionChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                labelColor = secondaryContent,
+                            ),
+                        )
+                        SuggestionChip(
+                            onClick = {},
+                            label = {
+                                Text(
+                                    text = stringResource(R.string.model_cap_inpaint),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            },
+                            border = null,
+                            colors = SuggestionChipDefaults.suggestionChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                labelColor = secondaryContent,
+                            ),
                         )
                     }
                 }
@@ -2486,6 +2544,54 @@ fun ModelCard(
                             ),
                         ) {
                             Text(stringResource(R.string.unload_model))
+                        }
+                    }
+                }
+
+                if (!isSelectionMode) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (model.isDownloaded) {
+                            IconButton(
+                                onClick = onClick,
+                                modifier = Modifier.testTag("run-model-${model.id}"),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = stringResource(R.string.run_model),
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            if (model.isCustom) {
+                                IconButton(onClick = onRenameClick) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = stringResource(R.string.rename_model),
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                }
+                            }
+                            IconButton(onClick = onDeleteClick) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = stringResource(R.string.delete_model),
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = onCopyIdClick,
+                            modifier = Modifier.testTag("copy-model-id-${model.id}"),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = stringResource(R.string.copy_model_id),
+                                modifier = Modifier.size(20.dp),
+                            )
                         }
                     }
                 }

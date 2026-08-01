@@ -282,12 +282,15 @@
     <string name="custom_model_id_reserved">该名称与内置模型冲突，请使用其他名称</string>
     <string name="model_id_preview">模型 ID：%1$s</string>
     <string name="model_id_label">ID</string>
+    <string name="model_cap_img2img">图生图</string>
+    <string name="model_cap_inpaint">局部重绘</string>
     <string name="copy_model_id">复制模型 ID</string>
     <string name="model_id_copied">已复制模型 ID：%1$s</string>
     <string name="pin_to_top">置顶</string>
     <string name="unpin_from_top">取消置顶</string>
     <string name="rename">重命名</string>
     <string name="rename_model">重命名模型</string>
+    <string name="run_model">运行模型</string>
     <string name="rename_model_label">新名称</string>
     <string name="rename_name_exists">已存在同名模型</string>
     <string name="rename_success">已重命名</string>
@@ -496,6 +499,8 @@
     <!-- Model repository search and download -->
     <string name="model_already_installed">此模型已安装。</string>
     <string name="search_models">搜索模型仓库</string>
+    <string name="search_local_models">搜索本地模型</string>
+    <string name="clear">清除</string>
     <string name="search_models_hint">仅显示本应用可安全导入的模型。</string>
     <string name="search_models_keyword">模型关键词</string>
     <string name="search">搜索</string>
@@ -619,6 +624,7 @@
     <string name="studio_quick_tools">快捷工具</string>
     <string name="studio_prompt_library">提示词灵感库</string>
     <string name="studio_upscale">超分辨率放大</string>
+    <string name="studio_performance_presets">性能预设</string>
     <string name="studio_api_service">API 服务</string>
     <string name="studio_recent_assets">最近创作</string>
     <string name="studio_view_assets">查看资产</string>

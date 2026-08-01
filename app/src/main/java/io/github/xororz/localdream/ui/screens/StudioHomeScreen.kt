@@ -3,6 +3,7 @@ package io.github.xororz.localdream.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -26,7 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,22 +40,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import coil.compose.AsyncImage
 import io.github.xororz.localdream.R
-import io.github.xororz.localdream.data.HistoryFilter
-import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.navigation.Screen
 import io.github.xororz.localdream.navigation.navigateTopLevel
 import io.github.xororz.localdream.openai.InstalledModelCatalog
 import io.github.xororz.localdream.service.BackendService
 import io.github.xororz.localdream.service.OpenAiApiService
-import io.github.xororz.localdream.ui.components.RevealableImage
 import io.github.xororz.localdream.ui.design.StudioCoral
 import io.github.xororz.localdream.ui.design.StudioCyan
 import io.github.xororz.localdream.ui.design.StudioStatusPill
@@ -68,13 +63,9 @@ import io.github.xororz.localdream.ui.design.VisionStudioNavigationBar
 @Composable
 fun StudioHomeScreen(navController: NavController) {
     val context = LocalContext.current.applicationContext
-    val historyManager = remember { HistoryManager(context) }
     val catalog = remember { InstalledModelCatalog(context) }
     val servingModelId by BackendService.servingModelId.collectAsState()
     val apiStatus by OpenAiApiService.status.collectAsState()
-    val recentAssets by remember {
-        historyManager.observeRecent(HistoryFilter(), limit = 2)
-    }.collectAsState(initial = emptyList())
     var loadedModelName by remember { mutableStateOf<String?>(null) }
     var installedModelCount by remember { mutableIntStateOf(0) }
 
@@ -191,28 +182,28 @@ fun StudioHomeScreen(navController: NavController) {
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         StudioQuickAction(
-                            title = stringResource(R.string.studio_prompt_library),
+                            contentDescription = stringResource(R.string.studio_prompt_library),
                             icon = Icons.Default.Bookmarks,
                             accent = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f),
                             onClick = { navController.navigate(Screen.PromptManager.route) },
                         )
                         StudioQuickAction(
-                            title = "性能预设",
+                            contentDescription = stringResource(R.string.studio_performance_presets),
                             icon = Icons.Default.Tune,
                             accent = StudioCyan,
                             modifier = Modifier.weight(1f),
                             onClick = { navController.navigate(Screen.PerformancePresets.route) },
                         )
                         StudioQuickAction(
-                            title = stringResource(R.string.studio_upscale),
+                            contentDescription = stringResource(R.string.studio_upscale),
                             icon = Icons.Default.ZoomOutMap,
                             accent = StudioCyan,
                             modifier = Modifier.weight(1f),
                             onClick = { navController.navigate(Screen.Upscale.route) },
                         )
                         StudioQuickAction(
-                            title = stringResource(R.string.studio_api_service),
+                            contentDescription = stringResource(R.string.studio_api_service),
                             icon = Icons.Default.Dns,
                             accent = StudioCoral,
                             modifier = Modifier.weight(1f),
@@ -220,75 +211,6 @@ fun StudioHomeScreen(navController: NavController) {
                                 navController.navigateTopLevel(Screen.RemoteLink.route)
                             },
                         )
-                    }
-                }
-            }
-            item(key = "recent") {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = stringResource(R.string.studio_recent_assets),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        TextButton(
-                            onClick = {
-                                navController.navigateTopLevel(Screen.History.route)
-                            },
-                        ) {
-                            Text(stringResource(R.string.studio_view_assets))
-                        }
-                    }
-                    if (recentAssets.isEmpty()) {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerLow,
-                        ) {
-                            Text(
-                                text = stringResource(R.string.studio_empty_assets),
-                                modifier = Modifier.padding(18.dp),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    } else {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            recentAssets.forEach { asset ->
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    RevealableImage(
-                                        revealKey = asset.id,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .aspectRatio(1.45f)
-                                            .clip(RoundedCornerShape(18.dp)),
-                                    ) {
-                                        AsyncImage(
-                                            model = asset.imageFile,
-                                            contentDescription = null,
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = ContentScale.Crop,
-                                        )
-                                    }
-                                    Text(
-                                        text = asset.modelId,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -363,7 +285,7 @@ private fun StudioCreateHero(
 
 @Composable
 private fun StudioQuickAction(
-    title: String,
+    contentDescription: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     accent: Color,
     modifier: Modifier = Modifier,
@@ -376,19 +298,14 @@ private fun StudioQuickAction(
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        Column(
-            modifier = Modifier.padding(13.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = icon,
-                contentDescription = null,
+                contentDescription = contentDescription,
                 tint = accent,
-            )
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
             )
         }
     }

@@ -282,12 +282,15 @@
     <string name="custom_model_id_reserved">この名前は組み込みモデルと競合します。別の名前を使用してください。</string>
     <string name="model_id_preview">モデル ID：%1$s</string>
     <string name="model_id_label">ID</string>
+    <string name="model_cap_img2img">画像から画像</string>
+    <string name="model_cap_inpaint">インペイント</string>
     <string name="copy_model_id">モデル ID をコピー</string>
     <string name="model_id_copied">モデル ID をコピーしました：%1$s</string>
     <string name="pin_to_top">トップに固定</string>
     <string name="unpin_from_top">固定を解除</string>
     <string name="rename">名前を変更</string>
     <string name="rename_model">モデル名を変更</string>
+    <string name="run_model">モデルを実行</string>
     <string name="rename_model_label">新しい名前</string>
     <string name="rename_name_exists">同じ名前のモデルが既に存在します。</string>
     <string name="rename_success">名前を変更しました</string>
@@ -496,6 +499,8 @@
     <!-- Model repository search and download -->
     <string name="model_already_installed">このモデルはインストール済みです。</string>
     <string name="search_models">モデルリポジトリを検索</string>
+    <string name="search_local_models">ローカルモデルを検索</string>
+    <string name="clear">クリア</string>
     <string name="search_models_hint">このアプリで安全にインポートできるモデルのみ表示されます。</string>
     <string name="search_models_keyword">モデルのキーワード</string>
     <string name="search">検索</string>
@@ -619,6 +624,7 @@
     <string name="studio_quick_tools">クイックツール</string>
     <string name="studio_prompt_library">プロンプトライブラリ</string>
     <string name="studio_upscale">アップスケール</string>
+    <string name="studio_performance_presets">パフォーマンスプリセット</string>
     <string name="studio_api_service">API サービス</string>
     <string name="studio_recent_assets">最近の作品</string>
     <string name="studio_view_assets">アセットを表示</string>
