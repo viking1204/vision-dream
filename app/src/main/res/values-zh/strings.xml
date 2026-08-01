@@ -679,4 +679,13 @@
     <string name="model_search_repo_failed">加载失败，点击重试</string>
     <string name="model_search_load_more">加载更多</string>
     <string name="model_search_install">安装</string>
+    <string name="chat_generation_mode_txt2img">文生图</string>
+    <string name="chat_generation_mode_img2img">图生图</string>
+    <string name="chat_generation_mode_inpaint">局部重绘</string>
+    <string name="chat_generation_mode_upscale">放大</string>
+    <string name="chat_generation_select_source_image">选择图片</string>
+    <string name="chat_generation_source_image_required">请先为该模式选择一张源图片。</string>
+    <string name="chat_generation_load_earlier">显示更早的消息</string>
+    <string name="prompt_picker_create">新建提示词</string>
+    <string name="chat_generation_source_image_selected">已选择图片</string>
 </resources>

@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -55,6 +56,7 @@ fun PromptPickerDialog(
     onDismissRequest: () -> Unit,
     onTemplateSelected: (PromptLibraryItem) -> Unit,
     modelId: String? = null,
+    onNavigateToCreate: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val repository = remember { PromptRepository(context) }
@@ -105,20 +107,30 @@ fun PromptPickerDialog(
                 )
 
                 if (templates.isEmpty()) {
-                    Text(
-                        text = stringResource(
-                            if (query.isBlank()) {
-                                R.string.prompt_picker_empty
-                            } else {
-                                R.string.prompt_picker_no_results
-                            },
-                        ),
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 32.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                            .padding(vertical = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            text = stringResource(
+                                if (query.isBlank()) {
+                                    R.string.prompt_picker_empty
+                                } else {
+                                    R.string.prompt_picker_no_results
+                                },
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (query.isBlank()) {
+                            TextButton(onClick = onNavigateToCreate) {
+                                Text(stringResource(R.string.prompt_picker_create))
+                            }
+                        }
+                    }
                 } else {
                     LazyColumn(
                         modifier = Modifier

@@ -38,6 +38,7 @@ class GenerationPreferences(private val context: Context) {
     private val SHARE_CLEAR_CLIPBOARD_KEY =
         booleanPreferencesKey("share_clear_clipboard_on_import")
     private val CUSTOM_REPOSITORIES_KEY = stringPreferencesKey("custom_repositories")
+    private val CREATION_DRAFT_KEY = stringPreferencesKey("creation_draft")
 
     // UltraFix step/denoise are per-model (each model keeps its own repair
     // recipe), independent of that model's main generation params. Denoise is
@@ -132,6 +133,35 @@ class GenerationPreferences(private val context: Context) {
     suspend fun saveCustomRepositories(list: List<RepositoryConfig>) {
         context.dataStore.edit { preferences ->
             preferences[CUSTOM_REPOSITORIES_KEY] = RepositoryConfig.serializeList(list)
+        }
+    }
+
+    /**
+     * Persists the chat creation draft so an interrupted or backgrounded
+     * session can restore the prompt, model, mode, and advanced settings.
+     * A blank draft (no prompt and no model) is cleared rather than stored.
+     */
+    suspend fun saveCreationDraft(draft: CreationDraft) {
+        context.dataStore.edit { preferences ->
+            if (draft.prompt.isBlank() && draft.modelId == null) {
+                preferences.remove(CREATION_DRAFT_KEY)
+            } else {
+                preferences[CREATION_DRAFT_KEY] = draft.toJson()
+            }
+        }
+    }
+
+    suspend fun getCreationDraft(): CreationDraft? = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { preferences ->
+            preferences[CREATION_DRAFT_KEY]?.let { CreationDraft.fromJson(it) }
+        }.first()
+
+    suspend fun clearCreationDraft() {
+        context.dataStore.edit { preferences ->
+            preferences.remove(CREATION_DRAFT_KEY)
         }
     }
 

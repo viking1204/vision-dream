@@ -679,4 +679,13 @@
     <string name="model_search_repo_failed">読み込みに失敗しました。タップして再試行</string>
     <string name="model_search_load_more">もっと読み込む</string>
     <string name="model_search_install">インストール</string>
+    <string name="chat_generation_mode_txt2img">テキストから画像</string>
+    <string name="chat_generation_mode_img2img">画像から画像</string>
+    <string name="chat_generation_mode_inpaint">修復（インペイント）</string>
+    <string name="chat_generation_mode_upscale">拡大</string>
+    <string name="chat_generation_select_source_image">画像を選択</string>
+    <string name="chat_generation_source_image_required">このモードでは先に元画像を選択してください。</string>
+    <string name="chat_generation_load_earlier">以前のメッセージを表示</string>
+    <string name="prompt_picker_create">新規プロンプト</string>
+    <string name="chat_generation_source_image_selected">画像を選択済み</string>
 </resources>

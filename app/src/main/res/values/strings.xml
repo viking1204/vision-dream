@@ -685,4 +685,13 @@
     <string name="model_search_repo_failed">Load failed, tap to retry</string>
     <string name="model_search_load_more">Load more</string>
     <string name="model_search_install">Install</string>
+    <string name="chat_generation_mode_txt2img">Text to image</string>
+    <string name="chat_generation_mode_img2img">Image to image</string>
+    <string name="chat_generation_mode_inpaint">Inpaint</string>
+    <string name="chat_generation_mode_upscale">Upscale</string>
+    <string name="chat_generation_select_source_image">Select image</string>
+    <string name="chat_generation_source_image_required">Select a source image for this mode first.</string>
+    <string name="chat_generation_load_earlier">Show earlier messages</string>
+    <string name="prompt_picker_create">New prompt</string>
+    <string name="chat_generation_source_image_selected">Image selected</string>
 </resources>
