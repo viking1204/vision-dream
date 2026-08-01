@@ -53,7 +53,7 @@ class ModelMetadataTest {
         assertEquals(null, ModelMetadataStore.read(directory))
 
         directory.resolve(ModelMetadataStore.FILE_NAME).writeText(
-            """{"schema_version":5,"content_rating":"nsfw"}""",
+            """{"schema_version":6,"content_rating":"nsfw"}""",
         )
         assertEquals(null, ModelMetadataStore.read(directory))
     }
@@ -91,5 +91,30 @@ class ModelMetadataTest {
             ModelContentRating.SFW,
             resolveModelContentRating(metadata, "fabledIllusionNSFW_v7Apoapsis"),
         )
+    }
+
+    @Test
+    fun contentSha256RoundTripsThroughJson() {
+        val expected = ModelMetadata(
+            contentRating = ModelContentRating.SFW,
+            contentSha256 = "a".repeat(64),
+        )
+
+        val parsed = ModelMetadata.fromJsonString(expected.toJsonString())
+
+        assertEquals(expected, parsed)
+        assertEquals("a".repeat(64), parsed.contentSha256)
+    }
+
+    @Test
+    fun legacyMetadataWithoutContentSha256ReadsAsNull() {
+        val parsed = ModelMetadata.fromJsonString(
+            """{"schema_version":4,"content_rating":"sfw"}""",
+        )
+
+        assertEquals(ModelContentRating.SFW, parsed.contentRating)
+        assertEquals(null, parsed.contentSha256)
+        // Re-serializing should not emit content_sha256 when null.
+        assertFalse(parsed.toJsonString().contains("content_sha256"))
     }
 }

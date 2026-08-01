@@ -5,6 +5,7 @@ import androidx.compose.runtime.Immutable
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import io.github.xororz.localdream.modelcatalog.RepositoryConfig
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -36,6 +37,7 @@ class GenerationPreferences(private val context: Context) {
     private val SHARE_USE_BASE64_KEY = booleanPreferencesKey("share_use_base64")
     private val SHARE_CLEAR_CLIPBOARD_KEY =
         booleanPreferencesKey("share_clear_clipboard_on_import")
+    private val CUSTOM_REPOSITORIES_KEY = stringPreferencesKey("custom_repositories")
 
     // UltraFix step/denoise are per-model (each model keeps its own repair
     // recipe), independent of that model's main generation params. Denoise is
@@ -106,6 +108,32 @@ class GenerationPreferences(private val context: Context) {
         .map { preferences ->
             preferences[BASE_URL_KEY] ?: "https://huggingface.co/"
         }.first()
+
+    /**
+     * Observable list of user-configured custom model repositories. Emits an
+     * empty list when nothing has been stored or when the persisted payload is
+     * unreadable, so callers can always treat the flow as a valid source of
+     * truth.
+     */
+    fun observeCustomRepositories(): Flow<List<RepositoryConfig>> = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { preferences ->
+            preferences[CUSTOM_REPOSITORIES_KEY]
+                ?.let { raw ->
+                    runCatching { RepositoryConfig.deserializeList(raw) }.getOrDefault(emptyList())
+                }
+                ?: emptyList()
+        }
+
+    suspend fun getCustomRepositories(): List<RepositoryConfig> = observeCustomRepositories().first()
+
+    suspend fun saveCustomRepositories(list: List<RepositoryConfig>) {
+        context.dataStore.edit { preferences ->
+            preferences[CUSTOM_REPOSITORIES_KEY] = RepositoryConfig.serializeList(list)
+        }
+    }
 
     suspend fun saveSelectedSource(source: String) {
         context.dataStore.edit { preferences ->

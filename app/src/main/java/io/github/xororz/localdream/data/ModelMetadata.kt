@@ -109,6 +109,7 @@ data class ModelMetadata(
     val runtimeCompatibility: ModelRuntimeCompatibility? = null,
     val displayName: String? = null,
     val description: String? = null,
+    val contentSha256: String? = null,
 ) {
     fun toJsonString(): String = JSONObject().apply {
         put(KEY_SCHEMA_VERSION, SCHEMA_VERSION)
@@ -147,10 +148,13 @@ data class ModelMetadata(
                 },
             )
         }
+        contentSha256?.trim()?.takeIf(String::isNotEmpty)?.let {
+            put(KEY_CONTENT_SHA256, it)
+        }
     }.toString()
 
     companion object {
-        const val SCHEMA_VERSION = 4
+        const val SCHEMA_VERSION = 5
 
         private const val KEY_SCHEMA_VERSION = "schema_version"
         private const val KEY_CONTENT_RATING = "content_rating"
@@ -167,6 +171,7 @@ data class ModelMetadata(
         private const val KEY_ABI = "abi"
         private const val KEY_HTP_TARGET = "htp_target"
         private const val KEY_CONTEXT_FINGERPRINT = "context_fingerprint"
+        private const val KEY_CONTENT_SHA256 = "content_sha256"
 
         fun fromJsonString(rawJson: String): ModelMetadata {
             val json = JSONObject(rawJson)
@@ -227,6 +232,9 @@ data class ModelMetadata(
                     .trim()
                     .takeIf(String::isNotEmpty),
                 description = json.optString(KEY_DESCRIPTION)
+                    .trim()
+                    .takeIf(String::isNotEmpty),
+                contentSha256 = json.optString(KEY_CONTENT_SHA256)
                     .trim()
                     .takeIf(String::isNotEmpty),
             )

@@ -135,6 +135,7 @@ data class ModelCatalogSearchResult(
     val ratingSource: ModelRatingSource? = null,
     val ratingEvidence: Set<String> = emptySet(),
     val repositoryRevision: String? = null,
+    val repositoryConfigId: String? = null,
 ) {
     fun installExpectation(): CatalogInstallExpectation = CatalogInstallExpectation(
         backendType = requireNotNull(backendType) { "Catalog result has no backend" },
