@@ -2,8 +2,8 @@ package io.github.xororz.localdream.mcp
 
 import android.content.Context
 import io.github.xororz.localdream.data.AssetOrigin
-import io.github.xororz.localdream.data.GenerationDefaults
 import io.github.xororz.localdream.data.GenerationMode
+import io.github.xororz.localdream.data.GenerationPreferences
 import io.github.xororz.localdream.data.HistoryFilter
 import io.github.xororz.localdream.data.HistoryItem
 import io.github.xororz.localdream.data.HistoryManager
@@ -825,7 +825,9 @@ class AndroidMcpGenerationScheduler(
                     val dimensions = runBlocking {
                         coordinator.ensureReady(entry, request.width, request.height, presetEngineConfig)
                     }
-                    val negativePrompt = request.negativePrompt.ifBlank { GenerationDefaults.DEFAULT_NEGATIVE_PROMPT }
+                    val negativePrompt = request.negativePrompt.ifBlank {
+                        runBlocking { GenerationPreferences(context).getGlobalNegativePrompt() }
+                    }
                     val generated = backend.generate(
                         request.parameters.copy(modelId = entry.id, negativePrompt = negativePrompt),
                         dimensions.first,

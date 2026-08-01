@@ -13,7 +13,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.graphics.createBitmap
 import io.github.xororz.localdream.R
-import io.github.xororz.localdream.data.GenerationDefaults
+import io.github.xororz.localdream.data.GenerationPreferences
 import io.github.xororz.localdream.data.PresetSnapshot
 import io.github.xororz.localdream.openai.InferenceArbiter
 import io.github.xororz.localdream.utils.Http
@@ -172,9 +172,9 @@ class BackgroundGenerationService : Service() {
             )
         }
 
-        val negativePrompt = GenerationDefaults.resolveNegativePrompt(
-            intent.getStringExtra("negative_prompt"),
-        )
+        val negativePrompt = intent.getStringExtra("negative_prompt") ?: runBlocking {
+            GenerationPreferences(applicationContext).getGlobalNegativePrompt()
+        }
         val steps = intent.getIntExtra("steps", 28)
         val cfg = intent.getFloatExtra("cfg", 7f)
         val seed = if (intent.hasExtra("seed")) intent.getLongExtra("seed", 0) else null

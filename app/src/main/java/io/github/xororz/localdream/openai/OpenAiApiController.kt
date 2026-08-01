@@ -4,8 +4,8 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.util.Log
 import io.github.xororz.localdream.data.AssetOrigin
-import io.github.xororz.localdream.data.GenerationDefaults
 import io.github.xororz.localdream.data.GenerationMode
+import io.github.xororz.localdream.data.GenerationPreferences
 import io.github.xororz.localdream.data.HistoryItem
 import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.data.InferenceHistoryAssociation
@@ -44,6 +44,7 @@ class OpenAiApiController(
     private val historyManager = HistoryManager(context)
     private val temporaryImages = TemporaryImageStore()
     private val inferenceJobs = RoomInferenceJobRepository(AppDatabase.get(context))
+    private val generationPreferences = GenerationPreferences(context)
 
     fun route(request: HttpRequest): HttpResponse {
         if (request.method == "GET" &&
@@ -102,6 +103,10 @@ class OpenAiApiController(
     fun cancelActiveCalls() {
         backendClient.cancelAll()
         temporaryImages.clear()
+    }
+
+    private fun resolveNegativePrompt(value: String?): String = value ?: runBlocking {
+        generationPreferences.getGlobalNegativePrompt()
     }
 
     private fun models(): HttpResponse {
@@ -170,9 +175,7 @@ class OpenAiApiController(
         val parameters = ImageRequestParameters(
             modelId = body.stringValue("model"),
             prompt = body.requiredString("prompt"),
-            negativePrompt = GenerationDefaults.resolveNegativePrompt(
-                body.stringValue("negative_prompt"),
-            ),
+            negativePrompt = resolveNegativePrompt(body.stringValue("negative_prompt")),
             width = width,
             height = height,
             steps = body.intValue("steps", DEFAULT_STEPS),
@@ -210,9 +213,7 @@ class OpenAiApiController(
         val parameters = ImageRequestParameters(
             modelId = form.fields["model"],
             prompt = form.fields.required("prompt"),
-            negativePrompt = GenerationDefaults.resolveNegativePrompt(
-                form.fields["negative_prompt"],
-            ),
+            negativePrompt = resolveNegativePrompt(form.fields["negative_prompt"]),
             width = width,
             height = height,
             steps = form.fields.intValue("steps", DEFAULT_STEPS),
