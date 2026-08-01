@@ -663,4 +663,12 @@
     <string name="asset_copy_prompts">正と負のプロンプトをコピー</string>
     <string name="asset_prompts_copied">正と負のプロンプトをコピーしました</string>
     <string name="asset_selected">選択済み</string>
+    <string name="repository_config_title">リポジトリ</string>
+    <string name="repository_add">リポジトリを追加</string>
+    <string name="repository_name">名前</string>
+    <string name="repository_url">URL</string>
+    <string name="repository_type">タイプ</string>
+    <string name="repository_url_invalid">有効な URL を入力してください</string>
+    <string name="repository_duplicate">このリポジトリは既に存在します</string>
+    <string name="repository_delete_confirm">削除してもインストール済みモデルには影響しませんが、ソースの関連付けは無効としてマークされます。</string>
 </resources>

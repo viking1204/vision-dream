@@ -663,4 +663,12 @@
     <string name="asset_copy_prompts">复制正向和负向提示词</string>
     <string name="asset_prompts_copied">已复制正向和负向提示词</string>
     <string name="asset_selected">已选中</string>
+    <string name="repository_config_title">仓库</string>
+    <string name="repository_add">添加仓库</string>
+    <string name="repository_name">名称</string>
+    <string name="repository_url">URL</string>
+    <string name="repository_type">类型</string>
+    <string name="repository_url_invalid">请输入有效的 URL</string>
+    <string name="repository_duplicate">该仓库已存在</string>
+    <string name="repository_delete_confirm">删除后已安装模型不受影响，但来源关联将标记为失效。</string>
 </resources>

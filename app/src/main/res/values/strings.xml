@@ -669,4 +669,12 @@
     <string name="asset_copy_prompts">Copy positive and negative prompts</string>
     <string name="asset_prompts_copied">Positive and negative prompts copied</string>
     <string name="asset_selected">Selected</string>
+    <string name="repository_config_title">Repositories</string>
+    <string name="repository_add">Add repository</string>
+    <string name="repository_name">Name</string>
+    <string name="repository_url">URL</string>
+    <string name="repository_type">Type</string>
+    <string name="repository_url_invalid">Please enter a valid URL</string>
+    <string name="repository_duplicate">This repository already exists</string>
+    <string name="repository_delete_confirm">Deleting will not affect installed models, but source associations will be marked as invalid.</string>
 </resources>
