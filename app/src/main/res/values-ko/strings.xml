@@ -661,7 +661,13 @@
     <string name="asset_layout_waterfall">워터폴</string>
     <string name="asset_layout_list">목록</string>
     <string name="asset_layout_grid">3열 그리드</string>
-    <string name="asset_show_all">모든 이미지 표시</string>
+    <string name="asset_show_all">민감한 콘텐츠 표시</string>
+    <string name="asset_sensitive_content_desc">자산 목록에서 민감한(성인) 콘텐츠 표시</string>
+    <string name="asset_go_create">생성하러 가기</string>
+    <string name="asset_zoom_in">확대</string>
+    <string name="asset_copy_positive_prompt">긍정 프롬프트 복사</string>
+    <string name="asset_copy_negative_prompt">부정 프롬프트 복사</string>
+    <string name="asset_prompt_copied">프롬프트 복사됨</string>
     <string name="asset_count">에셋 %1$d개</string>
     <string name="asset_open_fullscreen">전체 화면으로 보기</string>
     <string name="asset_generated_image">생성된 이미지</string>

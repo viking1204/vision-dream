@@ -60,6 +60,8 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.paging.compose.collectAsLazyPagingItems
@@ -71,12 +73,12 @@ import io.github.xororz.localdream.data.HistoryFilter
 import io.github.xororz.localdream.data.HistoryItem
 import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.data.PromptRepository
+import io.github.xororz.localdream.navigation.Screen
 import io.github.xororz.localdream.navigation.popBackStackIfResumed
 import io.github.xororz.localdream.ui.components.GenerationParamsDialog
 import io.github.xororz.localdream.ui.components.OverlayIconButton
 import io.github.xororz.localdream.ui.components.ShareParamsFlow
 import io.github.xororz.localdream.ui.components.ZoomableImageOverlay
-import io.github.xororz.localdream.utils.ParamShare
 import io.github.xororz.localdream.utils.saveImage
 import io.github.xororz.localdream.utils.saveImageFromFile
 import kotlinx.coroutines.Dispatchers
@@ -112,6 +114,8 @@ fun HistoryScreen(
     val msgPromptAlreadySaved = stringResource(R.string.asset_prompt_already_saved)
     val msgPromptSaveFailed = stringResource(R.string.prompt_manager_save_failed)
     val msgPromptsCopied = stringResource(R.string.asset_prompts_copied)
+    val msgPromptCopied = stringResource(R.string.asset_prompt_copied)
+    val sensitiveContentDesc = stringResource(R.string.asset_sensitive_content_desc)
 
     var historyFilter by remember { mutableStateOf(HistoryFilter()) }
     val pagedItems = remember(historyFilter) { historyManager.pager(historyFilter) }
@@ -252,7 +256,10 @@ fun HistoryScreen(
             Surface(
                 modifier = Modifier
                     .padding(horizontal = 12.dp, vertical = 6.dp)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .semantics {
+                        contentDescription = sensitiveContentDesc
+                    },
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
             ) {
@@ -357,6 +364,9 @@ fun HistoryScreen(
                 onCopyPrompts = { item ->
                     copyPromptPairToClipboard(context, item, msgPromptsCopied)
                 },
+                onGoCreate = {
+                    navController.navigate(Screen.ChatGeneration.route)
+                },
             )
         }
     }
@@ -371,6 +381,8 @@ fun HistoryScreen(
         ZoomableImageOverlay(
             bitmap = previewBitmap,
             onDismiss = { previewItem = null },
+            showScaleIndicator = true,
+            zoomInEnabled = true,
             topEndContent = {
                 OverlayIconButton(
                     icon = Icons.Default.Info,
@@ -501,6 +513,12 @@ fun HistoryScreen(
                 },
                 onCopyPrompts = {
                     copyPromptPairToClipboard(context, item, msgPromptsCopied)
+                },
+                onCopyPrompt = {
+                    copySinglePrompt(context, item.params.prompt, msgPromptCopied)
+                },
+                onCopyNegativePrompt = {
+                    copySinglePrompt(context, item.params.negativePrompt, msgPromptCopied)
                 },
                 onShare = {
                     showParamsDialog = false
@@ -644,13 +662,27 @@ private fun copyPromptPairToClipboard(
     item: HistoryItem,
     confirmationMessage: String,
 ) {
-    val payload = ParamShare.buildPromptPairClipboardText(
-        prompt = item.params.prompt,
-        negativePrompt = item.params.negativePrompt,
-    )
+    val payload = buildString {
+        append("正向: ")
+        append(item.params.prompt)
+        append("\n负面: ")
+        append(item.params.negativePrompt)
+    }
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
     clipboard?.setPrimaryClip(
         ClipData.newPlainText("Vision Dream prompts", payload),
+    )
+    Toast.makeText(context, confirmationMessage, Toast.LENGTH_SHORT).show()
+}
+
+private fun copySinglePrompt(
+    context: Context,
+    prompt: String,
+    confirmationMessage: String,
+) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    clipboard?.setPrimaryClip(
+        ClipData.newPlainText("Vision Dream prompt", prompt),
     )
     Toast.makeText(context, confirmationMessage, Toast.LENGTH_SHORT).show()
 }

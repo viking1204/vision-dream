@@ -41,6 +41,8 @@ fun GenerationParamsDialog(
     showReproduceButton: Boolean = true,
     onSavePrompt: (() -> Unit)? = null,
     onCopyPrompts: (() -> Unit)? = null,
+    onCopyPrompt: (() -> Unit)? = null,
+    onCopyNegativePrompt: (() -> Unit)? = null,
     onShare: () -> Unit,
     onSendToImg2img: () -> Unit,
     onReproduce: () -> Unit,
@@ -151,23 +153,47 @@ fun GenerationParamsDialog(
                     )
                 }
 
-                Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
                         stringResource(R.string.image_prompt),
                         style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.weight(1f),
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(params.prompt, style = MaterialTheme.typography.bodyMedium)
+                    if (onCopyPrompt != null && params.prompt.isNotBlank()) {
+                        IconButton(onClick = onCopyPrompt) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = stringResource(R.string.asset_copy_positive_prompt),
+                            )
+                        }
+                    }
                 }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(params.prompt, style = MaterialTheme.typography.bodyMedium)
 
-                Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
                         stringResource(R.string.negative_prompt),
                         style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.weight(1f),
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(params.negativePrompt, style = MaterialTheme.typography.bodyMedium)
+                    if (onCopyNegativePrompt != null && params.negativePrompt.isNotBlank()) {
+                        IconButton(onClick = onCopyNegativePrompt) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = stringResource(R.string.asset_copy_negative_prompt),
+                            )
+                        }
+                    }
                 }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(params.negativePrompt, style = MaterialTheme.typography.bodyMedium)
             }
         },
         confirmButton = {

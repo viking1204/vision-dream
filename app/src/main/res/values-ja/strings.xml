@@ -661,7 +661,13 @@
     <string name="asset_layout_waterfall">ウォーターフォール</string>
     <string name="asset_layout_list">リスト</string>
     <string name="asset_layout_grid">3列グリッド</string>
-    <string name="asset_show_all">すべての画像を表示</string>
+    <string name="asset_show_all">センシティブなコンテンツを表示</string>
+    <string name="asset_sensitive_content_desc">アセット一覧でセンシティブ（成人）コンテンツを表示します</string>
+    <string name="asset_go_create">作成へ</string>
+    <string name="asset_zoom_in">拡大</string>
+    <string name="asset_copy_positive_prompt">正のプロンプトをコピー</string>
+    <string name="asset_copy_negative_prompt">負のプロンプトをコピー</string>
+    <string name="asset_prompt_copied">プロンプトをコピーしました</string>
     <string name="asset_count">%1$d 件のアセット</string>
     <string name="asset_open_fullscreen">全画面で表示</string>
     <string name="asset_generated_image">生成画像</string>

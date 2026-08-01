@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
@@ -57,6 +58,7 @@ fun ZoomableImageOverlay(
     bitmap: Bitmap?,
     onDismiss: () -> Unit,
     showScaleIndicator: Boolean = false,
+    zoomInEnabled: Boolean = false,
     topEndContent: @Composable RowScope.() -> Unit = {},
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
@@ -163,11 +165,21 @@ fun ZoomableImageOverlay(
                 content = topEndContent,
             )
 
-            Box(
+            Row(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 16.dp, bottom = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (zoomInEnabled) {
+                    OverlayIconButton(
+                        icon = Icons.Default.ZoomIn,
+                        contentDescription = stringResource(R.string.asset_zoom_in),
+                        onClick = {
+                            scale = (scale * 1.5f).coerceIn(0.5f, 5f)
+                        },
+                    )
+                }
                 OverlayIconButton(
                     icon = Icons.Default.Refresh,
                     contentDescription = "reset zoom",

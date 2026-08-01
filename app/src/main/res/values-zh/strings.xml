@@ -661,7 +661,13 @@
     <string name="asset_layout_waterfall">瀑布流</string>
     <string name="asset_layout_list">列表</string>
     <string name="asset_layout_grid">九宫格</string>
-    <string name="asset_show_all">显示全部图片</string>
+    <string name="asset_show_all">显示敏感内容</string>
+    <string name="asset_sensitive_content_desc">显示资产生成中的敏感（成人）内容</string>
+    <string name="asset_go_create">去创作</string>
+    <string name="asset_zoom_in">放大</string>
+    <string name="asset_copy_positive_prompt">复制正向提示词</string>
+    <string name="asset_copy_negative_prompt">复制负向提示词</string>
+    <string name="asset_prompt_copied">已复制提示词</string>
     <string name="asset_count">%1$d 项资产</string>
     <string name="asset_open_fullscreen">查看大图</string>
     <string name="asset_generated_image">生成的图片</string>

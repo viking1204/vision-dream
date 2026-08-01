@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -56,6 +58,7 @@ import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -439,6 +442,7 @@ internal fun ModelRunHistoryPage(
     onItemRevealChanged: ((Long, Boolean) -> Unit)? = null,
     onItemInfoClick: ((HistoryItem) -> Unit)? = null,
     onCopyPrompts: ((HistoryItem) -> Unit)? = null,
+    onGoCreate: (() -> Unit)? = null,
 ) {
     // Handle back button in selection mode
     BackHandler(enabled = isSelectionMode && !isBatchSaving) {
@@ -507,6 +511,12 @@ internal fun ModelRunHistoryPage(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (onGoCreate != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TextButton(onClick = onGoCreate) {
+                                Text(stringResource(R.string.asset_go_create))
+                            }
+                        }
                     }
                 }
             } else {
