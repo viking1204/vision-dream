@@ -20,10 +20,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.GenerationMode
@@ -223,3 +225,59 @@ fun GenerationParamsDialog(
         },
     )
 }
+
+@Preview(showBackground = true)
+@Composable
+internal fun GenerationParamsDialogLightPreview() {
+    MaterialTheme {
+        GenerationParamsDialog(
+            title = "Generation parameters",
+            params = previewParameters(),
+            modelId = "dream-shaper-8",
+            displayMode = GenerationMode.TXT2IMG,
+            showImg2imgButton = true,
+            showShareButton = true,
+            onCopyPrompt = {},
+            onCopyNegativePrompt = {},
+            onShare = {},
+            onSendToImg2img = {},
+            onReproduce = {},
+            onDismiss = {},
+        )
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF111113)
+@Composable
+internal fun GenerationParamsDialogDarkPreview() {
+    MaterialTheme(colorScheme = darkColorScheme()) {
+        GenerationParamsDialog(
+            title = "Generation parameters",
+            params = previewParameters(),
+            modelId = "dream-shaper-8",
+            displayMode = GenerationMode.TXT2IMG,
+            showImg2imgButton = true,
+            showShareButton = true,
+            onCopyPrompt = {},
+            onCopyNegativePrompt = {},
+            onShare = {},
+            onSendToImg2img = {},
+            onReproduce = {},
+            onDismiss = {},
+        )
+    }
+}
+
+private fun previewParameters() = GenerationParameters(
+    steps = 20,
+    cfg = 7.5f,
+    seed = 1234567890L,
+    prompt = "a serene mountain lake at sunrise, highly detailed",
+    negativePrompt = "blurry, low quality, watermark",
+    generationTime = "3.4s",
+    width = 512,
+    height = 512,
+    runOnCpu = true,
+    scheduler = "dpm",
+    mode = GenerationMode.TXT2IMG,
+)

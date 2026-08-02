@@ -22,6 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -35,6 +36,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -208,4 +210,37 @@ fun ZoomableImageOverlay(
             }
         }
     }
+}
+
+@Preview(showBackground = true)
+@Composable
+internal fun ZoomableImageOverlayLightPreview() {
+    MaterialTheme {
+        ZoomableImageOverlay(
+            bitmap = previewBitmap(),
+            onDismiss = {},
+            showScaleIndicator = true,
+            zoomInEnabled = true,
+        )
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF111113)
+@Composable
+internal fun ZoomableImageOverlayDarkPreview() {
+    MaterialTheme(colorScheme = darkColorScheme()) {
+        ZoomableImageOverlay(
+            bitmap = previewBitmap(),
+            onDismiss = {},
+            showScaleIndicator = true,
+            zoomInEnabled = true,
+        )
+    }
+}
+
+private fun previewBitmap(): Bitmap {
+    val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bmp)
+    canvas.drawColor(android.graphics.Color.rgb(120, 160, 220))
+    return bmp
 }
