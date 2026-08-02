@@ -46,6 +46,10 @@ sealed class Screen(val route: String) {
     object ChatGeneration : Screen("chat_generation")
 
     object RemoteLink : Screen("remote_link")
+
+    object RepositoryConfig : Screen("repository_config")
+
+    object ModelSearch : Screen("model_search")
 }
 
 val StudioTopLevelRoutes = listOf(

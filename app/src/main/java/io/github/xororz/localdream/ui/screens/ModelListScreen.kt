@@ -323,7 +323,6 @@ fun ModelListScreen(
     var showEmbeddingManagerDialog by remember { mutableStateOf(false) }
     var showCustomModelDialog by remember { mutableStateOf(false) }
     var showCustomNpuModelDialog by remember { mutableStateOf(false) }
-    var showModelSearchDialog by remember { mutableStateOf(false) }
     var isConverting by remember { mutableStateOf(false) }
     var conversionProgress by remember { mutableStateOf("") }
     var extractByteProgress by remember { mutableStateOf<ExtractByteProgress?>(null) }
@@ -742,17 +741,6 @@ fun ModelListScreen(
         )
     }
 
-    if (showModelSearchDialog) {
-        ModelSearchDialog(
-            onDismiss = { showModelSearchDialog = false },
-            onInstalled = {
-                scope.launch {
-                    modelRepository.refreshAllModels()
-                }
-            },
-        )
-    }
-
     if (showDeleteConfirm && selectedModels.isNotEmpty()) {
         DeleteConfirmDialog(
             selectedCount = selectedModels.size,
@@ -1142,7 +1130,7 @@ fun ModelListScreen(
                     if (!remoteActive) {
                         item {
                             FilledTonalButton(
-                                onClick = { showModelSearchDialog = true },
+                                onClick = { navController.navigate(Screen.ModelSearch.route) },
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Icon(Icons.Default.Search, contentDescription = null)

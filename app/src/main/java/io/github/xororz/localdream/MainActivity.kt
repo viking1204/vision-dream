@@ -61,6 +61,8 @@ import io.github.xororz.localdream.ui.screens.PromptManagerScreen
 import io.github.xororz.localdream.ui.screens.RemoteScreen
 import io.github.xororz.localdream.ui.screens.StudioHomeScreen
 import io.github.xororz.localdream.ui.screens.UpscaleScreen
+import io.github.xororz.localdream.ui.screens.repository.ModelSearchScreen
+import io.github.xororz.localdream.ui.screens.repository.RepositoryConfigScreen
 import io.github.xororz.localdream.ui.theme.LocalDreamTheme
 import io.github.xororz.localdream.ui.theme.LocalThemeController
 import io.github.xororz.localdream.ui.theme.rememberThemeController
@@ -645,6 +647,12 @@ private fun AppContent() {
                 isTopLevel = true,
                 bottomBar = { VisionStudioNavigationBar(navController) },
             )
+        }
+        composable(Screen.RepositoryConfig.route) {
+            RepositoryConfigScreen(navController = navController)
+        }
+        composable(Screen.ModelSearch.route) {
+            ModelSearchScreen(navController = navController)
         }
     }
 }

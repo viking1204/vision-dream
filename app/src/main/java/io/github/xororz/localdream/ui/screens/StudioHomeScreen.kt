@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Dns
@@ -209,6 +210,15 @@ fun StudioHomeScreen(navController: NavController) {
                             modifier = Modifier.weight(1f),
                             onClick = {
                                 navController.navigateTopLevel(Screen.RemoteLink.route)
+                            },
+                        )
+                        StudioQuickAction(
+                            contentDescription = stringResource(R.string.repository_config_title),
+                            icon = Icons.Default.AccountTree,
+                            accent = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                navController.navigate(Screen.RepositoryConfig.route)
                             },
                         )
                     }
