@@ -642,6 +642,10 @@
     <string name="negative_prompt_hide">ネガティブプロンプトを閉じる</string>
     <string name="chat_generation_prompt_library">保存済みプロンプトを読み込む</string>
     <string name="chat_generation_advanced">詳細設定</string>
+    <string name="chat_generation_prompt_placeholder">生成したい画像を入力…</string>
+    <string name="chat_generation_more_actions">その他のオプション</string>
+    <string name="chat_generation_model_filter_all">すべて</string>
+    <string name="chat_generation_model_search">モデルを検索</string>
     <string name="chat_generation_send">送信</string>
     <string name="chat_generation_enqueue">キューに追加</string>
     <string name="chat_generation_queue_count">キュー %1$d</string>

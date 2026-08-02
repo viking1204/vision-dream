@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,14 +28,22 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bookmarks
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.PhotoFilter
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -44,14 +53,13 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -59,7 +67,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -74,6 +85,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -92,6 +105,7 @@ import io.github.xororz.localdream.data.GenerationDefaults
 import io.github.xororz.localdream.data.GenerationMode
 import io.github.xororz.localdream.data.GenerationPreferences
 import io.github.xororz.localdream.data.HistoryManager
+import io.github.xororz.localdream.data.ModelTagDerivation
 import io.github.xororz.localdream.navigation.Screen
 import io.github.xororz.localdream.navigation.popBackStackIfResumed
 import io.github.xororz.localdream.openai.BackendRuntimeCoordinator
@@ -101,7 +115,6 @@ import io.github.xororz.localdream.openai.InstalledModelCatalog
 import io.github.xororz.localdream.openai.NativeBackendClient
 import io.github.xororz.localdream.service.BackendService
 import io.github.xororz.localdream.service.NativeRuntimeAttestationRecorder
-import io.github.xororz.localdream.ui.components.NegativePromptToggle
 import io.github.xororz.localdream.ui.components.PromptPickerDialog
 import io.github.xororz.localdream.ui.components.RevealableImage
 import io.github.xororz.localdream.utils.ParamShare
@@ -150,6 +163,22 @@ private enum class ChatMode(val key: String) {
     ;
 
     val needsSourceImage: Boolean get() = this != TXT2IMG
+
+    /** Glyph shown in the icon-only composer bar. */
+    fun icon(): ImageVector = when (this) {
+        TXT2IMG -> Icons.Default.TextFields
+        IMG2IMG -> Icons.Default.PhotoFilter
+        INPAINT -> Icons.Default.Brush
+        UPSCALE -> Icons.Default.ZoomIn
+    }
+
+    /** Label used by the mode popover and the composer caption. */
+    fun labelRes(): Int = when (this) {
+        TXT2IMG -> R.string.chat_generation_mode_txt2img
+        IMG2IMG -> R.string.chat_generation_mode_img2img
+        INPAINT -> R.string.chat_generation_mode_inpaint
+        UPSCALE -> R.string.chat_generation_mode_upscale
+    }
 
     fun toGenerationMode(): GenerationMode = when (this) {
         TXT2IMG -> GenerationMode.TXT2IMG
@@ -951,230 +980,336 @@ private fun ChatGenerationComposer(
     modifier: Modifier = Modifier,
 ) {
     var negativePromptExpanded by rememberSaveable { mutableStateOf(false) }
+    var showModeMenu by remember { mutableStateOf(false) }
+    var showMoreMenu by remember { mutableStateOf(false) }
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .imePadding(),
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 2.dp,
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(start = 12.dp, top = 4.dp, end = 12.dp, bottom = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            ChatModeSwitcher(
-                current = chatMode,
-                onModeChange = onModeChange,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (chatMode.needsSourceImage) {
-                SourceImageRow(
-                    sourceImageBytes = sourceImageBytes,
-                    onPick = onPickSourceImage,
-                    onClear = onClearSourceImage,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+            if (sourceImageBytes != null) {
+                ComposerAttachmentChip(onClear = onClearSourceImage)
             }
-            Row(
+            // One rounded card holds the text and an icon-only action bar, the
+            // way ChatGPT and WorkBuddy compose. Labels live in the popovers,
+            // never in the bar; every icon still carries a contentDescription.
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
             ) {
-                FilledTonalButton(
-                    onClick = onModelClick,
-                    enabled = hasModels,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    if (selectedModelName != null) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    ComposerTextField(
+                        value = prompt,
+                        onValueChange = onPromptChange,
+                        placeholder = stringResource(R.string.chat_generation_prompt_placeholder),
+                        imeAction = ImeAction.Send,
+                        onSend = onSend,
+                    )
+                    if (negativePromptExpanded) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant,
                         )
-                    }
-                    Text(
-                        text = when {
-                            selectedModelName == null -> stringResource(R.string.chat_generation_select_model)
-                            selectedModelBackend != null -> "$selectedModelName · $selectedModelBackend"
-                            else -> selectedModelName
-                        },
-                        modifier = Modifier.padding(start = 6.dp),
-                        maxLines = 1,
-                    )
-                }
-                IconButton(
-                    onClick = onPromptPickerClick,
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Bookmarks,
-                        contentDescription = stringResource(
-                            R.string.chat_generation_prompt_library,
-                        ),
-                    )
-                }
-                IconButton(
-                    onClick = onAdvancedSettingsClick,
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Tune,
-                        contentDescription = stringResource(R.string.chat_generation_advanced),
-                    )
-                }
-            }
-            OutlinedTextField(
-                value = prompt,
-                onValueChange = onPromptChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.chat_generation_prompt)) },
-                minLines = 2,
-                maxLines = 4,
-                shape = MaterialTheme.shapes.large,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                NegativePromptToggle(
-                    expanded = negativePromptExpanded,
-                    hasValue = negativePrompt.text.isNotBlank(),
-                    onExpandedChange = { negativePromptExpanded = it },
-                    modifier = Modifier.weight(1f),
-                )
-                if (pendingCount > 0) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                    ) {
-                        Text(
-                            text = stringResource(
-                                R.string.chat_generation_queue_count,
-                                pendingCount,
+                        ComposerTextField(
+                            value = negativePrompt,
+                            onValueChange = onNegativePromptChange,
+                            placeholder = stringResource(
+                                R.string.chat_generation_negative_prompt,
                             ),
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            style = MaterialTheme.typography.labelMedium,
+                            imeAction = ImeAction.Default,
+                            onSend = null,
                         )
                     }
-                }
-                FilledIconButton(
-                    onClick = onSend,
-                    enabled = prompt.text.isNotBlank() && hasModels,
-                    modifier = Modifier.size(56.dp),
-                ) {
-                    Icon(
-                        imageVector = if (isGenerating) {
-                            Icons.Default.Add
-                        } else {
-                            Icons.AutoMirrored.Filled.Send
-                        },
-                        contentDescription = if (isGenerating) {
-                            stringResource(R.string.chat_generation_enqueue)
-                        } else {
-                            stringResource(R.string.chat_generation_send)
-                        },
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 4.dp, end = 8.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box {
+                            ComposerIconButton(
+                                icon = chatMode.icon(),
+                                contentDescription = stringResource(chatMode.labelRes()),
+                                onClick = { showModeMenu = true },
+                                active = chatMode != ChatMode.TXT2IMG,
+                            )
+                            DropdownMenu(
+                                expanded = showModeMenu,
+                                onDismissRequest = { showModeMenu = false },
+                            ) {
+                                ChatMode.entries.forEach { mode ->
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(mode.labelRes())) },
+                                        leadingIcon = {
+                                            Icon(mode.icon(), contentDescription = null)
+                                        },
+                                        trailingIcon = {
+                                            if (mode == chatMode) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                )
+                                            }
+                                        },
+                                        onClick = {
+                                            showModeMenu = false
+                                            onModeChange(mode)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        if (chatMode.needsSourceImage) {
+                            ComposerIconButton(
+                                icon = Icons.Default.Image,
+                                contentDescription = stringResource(
+                                    R.string.chat_generation_select_source_image,
+                                ),
+                                onClick = onPickSourceImage,
+                                active = sourceImageBytes != null,
+                            )
+                        }
+                        ComposerIconButton(
+                            icon = Icons.Default.Memory,
+                            contentDescription = selectedModelName
+                                ?: stringResource(R.string.chat_generation_select_model),
+                            onClick = onModelClick,
+                            enabled = hasModels,
+                            active = selectedModelName != null,
+                        )
+                        Box {
+                            ComposerIconButton(
+                                icon = Icons.Default.MoreHoriz,
+                                contentDescription = stringResource(
+                                    R.string.chat_generation_more_actions,
+                                ),
+                                onClick = { showMoreMenu = true },
+                                active = negativePromptExpanded,
+                            )
+                            DropdownMenu(
+                                expanded = showMoreMenu,
+                                onDismissRequest = { showMoreMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            stringResource(
+                                                R.string.chat_generation_prompt_library,
+                                            ),
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.Bookmarks, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onPromptPickerClick()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(stringResource(R.string.chat_generation_advanced))
+                                    },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.Tune, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onAdvancedSettingsClick()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            stringResource(
+                                                R.string.chat_generation_negative_prompt,
+                                            ),
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.Block, contentDescription = null)
+                                    },
+                                    trailingIcon = {
+                                        if (negativePromptExpanded ||
+                                            negativePrompt.text.isNotBlank()
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        negativePromptExpanded = !negativePromptExpanded
+                                    },
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                        if (pendingCount > 0) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            ) {
+                                Text(
+                                    text = stringResource(
+                                        R.string.chat_generation_queue_count,
+                                        pendingCount,
+                                    ),
+                                    modifier = Modifier.padding(
+                                        horizontal = 10.dp,
+                                        vertical = 6.dp,
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                            }
+                            Spacer(modifier = Modifier.size(8.dp))
+                        }
+                        FilledIconButton(
+                            onClick = onSend,
+                            enabled = prompt.text.isNotBlank() && hasModels,
+                            modifier = Modifier.size(44.dp),
+                        ) {
+                            Icon(
+                                imageVector = if (isGenerating) {
+                                    Icons.AutoMirrored.Filled.PlaylistAdd
+                                } else {
+                                    Icons.AutoMirrored.Filled.Send
+                                },
+                                contentDescription = if (isGenerating) {
+                                    stringResource(R.string.chat_generation_enqueue)
+                                } else {
+                                    stringResource(R.string.chat_generation_send)
+                                },
+                            )
+                        }
+                    }
                 }
             }
-            if (negativePromptExpanded) {
-                OutlinedTextField(
-                    value = negativePrompt,
-                    onValueChange = onNegativePromptChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = {
-                        Text(stringResource(R.string.chat_generation_negative_prompt))
-                    },
-                    minLines = 2,
-                    maxLines = 4,
-                    shape = MaterialTheme.shapes.large,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ChatModeSwitcher(
-    current: ChatMode,
-    onModeChange: (ChatMode) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        ChatMode.entries.forEach { mode ->
-            FilterChip(
-                selected = mode == current,
-                onClick = { onModeChange(mode) },
-                label = {
-                    Text(
-                        text = stringResource(
-                            when (mode) {
-                                ChatMode.TXT2IMG -> R.string.chat_generation_mode_txt2img
-                                ChatMode.IMG2IMG -> R.string.chat_generation_mode_img2img
-                                ChatMode.INPAINT -> R.string.chat_generation_mode_inpaint
-                                ChatMode.UPSCALE -> R.string.chat_generation_mode_upscale
-                            },
-                        ),
-                    )
-                },
-                colors = FilterChipDefaults.filterChipColors(),
+            // Keeps the bar itself label-free while still telling the user
+            // which model and mode the next run will use.
+            Text(
+                text = listOfNotNull(
+                    selectedModelName ?: stringResource(R.string.chat_generation_select_model),
+                    selectedModelBackend,
+                    stringResource(chatMode.labelRes()),
+                ).joinToString(" · "),
+                modifier = Modifier.padding(start = 8.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
         }
     }
 }
 
+/** Borderless multi-line field used inside the composer card. */
 @Composable
-private fun SourceImageRow(
-    sourceImageBytes: ByteArray?,
-    onPick: () -> Unit,
-    onClear: () -> Unit,
-    modifier: Modifier = Modifier,
+private fun ComposerTextField(
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
+    placeholder: String,
+    imeAction: ImeAction,
+    onSend: (() -> Unit)?,
 ) {
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    TextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth(),
+        placeholder = {
+            Text(
+                text = placeholder,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        minLines = 1,
+        maxLines = 5,
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent,
+            disabledContainerColor = Color.Transparent,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            disabledIndicatorColor = Color.Transparent,
+        ),
+        keyboardOptions = KeyboardOptions(imeAction = imeAction),
+        keyboardActions = KeyboardActions(onSend = { onSend?.invoke() }),
+    )
+}
+
+/**
+ * Icon-only composer action. Stays on the 48dp minimum touch target while
+ * rendering a 20dp glyph, and tints itself when the action is engaged.
+ */
+@Composable
+private fun ComposerIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    active: Boolean = false,
+) {
+    IconButton(onClick = onClick, enabled = enabled) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(20.dp),
+            tint = if (active) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+}
+
+/** Compact chip announcing the attached source image with a clear action. */
+@Composable
+private fun ComposerAttachmentChip(onClear: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
     ) {
-        FilledTonalButton(
-            onClick = onPick,
-            modifier = Modifier.weight(1f),
+        Row(
+            modifier = Modifier.padding(start = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 imageVector = Icons.Default.Image,
                 contentDescription = null,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(16.dp),
             )
             Text(
-                text = if (sourceImageBytes != null) {
-                    stringResource(R.string.chat_generation_source_image_selected)
-                } else {
-                    stringResource(R.string.chat_generation_select_source_image)
-                },
+                text = stringResource(R.string.chat_generation_source_image_selected),
                 modifier = Modifier.padding(start = 6.dp),
+                style = MaterialTheme.typography.labelMedium,
                 maxLines = 1,
             )
-        }
-        if (sourceImageBytes != null) {
-            IconButton(onClick = onClear) {
+            IconButton(onClick = onClear, modifier = Modifier.size(32.dp)) {
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = stringResource(R.string.cancel),
+                    modifier = Modifier.size(16.dp),
                 )
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatGenerationModelPicker(
     models: List<InstalledModelCatalog.Entry>,
@@ -1182,33 +1317,106 @@ private fun ChatGenerationModelPicker(
     onSelect: (InstalledModelCatalog.Entry) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    var query by rememberSaveable { mutableStateOf("") }
+    var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
+    val availableTags = remember(models) {
+        ModelTagDerivation.collectTags(models.mapNotNull { it.model })
+    }
+    val filtered = remember(models, query, selectedTag) {
+        models.filter { entry ->
+            val tags = entry.model?.let { ModelTagDerivation.deriveTags(it) }.orEmpty()
+            val matchesTag = selectedTag == null || selectedTag in tags
+            val haystack = "${entry.name} ${entry.model?.description.orEmpty()} ${entry.id}"
+            val matchesQuery = query.isBlank() || haystack.contains(query, ignoreCase = true)
+            matchesTag && matchesQuery
+        }
+    }
+
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.chat_generation_select_model)) },
-        text = {
-            LazyColumn(modifier = Modifier.heightIn(max = 480.dp)) {
-                items(models, key = { it.id }) { model ->
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.chat_generation_select_model),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text(stringResource(R.string.chat_generation_model_search)) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                    )
+                },
+                singleLine = true,
+                shape = MaterialTheme.shapes.large,
+            )
+            if (availableTags.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = selectedTag == null,
+                        onClick = { selectedTag = null },
+                        label = {
+                            Text(stringResource(R.string.chat_generation_model_filter_all))
+                        },
+                    )
+                    availableTags.forEach { tag ->
+                        FilterChip(
+                            selected = selectedTag == tag,
+                            onClick = { selectedTag = if (selectedTag == tag) null else tag },
+                            label = { Text(tag) },
+                        )
+                    }
+                }
+            }
+            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                items(filtered, key = { it.id }) { entry ->
+                    val tags = entry.model?.let { ModelTagDerivation.deriveTags(it) }.orEmpty()
                     ListItem(
-                        headlineContent = { Text(model.name) },
-                        supportingContent = { Text(model.id) },
+                        headlineContent = { Text(entry.name) },
+                        supportingContent = {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = entry.model?.description?.takeIf { it.isNotBlank() }
+                                        ?: entry.id,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 2,
+                                )
+                                if (tags.isNotEmpty()) {
+                                    Text(
+                                        text = tags.joinToString(" · "),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                        },
                         leadingContent = {
                             RadioButton(
-                                selected = model.id == selectedModelId,
+                                selected = entry.id == selectedModelId,
                                 onClick = null,
                             )
                         },
-                        modifier = Modifier.clickable { onSelect(model) },
+                        modifier = Modifier.clickable { onSelect(entry) },
                     )
                 }
             }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.cancel))
-            }
-        },
-    )
+        }
+    }
 }
 
 @Composable

@@ -642,6 +642,10 @@
     <string name="negative_prompt_hide">收起负面提示词</string>
     <string name="chat_generation_prompt_library">从提示词管理器加载</string>
     <string name="chat_generation_advanced">高级设置</string>
+    <string name="chat_generation_prompt_placeholder">描述你想要的画面…</string>
+    <string name="chat_generation_more_actions">更多选项</string>
+    <string name="chat_generation_model_filter_all">全部</string>
+    <string name="chat_generation_model_search">搜索模型</string>
     <string name="chat_generation_send">发送</string>
     <string name="chat_generation_enqueue">加入队列</string>
     <string name="chat_generation_queue_count">队列 %1$d</string>

@@ -648,6 +648,10 @@
     <string name="negative_prompt_hide">Hide negative prompt</string>
     <string name="chat_generation_prompt_library">Load saved prompt</string>
     <string name="chat_generation_advanced">Advanced settings</string>
+    <string name="chat_generation_prompt_placeholder">Describe the image you want…</string>
+    <string name="chat_generation_more_actions">More options</string>
+    <string name="chat_generation_model_filter_all">All</string>
+    <string name="chat_generation_model_search">Search models</string>
     <string name="chat_generation_send">Send</string>
     <string name="chat_generation_enqueue">Add to queue</string>
     <string name="chat_generation_queue_count">Queue %1$d</string>
