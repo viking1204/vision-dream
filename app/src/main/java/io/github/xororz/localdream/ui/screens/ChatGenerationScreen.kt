@@ -105,7 +105,6 @@ import io.github.xororz.localdream.ui.components.PromptPickerDialog
 import io.github.xororz.localdream.ui.components.RevealableImage
 import io.github.xororz.localdream.utils.ParamShare
 import io.github.xororz.localdream.utils.schedulerDisplayName
-import java.io.File
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineStart
@@ -114,30 +113,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-private sealed interface ChatGenerationMessage {
-    val id: Long
-
-    data class User(
-        override val id: Long,
-        val prompt: String,
-    ) : ChatGenerationMessage
-
-    data class Image(
-        override val id: Long,
-        val file: File?,
-        val fallbackBytes: ByteArray?,
-        val modelName: String,
-        val width: Int,
-        val height: Int,
-        val seed: Long?,
-    ) : ChatGenerationMessage
-
-    data class Error(
-        override val id: Long,
-        val message: String,
-    ) : ChatGenerationMessage
-}
 
 private data class ChatGenerationSettings(
     val width: Int,
@@ -334,6 +309,19 @@ fun ChatGenerationScreen(
         }
     }
 
+    // 恢复上一次的创作对话，让创作历史在进程被杀/App 重启后仍能保留。
+    // 图片复用统一资产管理器已落盘的文件；文件已不存在的图会被丢弃。
+    LaunchedEffect(Unit) {
+        generationPreferences.getChatHistoryJson()?.let { raw ->
+            chatHistoryFromJson(raw)?.let { restored ->
+                if (restored.isNotEmpty()) {
+                    messages.addAll(restored)
+                    nextMessageId = restored.maxOf { it.id } + 1L
+                }
+            }
+        }
+    }
+
     LaunchedEffect(
         prompt.text,
         negativePrompt.text,
@@ -361,6 +349,15 @@ fun ChatGenerationScreen(
                 scheduler = scheduler,
             ),
         )
+    }
+
+    // Persist the creation conversation whenever a message is added (the list
+    // only grows in this screen, so size is a reliable change signal). Debounced
+    // so rapid appends coalesce into a single write.
+    LaunchedEffect(messages.size) {
+        if (messages.isEmpty()) return@LaunchedEffect
+        delay(400)
+        generationPreferences.saveChatHistoryJson(messages.toChatHistoryJson())
     }
 
     LaunchedEffect(messages.size, isGenerating, visibleMessageCount) {

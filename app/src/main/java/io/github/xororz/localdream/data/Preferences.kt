@@ -39,6 +39,7 @@ class GenerationPreferences(private val context: Context) {
         booleanPreferencesKey("share_clear_clipboard_on_import")
     private val CUSTOM_REPOSITORIES_KEY = stringPreferencesKey("custom_repositories")
     private val CREATION_DRAFT_KEY = stringPreferencesKey("creation_draft")
+    private val CREATION_CHAT_HISTORY_KEY = stringPreferencesKey("creation_chat_history")
 
     // UltraFix step/denoise are per-model (each model keeps its own repair
     // recipe), independent of that model's main generation params. Denoise is
@@ -162,6 +163,36 @@ class GenerationPreferences(private val context: Context) {
     suspend fun clearCreationDraft() {
         context.dataStore.edit { preferences ->
             preferences.remove(CREATION_DRAFT_KEY)
+        }
+    }
+
+    /**
+     * Persists the chat creation conversation (prompts, generated images,
+     * errors) so an interrupted or backgrounded session can restore the
+     * creation history. Only the JSON envelope is stored here; generated
+     * image bytes live in the unified asset manager and are referenced by
+     * path. An empty conversation is cleared rather than stored.
+     */
+    suspend fun saveChatHistoryJson(raw: String) {
+        context.dataStore.edit { preferences ->
+            if (raw.isBlank() || raw == "[]") {
+                preferences.remove(CREATION_CHAT_HISTORY_KEY)
+            } else {
+                preferences[CREATION_CHAT_HISTORY_KEY] = raw
+            }
+        }
+    }
+
+    suspend fun getChatHistoryJson(): String? = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { it[CREATION_CHAT_HISTORY_KEY] }
+        .first()
+
+    suspend fun clearChatHistory() {
+        context.dataStore.edit { preferences ->
+            preferences.remove(CREATION_CHAT_HISTORY_KEY)
         }
     }
 
