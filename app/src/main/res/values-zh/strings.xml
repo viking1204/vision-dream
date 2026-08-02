@@ -700,4 +700,6 @@
     <string name="chat_generation_load_earlier">显示更早的消息</string>
     <string name="prompt_picker_create">新建提示词</string>
     <string name="chat_generation_source_image_selected">已选择图片</string>
+    <string name="filter_all">全部</string>
+    <string name="filter_by_tag">按标签筛选</string>
 </resources>

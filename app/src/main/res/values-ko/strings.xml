@@ -700,4 +700,6 @@
     <string name="chat_generation_load_earlier">이전 메시지 보기</string>
     <string name="prompt_picker_create">새 프롬프트</string>
     <string name="chat_generation_source_image_selected">이미지 선택됨</string>
+    <string name="filter_all">전체</string>
+    <string name="filter_by_tag">태그로 필터</string>
 </resources>

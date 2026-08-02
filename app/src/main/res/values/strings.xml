@@ -706,4 +706,6 @@
     <string name="chat_generation_load_earlier">Show earlier messages</string>
     <string name="prompt_picker_create">New prompt</string>
     <string name="chat_generation_source_image_selected">Image selected</string>
+    <string name="filter_all">All</string>
+    <string name="filter_by_tag">Filter by tag</string>
 </resources>

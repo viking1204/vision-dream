@@ -25,7 +25,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -49,8 +51,11 @@ import androidx.compose.material3.*
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialShapes
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ToggleButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.*
 import androidx.compose.runtime.LaunchedEffect
@@ -323,6 +328,12 @@ fun ModelListScreen(
     var showEmbeddingManagerDialog by remember { mutableStateOf(false) }
     var showCustomModelDialog by remember { mutableStateOf(false) }
     var showCustomNpuModelDialog by remember { mutableStateOf(false) }
+
+    // P2 compaction: local search + custom-model entry moved into the top bar
+    // as icon buttons; the big inline search field is replaced by a tag row.
+    var showLocalSearchSheet by remember { mutableStateOf(false) }
+    var showAddMenu by remember { mutableStateOf(false) }
+    var selectedTag by remember { mutableStateOf<String?>(null) }
     var isConverting by remember { mutableStateOf(false) }
     var conversionProgress by remember { mutableStateOf("") }
     var extractByteProgress by remember { mutableStateOf<ExtractByteProgress?>(null) }
@@ -430,6 +441,9 @@ fun ModelListScreen(
     }
 
     val listedModels = if (remoteActive) remoteRepository.models else modelRepository.models
+    val availableTags = remember(listedModels) {
+        ModelTagDerivation.collectTags(listedModels)
+    }
     LaunchedEffect(backendState, servingModelId) {
         if (backendState is BackendService.BackendState.Running && servingModelId != null) {
             usageIds = ModelUsageRanking.get(context)
@@ -948,33 +962,49 @@ fun ModelListScreen(
                             }
                         }
                     } else {
-                        // A single overflow menu keeps the collapsed large top
-                        // bar's title from being squeezed by multiple action
-                        // icons competing for width.
-                        var menuExpanded by remember { mutableStateOf(false) }
-                        IconButton(
-                            onClick = { menuExpanded = true },
-                            colors = IconButtonDefaults.filledTonalIconButtonColors(),
-                        ) {
+                        // Compact icon-only actions: local search, repo search,
+                        // add custom model. Settings is relocated to the bottom
+                        // functional bar (see the settings row near screen end).
+                        IconButton(onClick = { showLocalSearchSheet = true }) {
                             Icon(
-                                Icons.Default.MoreVert,
-                                contentDescription = stringResource(R.string.more_options),
+                                Icons.Default.Search,
+                                contentDescription = stringResource(R.string.search_local_models),
                             )
                         }
-                        DropdownMenu(
-                            expanded = menuExpanded,
-                            onDismissRequest = { menuExpanded = false },
+                        IconButton(
+                            onClick = { navController.navigate(Screen.ModelSearch.route) },
                         ) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.settings)) },
-                                leadingIcon = {
-                                    Icon(Icons.Default.Settings, contentDescription = null)
-                                },
-                                onClick = {
-                                    menuExpanded = false
-                                    showSettingsDialog = true
-                                },
+                            Icon(
+                                Icons.Default.Language,
+                                contentDescription = stringResource(R.string.search_models),
                             )
+                        }
+                        Box {
+                            IconButton(onClick = { showAddMenu = true }) {
+                                Icon(
+                                    Icons.Default.Add,
+                                    contentDescription = stringResource(R.string.add_custom_model),
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showAddMenu,
+                                onDismissRequest = { showAddMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.add_custom_npu_model)) },
+                                    onClick = {
+                                        showAddMenu = false
+                                        showCustomNpuModelDialog = true
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.add_custom_model)) },
+                                    onClick = {
+                                        showAddMenu = false
+                                        showCustomModelDialog = true
+                                    },
+                                )
+                            }
                         }
                     }
                 },
@@ -1068,26 +1098,39 @@ fun ModelListScreen(
             }
 
             if (!remoteActive) {
-                OutlinedTextField(
-                    value = localSearchQuery,
-                    onValueChange = { localSearchQuery = it },
+                // Compact tag-filter row replacing the old full-width search
+                // field. Text search lives in the top-bar search sheet.
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
                         .padding(horizontal = 12.dp, vertical = 4.dp),
-                    placeholder = { Text(stringResource(R.string.search_local_models)) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    trailingIcon = if (localSearchQuery.isNotEmpty()) {
-                        {
-                            IconButton(onClick = { localSearchQuery = "" }) {
-                                Icon(Icons.Default.Close, stringResource(R.string.clear))
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = selectedTag == null,
+                        onClick = { selectedTag = null },
+                        label = { Text(stringResource(R.string.filter_all)) },
+                        leadingIcon = if (selectedTag == null) {
+                            {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
                             }
-                        }
-                    } else {
-                        null
-                    },
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.large,
-                )
+                        } else {
+                            null
+                        },
+                    )
+                    for (tag in availableTags) {
+                        FilterChip(
+                            selected = selectedTag == tag,
+                            onClick = { selectedTag = if (selectedTag == tag) null else tag },
+                            label = { Text(tag) },
+                        )
+                    }
+                }
             }
 
             PrimaryTabRow(
@@ -1120,6 +1163,8 @@ fun ModelListScreen(
                     localSearchQuery.isBlank() ||
                         it.name.contains(localSearchQuery, ignoreCase = true) ||
                         it.id.contains(localSearchQuery, ignoreCase = true)
+                }.filter {
+                    selectedTag == null || ModelTagDerivation.deriveTags(it).contains(selectedTag)
                 }
 
                 LazyColumn(
@@ -1127,37 +1172,6 @@ fun ModelListScreen(
                     contentPadding = PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    if (!remoteActive) {
-                        item {
-                            FilledTonalButton(
-                                onClick = { navController.navigate(Screen.ModelSearch.route) },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Icon(Icons.Default.Search, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text(stringResource(R.string.search_models))
-                            }
-                        }
-                    }
-
-                    if (page == 0 && !remoteActive) {
-                        item {
-                            AddCustomNpuModelButton(
-                                onClick = { showCustomNpuModelDialog = true },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                    }
-
-                    if (page == 1 && !remoteActive) {
-                        item {
-                            AddCustomModelButton(
-                                onClick = { showCustomModelDialog = true },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                    }
-
                     items(
                         items = models,
                         key = { model -> model.id },
@@ -1326,6 +1340,33 @@ fun ModelListScreen(
                     currentPage = pagerState.currentPage,
                 )
             }
+
+            // Settings relocated to the bottom functional area (compact, no
+            // big top-right button). Opens the existing settings overlay.
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 12.dp),
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showSettingsDialog = true }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = stringResource(R.string.settings),
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = stringResource(R.string.settings),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 
@@ -1350,6 +1391,70 @@ fun ModelListScreen(
             } catch (_: CancellationException) {
                 // Cancelled: slide back to open.
                 drawerOffset.animateTo(0f, animationSpec = drawerAnimSpec)
+            }
+        }
+    }
+
+    // Local search floating window: text search + tag filter, opened from the
+    // top-bar search icon (replaces the old full-width inline field).
+    if (showLocalSearchSheet) {
+        val sheetState = rememberModalBottomSheetState()
+        ModalBottomSheet(
+            onDismissRequest = { showLocalSearchSheet = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.search_local_models),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                OutlinedTextField(
+                    value = localSearchQuery,
+                    onValueChange = { localSearchQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text(stringResource(R.string.search_local_models)) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = if (localSearchQuery.isNotEmpty()) {
+                        {
+                            IconButton(onClick = { localSearchQuery = "" }) {
+                                Icon(Icons.Default.Close, stringResource(R.string.clear))
+                            }
+                        }
+                    } else {
+                        null
+                    },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.large,
+                )
+                Text(
+                    text = stringResource(R.string.filter_by_tag),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = selectedTag == null,
+                        onClick = { selectedTag = null },
+                        label = { Text(stringResource(R.string.filter_all)) },
+                    )
+                    for (tag in availableTags) {
+                        FilterChip(
+                            selected = selectedTag == tag,
+                            onClick = { selectedTag = if (selectedTag == tag) null else tag },
+                            label = { Text(tag) },
+                        )
+                    }
+                }
             }
         }
     }
@@ -2974,66 +3079,6 @@ private fun FileManagerDialog(context: Context, onDismiss: () -> Unit, onFileDel
             }
         },
     )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun AddCustomModelButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    AddModelOutlinedCard(
-        label = stringResource(R.string.add_custom_model),
-        onClick = onClick,
-        modifier = modifier,
-        accent = false,
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun AddCustomNpuModelButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    AddModelOutlinedCard(
-        label = stringResource(R.string.add_custom_npu_model),
-        onClick = onClick,
-        modifier = modifier,
-        accent = true,
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AddModelOutlinedCard(label: String, onClick: () -> Unit, accent: Boolean, modifier: Modifier = Modifier) {
-    val accentColor = if (accent) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    OutlinedCard(
-        onClick = onClick,
-        modifier = modifier,
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = accentColor,
-        ),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Default.Add,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.titleSmall,
-            )
-        }
-    }
 }
 
 @Composable
