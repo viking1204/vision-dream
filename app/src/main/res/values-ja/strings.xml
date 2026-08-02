@@ -643,6 +643,8 @@
     <string name="chat_generation_prompt_library">保存済みプロンプトを読み込む</string>
     <string name="chat_generation_advanced">詳細設定</string>
     <string name="chat_generation_send">送信</string>
+    <string name="chat_generation_enqueue">キューに追加</string>
+    <string name="chat_generation_queue_count">キュー %1$d</string>
     <string name="chat_generation_generating">画像を生成中…</string>
     <string name="chat_generation_busy">API またはアプリの生成処理が実行中か待機中です。完了後に再試行してください。</string>
     <string name="chat_generation_error">画像生成に失敗しました。</string>

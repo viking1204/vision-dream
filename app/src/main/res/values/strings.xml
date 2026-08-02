@@ -649,6 +649,8 @@
     <string name="chat_generation_prompt_library">Load saved prompt</string>
     <string name="chat_generation_advanced">Advanced settings</string>
     <string name="chat_generation_send">Send</string>
+    <string name="chat_generation_enqueue">Add to queue</string>
+    <string name="chat_generation_queue_count">Queue %1$d</string>
     <string name="chat_generation_generating">Generating image…</string>
     <string name="chat_generation_busy">An API or app generation is already running or queued. Try again after it finishes.</string>
     <string name="chat_generation_error">Image generation failed.</string>

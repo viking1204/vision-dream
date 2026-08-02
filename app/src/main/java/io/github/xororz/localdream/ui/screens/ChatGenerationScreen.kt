@@ -28,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.CheckCircle
@@ -123,6 +124,22 @@ private data class ChatGenerationSettings(
     val scheduler: String,
 )
 
+/**
+ * Immutable snapshot of everything one generation run needs.
+ *
+ * Taking the snapshot at submit time is what lets the composer stay editable
+ * while a run is in flight: later edits to the prompt, mode or advanced
+ * settings cannot retro-actively mutate an already queued request.
+ */
+private class PendingChatRequest(
+    val entry: InstalledModelCatalog.Entry,
+    val prompt: String,
+    val negativePrompt: String,
+    val settings: ChatGenerationSettings,
+    val chatMode: ChatMode,
+    val sourceImage: ByteArray?,
+)
+
 /** Generation modes exposed by the chat composer. Keeps prompt and model
  *  context when switched; image-based modes require a source image. */
 private enum class ChatMode(val key: String) {
@@ -208,6 +225,7 @@ fun ChatGenerationScreen(
     var showAdvancedSettings by remember { mutableStateOf(false) }
     var showPromptPicker by remember { mutableStateOf(false) }
     var isGenerating by remember { mutableStateOf(false) }
+    val pendingQueue = remember { mutableStateListOf<PendingChatRequest>() }
     var activeJob by remember { mutableStateOf<Job?>(null) }
     var nextMessageId by remember { mutableLongStateOf(0L) }
 
@@ -377,6 +395,100 @@ fun ChatGenerationScreen(
         }
     }
 
+    fun startGeneration(request: PendingChatRequest) {
+        if (!InferenceArbiter.process.tryAcquireForApp()) {
+            messages += ChatGenerationMessage.Error(nextId(), busyMessage)
+            return
+        }
+        val entry = request.entry
+        val settings = request.settings
+        val submittedPrompt = request.prompt
+        val submittedNegativePrompt = request.negativePrompt
+        val sourceImage = request.sourceImage
+        val requestMode = request.chatMode
+        isGenerating = true
+        activeJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            val startedAt = SystemClock.elapsedRealtime()
+            try {
+                val dimensions = coordinator.ensureReady(
+                    entry = entry,
+                    requestedWidth = settings.width,
+                    requestedHeight = settings.height,
+                )
+                val image = withContext(Dispatchers.IO) {
+                    completeChatNativeGeneration(
+                        generate = {
+                            backendClient.generate(
+                                parameters = ImageRequestParameters(
+                                    modelId = entry.id,
+                                    prompt = submittedPrompt,
+                                    negativePrompt = submittedNegativePrompt,
+                                    width = dimensions.first,
+                                    height = dimensions.second,
+                                    steps = settings.steps,
+                                    cfg = settings.cfg,
+                                    seed = settings.seed,
+                                    scheduler = settings.scheduler,
+                                    sourceImage = sourceImage,
+                                ),
+                                width = dimensions.first,
+                                height = dimensions.second,
+                            )
+                        },
+                        // A returned native image is the only success boundary. Exceptions
+                        // and coroutine cancellation escape before this callback is reached.
+                        onNativeGenerationSuccess = {
+                            NativeRuntimeAttestationRecorder.record(context, entry.id)
+                        },
+                    )
+                }
+                val generationTime = (
+                    (SystemClock.elapsedRealtime() - startedAt) / 1000f
+                    ).let { "%.1fs".format(it) }
+                val saved = historyManager.enqueueEncodedImageSave(
+                    modelId = entry.id,
+                    encodedImage = image.bytes,
+                    mimeType = image.mimeType,
+                    params = GenerationParameters(
+                        steps = settings.steps,
+                        cfg = settings.cfg,
+                        seed = image.seed ?: settings.seed,
+                        prompt = submittedPrompt,
+                        negativePrompt = submittedNegativePrompt,
+                        generationTime = generationTime,
+                        width = dimensions.first,
+                        height = dimensions.second,
+                        runOnCpu = entry.model?.runOnCpu == true,
+                        scheduler = settings.scheduler,
+                        mode = requestMode.toGenerationMode(),
+                    ),
+                    mode = requestMode.toGenerationMode(),
+                    origin = AssetOrigin.CHAT_GENERATION,
+                ).await()
+                messages += ChatGenerationMessage.Image(
+                    id = nextId(),
+                    file = saved?.imageFile,
+                    fallbackBytes = image.bytes.takeIf { saved == null },
+                    modelName = entry.name,
+                    width = dimensions.first,
+                    height = dimensions.second,
+                    seed = image.seed ?: settings.seed,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                messages += ChatGenerationMessage.Error(
+                    id = nextId(),
+                    message = error.message ?: genericError,
+                )
+            } finally {
+                InferenceArbiter.process.releaseFromApp()
+                isGenerating = false
+                activeJob = null
+            }
+        }
+    }
+
     val submitGeneration = {
         val entry = selectedModel
         val settings = parseChatGenerationSettings(
@@ -403,100 +515,34 @@ fun ChatGenerationScreen(
                 messages += ChatGenerationMessage.Error(nextId(), sourceImageRequired)
             }
 
-            !InferenceArbiter.process.tryAcquireForApp() -> {
-                messages += ChatGenerationMessage.Error(nextId(), busyMessage)
-            }
-
             else -> {
-                val submittedNegativePrompt = negativePrompt.text.trim().ifBlank {
-                    globalNegativePrompt
-                }
-                val sourceImage = sourceImageBytes
+                val request = PendingChatRequest(
+                    entry = entry,
+                    prompt = submittedPrompt,
+                    negativePrompt = negativePrompt.text.trim().ifBlank { globalNegativePrompt },
+                    settings = settings,
+                    chatMode = chatMode,
+                    sourceImage = sourceImageBytes,
+                )
                 messages += ChatGenerationMessage.User(nextId(), submittedPrompt)
                 prompt = TextFieldValue()
                 keyboardController?.hide()
-                isGenerating = true
-                activeJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                    val startedAt = SystemClock.elapsedRealtime()
-                    try {
-                        val dimensions = coordinator.ensureReady(
-                            entry = entry,
-                            requestedWidth = settings.width,
-                            requestedHeight = settings.height,
-                        )
-                        val image = withContext(Dispatchers.IO) {
-                            completeChatNativeGeneration(
-                                generate = {
-                                    backendClient.generate(
-                                        parameters = ImageRequestParameters(
-                                            modelId = entry.id,
-                                            prompt = submittedPrompt,
-                                            negativePrompt = submittedNegativePrompt,
-                                            width = dimensions.first,
-                                            height = dimensions.second,
-                                            steps = settings.steps,
-                                            cfg = settings.cfg,
-                                            seed = settings.seed,
-                                            scheduler = settings.scheduler,
-                                            sourceImage = sourceImage,
-                                        ),
-                                        width = dimensions.first,
-                                        height = dimensions.second,
-                                    )
-                                },
-                                // A returned native image is the only success boundary. Exceptions
-                                // and coroutine cancellation escape before this callback is reached.
-                                onNativeGenerationSuccess = {
-                                    NativeRuntimeAttestationRecorder.record(context, entry.id)
-                                },
-                            )
-                        }
-                        val generationTime = (
-                            (SystemClock.elapsedRealtime() - startedAt) / 1000f
-                            ).let { "%.1fs".format(it) }
-                        val saved = historyManager.enqueueEncodedImageSave(
-                            modelId = entry.id,
-                            encodedImage = image.bytes,
-                            mimeType = image.mimeType,
-                            params = GenerationParameters(
-                                steps = settings.steps,
-                                cfg = settings.cfg,
-                                seed = image.seed ?: settings.seed,
-                                prompt = submittedPrompt,
-                                negativePrompt = submittedNegativePrompt,
-                                generationTime = generationTime,
-                                width = dimensions.first,
-                                height = dimensions.second,
-                                runOnCpu = entry.model?.runOnCpu == true,
-                                scheduler = settings.scheduler,
-                                mode = chatMode.toGenerationMode(),
-                            ),
-                            mode = chatMode.toGenerationMode(),
-                            origin = AssetOrigin.CHAT_GENERATION,
-                        ).await()
-                        messages += ChatGenerationMessage.Image(
-                            id = nextId(),
-                            file = saved?.imageFile,
-                            fallbackBytes = image.bytes.takeIf { saved == null },
-                            modelName = entry.name,
-                            width = dimensions.first,
-                            height = dimensions.second,
-                            seed = image.seed ?: settings.seed,
-                        )
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (error: Exception) {
-                        messages += ChatGenerationMessage.Error(
-                            id = nextId(),
-                            message = error.message ?: genericError,
-                        )
-                    } finally {
-                        InferenceArbiter.process.releaseFromApp()
-                        isGenerating = false
-                        activeJob = null
-                    }
+                // The composer stays editable during a run, so extra submissions
+                // queue up instead of being rejected by the inference arbiter.
+                if (isGenerating) {
+                    pendingQueue += request
+                } else {
+                    startGeneration(request)
                 }
             }
+        }
+    }
+
+    // Drains the queue on the idle edge: exactly one request starts per
+    // completed run, so the native backend never sees concurrent sessions.
+    LaunchedEffect(isGenerating, pendingQueue.size) {
+        if (!isGenerating && pendingQueue.isNotEmpty()) {
+            startGeneration(pendingQueue.removeAt(0))
         }
     }
 
@@ -617,6 +663,7 @@ fun ChatGenerationScreen(
                 prompt = prompt,
                 negativePrompt = negativePrompt,
                 isGenerating = isGenerating,
+                pendingCount = pendingQueue.size,
                 hasModels = installedModels.isNotEmpty(),
                 chatMode = chatMode,
                 onModeChange = { chatMode = it },
@@ -692,7 +739,6 @@ fun ChatGenerationScreen(
             cfg = cfgText,
             seed = seedText,
             scheduler = scheduler,
-            enabled = !isGenerating,
             onWidthChange = { widthText = it },
             onHeightChange = { heightText = it },
             onStepsChange = { stepsText = it },
@@ -889,6 +935,7 @@ private fun ChatGenerationComposer(
     prompt: TextFieldValue,
     negativePrompt: TextFieldValue,
     isGenerating: Boolean,
+    pendingCount: Int,
     hasModels: Boolean,
     chatMode: ChatMode,
     onModeChange: (ChatMode) -> Unit,
@@ -922,7 +969,6 @@ private fun ChatGenerationComposer(
             ChatModeSwitcher(
                 current = chatMode,
                 onModeChange = onModeChange,
-                enabled = !isGenerating,
                 modifier = Modifier.fillMaxWidth(),
             )
             if (chatMode.needsSourceImage) {
@@ -930,7 +976,6 @@ private fun ChatGenerationComposer(
                     sourceImageBytes = sourceImageBytes,
                     onPick = onPickSourceImage,
                     onClear = onClearSourceImage,
-                    enabled = !isGenerating,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -941,7 +986,7 @@ private fun ChatGenerationComposer(
             ) {
                 FilledTonalButton(
                     onClick = onModelClick,
-                    enabled = hasModels && !isGenerating,
+                    enabled = hasModels,
                     modifier = Modifier.weight(1f),
                 ) {
                     if (selectedModelName != null) {
@@ -963,7 +1008,6 @@ private fun ChatGenerationComposer(
                 }
                 IconButton(
                     onClick = onPromptPickerClick,
-                    enabled = !isGenerating,
                     colors = IconButtonDefaults.filledTonalIconButtonColors(),
                 ) {
                     Icon(
@@ -975,7 +1019,6 @@ private fun ChatGenerationComposer(
                 }
                 IconButton(
                     onClick = onAdvancedSettingsClick,
-                    enabled = !isGenerating,
                     colors = IconButtonDefaults.filledTonalIconButtonColors(),
                 ) {
                     Icon(
@@ -988,7 +1031,6 @@ private fun ChatGenerationComposer(
                 value = prompt,
                 onValueChange = onPromptChange,
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !isGenerating,
                 label = { Text(stringResource(R.string.chat_generation_prompt)) },
                 minLines = 2,
                 maxLines = 4,
@@ -1006,16 +1048,39 @@ private fun ChatGenerationComposer(
                     hasValue = negativePrompt.text.isNotBlank(),
                     onExpandedChange = { negativePromptExpanded = it },
                     modifier = Modifier.weight(1f),
-                    enabled = !isGenerating,
                 )
+                if (pendingCount > 0) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    ) {
+                        Text(
+                            text = stringResource(
+                                R.string.chat_generation_queue_count,
+                                pendingCount,
+                            ),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
                 FilledIconButton(
                     onClick = onSend,
-                    enabled = prompt.text.isNotBlank() && hasModels && !isGenerating,
+                    enabled = prompt.text.isNotBlank() && hasModels,
                     modifier = Modifier.size(56.dp),
                 ) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = stringResource(R.string.chat_generation_send),
+                        imageVector = if (isGenerating) {
+                            Icons.Default.Add
+                        } else {
+                            Icons.AutoMirrored.Filled.Send
+                        },
+                        contentDescription = if (isGenerating) {
+                            stringResource(R.string.chat_generation_enqueue)
+                        } else {
+                            stringResource(R.string.chat_generation_send)
+                        },
                     )
                 }
             }
@@ -1024,7 +1089,6 @@ private fun ChatGenerationComposer(
                     value = negativePrompt,
                     onValueChange = onNegativePromptChange,
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = !isGenerating,
                     label = {
                         Text(stringResource(R.string.chat_generation_negative_prompt))
                     },
@@ -1041,7 +1105,6 @@ private fun ChatGenerationComposer(
 private fun ChatModeSwitcher(
     current: ChatMode,
     onModeChange: (ChatMode) -> Unit,
-    enabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -1051,8 +1114,7 @@ private fun ChatModeSwitcher(
         ChatMode.entries.forEach { mode ->
             FilterChip(
                 selected = mode == current,
-                onClick = { if (enabled) onModeChange(mode) },
-                enabled = enabled,
+                onClick = { onModeChange(mode) },
                 label = {
                     Text(
                         text = stringResource(
@@ -1076,7 +1138,6 @@ private fun SourceImageRow(
     sourceImageBytes: ByteArray?,
     onPick: () -> Unit,
     onClear: () -> Unit,
-    enabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -1086,7 +1147,6 @@ private fun SourceImageRow(
     ) {
         FilledTonalButton(
             onClick = onPick,
-            enabled = enabled,
             modifier = Modifier.weight(1f),
         ) {
             Icon(
@@ -1105,7 +1165,7 @@ private fun SourceImageRow(
             )
         }
         if (sourceImageBytes != null) {
-            IconButton(onClick = onClear, enabled = enabled) {
+            IconButton(onClick = onClear) {
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = stringResource(R.string.cancel),
@@ -1159,7 +1219,6 @@ private fun ChatGenerationAdvancedSettings(
     cfg: String,
     seed: String,
     scheduler: String,
-    enabled: Boolean,
     onWidthChange: (String) -> Unit,
     onHeightChange: (String) -> Unit,
     onStepsChange: (String) -> Unit,
@@ -1184,14 +1243,12 @@ private fun ChatGenerationAdvancedSettings(
                         value = width,
                         onValueChange = onWidthChange,
                         label = stringResource(R.string.chat_generation_width),
-                        enabled = enabled,
                         modifier = Modifier.weight(1f),
                     )
                     ChatGenerationNumberField(
                         value = height,
                         onValueChange = onHeightChange,
                         label = stringResource(R.string.chat_generation_height),
-                        enabled = enabled,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -1200,14 +1257,12 @@ private fun ChatGenerationAdvancedSettings(
                         value = steps,
                         onValueChange = onStepsChange,
                         label = stringResource(R.string.chat_generation_steps),
-                        enabled = enabled,
                         modifier = Modifier.weight(1f),
                     )
                     ChatGenerationNumberField(
                         value = cfg,
                         onValueChange = onCfgChange,
                         label = stringResource(R.string.chat_generation_cfg),
-                        enabled = enabled,
                         allowDecimal = true,
                         modifier = Modifier.weight(1f),
                     )
@@ -1216,13 +1271,11 @@ private fun ChatGenerationAdvancedSettings(
                     value = seed,
                     onValueChange = onSeedChange,
                     label = stringResource(R.string.chat_generation_seed),
-                    enabled = enabled,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Box(modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(
                         onClick = { schedulerExpanded = true },
-                        enabled = enabled,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
@@ -1262,7 +1315,6 @@ private fun ChatGenerationNumberField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
-    enabled: Boolean,
     modifier: Modifier = Modifier,
     allowDecimal: Boolean = false,
 ) {
@@ -1279,7 +1331,6 @@ private fun ChatGenerationNumberField(
             }
         },
         modifier = modifier,
-        enabled = enabled,
         label = { Text(label) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(

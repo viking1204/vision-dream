@@ -643,6 +643,8 @@
     <string name="chat_generation_prompt_library">저장된 프롬프트 불러오기</string>
     <string name="chat_generation_advanced">고급 설정</string>
     <string name="chat_generation_send">보내기</string>
+    <string name="chat_generation_enqueue">대기열에 추가</string>
+    <string name="chat_generation_queue_count">대기열 %1$d</string>
     <string name="chat_generation_generating">이미지 생성 중…</string>
     <string name="chat_generation_busy">API 또는 앱 생성 작업이 실행 중이거나 대기 중입니다. 완료 후 다시 시도하세요.</string>
     <string name="chat_generation_error">이미지 생성에 실패했습니다.</string>

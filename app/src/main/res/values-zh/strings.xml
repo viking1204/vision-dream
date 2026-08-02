@@ -643,6 +643,8 @@
     <string name="chat_generation_prompt_library">从提示词管理器加载</string>
     <string name="chat_generation_advanced">高级设置</string>
     <string name="chat_generation_send">发送</string>
+    <string name="chat_generation_enqueue">加入队列</string>
+    <string name="chat_generation_queue_count">队列 %1$d</string>
     <string name="chat_generation_generating">正在生成图片…</string>
     <string name="chat_generation_busy">API 或应用内已有生图任务正在运行或排队，请稍后重试。</string>
     <string name="chat_generation_error">图片生成失败。</string>
