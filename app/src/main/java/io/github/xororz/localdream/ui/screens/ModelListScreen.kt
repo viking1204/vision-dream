@@ -27,7 +27,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -1100,12 +1099,12 @@ fun ModelListScreen(
             if (!remoteActive) {
                 // Compact tag-filter row replacing the old full-width search
                 // field. Text search lives in the top-bar search sheet.
-                Row(
+                FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
                         .padding(horizontal = 12.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     FilterChip(
                         selected = selectedTag == null,
@@ -1438,9 +1437,10 @@ fun ModelListScreen(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     FilterChip(
                         selected = selectedTag == null,
@@ -2395,27 +2395,6 @@ fun ModelCard(
                     },
                 ),
         ) {
-            Badge(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp),
-                containerColor = if (model.runOnCpu) {
-                    MaterialTheme.colorScheme.tertiaryContainer
-                } else {
-                    MaterialTheme.colorScheme.primaryContainer
-                },
-                contentColor = if (model.runOnCpu) {
-                    MaterialTheme.colorScheme.onTertiaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                },
-            ) {
-                Text(
-                    text = if (model.runOnCpu) "CPU" else "NPU",
-                    style = MaterialTheme.typography.labelSmall,
-                )
-            }
-
             Column(
                 modifier = Modifier
                     .fillMaxWidth()

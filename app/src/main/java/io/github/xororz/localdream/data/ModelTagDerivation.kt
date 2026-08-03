@@ -4,9 +4,9 @@ package io.github.xororz.localdream.data
  * Derives a compact, language-neutral tag set from a [Model] so the model list
  * page can offer tag-based filtering without a manual curation step.
  *
- * Tags are intentionally short, language-neutral tokens (mirroring the existing
- * hard-coded "CPU"/"NPU" badges) to avoid a four-language string burden while
- * still being self-explanatory to users.
+ * Tags are intentionally short, language-neutral tokens derived from model
+ * attributes (base model family, style keywords, content rating) to avoid a
+ * four-language string burden while still being self-explanatory to users.
  */
 object ModelTagDerivation {
 
@@ -21,17 +21,15 @@ object ModelTagDerivation {
         Regex("""sd\s?1\.5|sd15|1\.5""", RegexOption.IGNORE_CASE) to "SD1.5",
     )
 
-    /** Stable ordered tag list for a single model (de-duplicated, CPU/NPU first). */
+    /** Stable ordered tag list for a single model (de-duplicated). */
     fun deriveTags(model: Model): List<String> {
         val tags = LinkedHashSet<String>()
 
-        // Backend / hardware
-        tags += if (model.runOnCpu) "CPU" else "NPU"
-
-        // Base model family (structural flags win over keyword scan)
+        // Base model family (backend type resolves SD1.5 / SDXL / Anime)
         when {
-            model.isSdxl -> tags += "SDXL"
-            model.isAnima -> tags += "Anime"
+            model.isSdxl || model.backendType == "sdxl" -> tags += "SDXL"
+            model.isAnima || model.backendType == "anima" -> tags += "Anime"
+            model.backendType == "sd15cpu" || model.backendType == "sd15npu" -> tags += "SD1.5"
         }
 
         // Content rating
@@ -50,10 +48,15 @@ object ModelTagDerivation {
     fun collectTags(models: List<Model>): List<String> {
         val seen = LinkedHashSet<String>()
         models.forEach { seen += deriveTags(it) }
-        // Preferred display order: hardware, base model, style, content.
+        // Preferred display order: base model, style, content.
         val preferred = listOf(
-            "NPU", "CPU", "SDXL", "SD1.5", "Anime", "Realistic",
-            "Portrait", "Landscape", "NSFW",
+            "SDXL",
+            "SD1.5",
+            "Anime",
+            "Realistic",
+            "Portrait",
+            "Landscape",
+            "NSFW",
         )
         val ordered = preferred.filter { it in seen }.toMutableList()
         seen.filterNot { it in ordered }.forEach { ordered += it }

@@ -28,9 +28,16 @@ class ModelTagDerivationTest {
     )
 
     @Test
-    fun cpuModelGetsCpuTag_npuModelGetsNpuTag() {
-        assertTrue("CPU" in ModelTagDerivation.deriveTags(model(runOnCpu = true)))
-        assertTrue("NPU" in ModelTagDerivation.deriveTags(model(runOnCpu = false)))
+    fun cpuModelDoesNotGetCpuTag_npuModelDoesNotGetNpuTag() {
+        assertFalse("CPU" in ModelTagDerivation.deriveTags(model(runOnCpu = true)))
+        assertFalse("NPU" in ModelTagDerivation.deriveTags(model(runOnCpu = false)))
+    }
+
+    @Test
+    fun sd15BackendProducesSd15Tag() {
+        // runOnCpu -> backendType "sd15cpu"; NPU fallback -> "sd15npu".
+        assertTrue("SD1.5" in ModelTagDerivation.deriveTags(model(runOnCpu = true)))
+        assertTrue("SD1.5" in ModelTagDerivation.deriveTags(model(runOnCpu = false)))
     }
 
     @Test
@@ -86,12 +93,13 @@ class ModelTagDerivationTest {
             model(name = "c", isAnima = true, contentRating = ModelContentRating.NSFW),
         )
         val all = ModelTagDerivation.collectTags(models)
-        assertTrue("CPU" in all)
+        assertTrue("SD1.5" in all)
         assertTrue("SDXL" in all)
         assertTrue("Anime" in all)
         assertTrue("NSFW" in all)
         assertTrue("Realistic" in all)
-        // CPU (hardware) must precede SDXL (base model) in preferred order.
-        assertTrue(all.indexOf("CPU") < all.indexOf("SDXL"))
+        // Base-model tags (SDXL) must precede style/content tags (Anime, NSFW) in preferred order.
+        assertTrue(all.indexOf("SDXL") < all.indexOf("Anime"))
+        assertTrue(all.indexOf("Anime") < all.indexOf("NSFW"))
     }
 }
