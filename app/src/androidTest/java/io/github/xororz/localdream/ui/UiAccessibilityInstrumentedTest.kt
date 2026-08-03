@@ -202,7 +202,6 @@ class UiAccessibilityInstrumentedTest {
 
         val tasks = listOf(
             sampleTask("t1", "dream-shaper-8", "DreamShaper", "a cat on a rooftop"),
-            sampleTask("t2", "dream-shaper-8", "DreamShaper", "a dog in a field"),
         )
 
         composeRule.setContent {
@@ -222,6 +221,7 @@ class UiAccessibilityInstrumentedTest {
 
         // AC-07: manual reordering uses explicit up/down buttons (reachable with
         // TalkBack / switch access) instead of a drag handle, plus a remove action.
+        // A single queued task exposes one of each control.
         composeRule.onNodeWithContentDescription(context.getString(R.string.generation_queue_move_up))
             .assertExists()
         composeRule.onNodeWithContentDescription(context.getString(R.string.generation_queue_move_down))
