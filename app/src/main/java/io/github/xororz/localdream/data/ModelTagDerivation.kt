@@ -1,22 +1,23 @@
 package io.github.xororz.localdream.data
 
 /**
- * Derives a compact, language-neutral tag set from a [Model] so the model list
+ * Derives a compact, Chinese display tag set from a [Model] so the model list
  * page can offer tag-based filtering without a manual curation step.
  *
- * Tags are intentionally short, language-neutral tokens derived from model
- * attributes (base model family, style keywords, content rating) to avoid a
- * four-language string burden while still being self-explanatory to users.
+ * Display tags follow the UI redesign spec (§3.2 / §8): Chinese style labels
+ * (动漫/写实/人像/风景) plus base-model families (SD1.5/SDXL) and the NSFW
+ * content marker. The keyword regexes themselves keep both Chinese and English
+ * matchers; only the emitted display token is localized.
  */
 object ModelTagDerivation {
 
     // Keyword -> tag. Multiple distinct tags may apply to one model.
     private val KEYWORD_RULES: List<Pair<Regex, String>> = listOf(
         // Style
-        Regex("""动漫|二次元|anime|comic|manga""", RegexOption.IGNORE_CASE) to "Anime",
-        Regex("""写实|真实|realistic|photoreal|photo""", RegexOption.IGNORE_CASE) to "Realistic",
-        Regex("""人像|人物|portrait|face|人物肖像""", RegexOption.IGNORE_CASE) to "Portrait",
-        Regex("""风景|场景|landscape|scenery|scene""", RegexOption.IGNORE_CASE) to "Landscape",
+        Regex("""动漫|二次元|anime|comic|manga""", RegexOption.IGNORE_CASE) to "动漫",
+        Regex("""写实|真实|realistic|photoreal|photo""", RegexOption.IGNORE_CASE) to "写实",
+        Regex("""人像|人物|portrait|face|人物肖像""", RegexOption.IGNORE_CASE) to "人像",
+        Regex("""风景|场景|landscape|scenery|scene""", RegexOption.IGNORE_CASE) to "风景",
         // Base model
         Regex("""sd\s?1\.5|sd15|1\.5""", RegexOption.IGNORE_CASE) to "SD1.5",
     )
@@ -28,7 +29,7 @@ object ModelTagDerivation {
         // Base model family (backend type resolves SD1.5 / SDXL / Anime)
         when {
             model.isSdxl || model.backendType == "sdxl" -> tags += "SDXL"
-            model.isAnima || model.backendType == "anima" -> tags += "Anime"
+            model.isAnima || model.backendType == "anima" -> tags += "动漫"
             model.backendType == "sd15cpu" || model.backendType == "sd15npu" -> tags += "SD1.5"
         }
 
@@ -52,10 +53,10 @@ object ModelTagDerivation {
         val preferred = listOf(
             "SDXL",
             "SD1.5",
-            "Anime",
-            "Realistic",
-            "Portrait",
-            "Landscape",
+            "动漫",
+            "写实",
+            "人像",
+            "风景",
             "NSFW",
         )
         val ordered = preferred.filter { it in seen }.toMutableList()

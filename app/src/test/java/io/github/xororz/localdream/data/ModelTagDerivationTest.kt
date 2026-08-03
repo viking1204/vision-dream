@@ -48,7 +48,7 @@ class ModelTagDerivationTest {
 
     @Test
     fun animaFlagProducesAnimeTag() {
-        assertTrue("Anime" in ModelTagDerivation.deriveTags(model(isAnima = true)))
+        assertTrue("动漫" in ModelTagDerivation.deriveTags(model(isAnima = true)))
     }
 
     @Test
@@ -67,10 +67,10 @@ class ModelTagDerivationTest {
 
     @Test
     fun keywordStyleDetection() {
-        assertTrue("Realistic" in ModelTagDerivation.deriveTags(model(description = "A realistic photo of a cat")))
-        assertTrue("Portrait" in ModelTagDerivation.deriveTags(model(name = "Portrait base", description = "face")))
-        assertTrue("Landscape" in ModelTagDerivation.deriveTags(model(description = "beautiful landscape scenery")))
-        assertTrue("Anime" in ModelTagDerivation.deriveTags(model(description = "二次元 anime style")))
+        assertTrue("写实" in ModelTagDerivation.deriveTags(model(description = "A realistic photo of a cat")))
+        assertTrue("人像" in ModelTagDerivation.deriveTags(model(name = "Portrait base", description = "face")))
+        assertTrue("风景" in ModelTagDerivation.deriveTags(model(description = "beautiful landscape scenery")))
+        assertTrue("动漫" in ModelTagDerivation.deriveTags(model(description = "二次元 anime style")))
     }
 
     @Test
@@ -80,9 +80,9 @@ class ModelTagDerivationTest {
 
     @Test
     fun tagsAreDeduplicated() {
-        // isAnima already yields "Anime"; description "anime" must not duplicate it.
+        // isAnima already yields "动漫"; description "anime" must not duplicate it.
         val tags = ModelTagDerivation.deriveTags(model(isAnima = true, description = "anime art"))
-        assertEquals(1, tags.count { it == "Anime" })
+        assertEquals(1, tags.count { it == "动漫" })
     }
 
     @Test
@@ -95,11 +95,11 @@ class ModelTagDerivationTest {
         val all = ModelTagDerivation.collectTags(models)
         assertTrue("SD1.5" in all)
         assertTrue("SDXL" in all)
-        assertTrue("Anime" in all)
+        assertTrue("动漫" in all)
         assertTrue("NSFW" in all)
-        assertTrue("Realistic" in all)
-        // Base-model tags (SDXL) must precede style/content tags (Anime, NSFW) in preferred order.
-        assertTrue(all.indexOf("SDXL") < all.indexOf("Anime"))
-        assertTrue(all.indexOf("Anime") < all.indexOf("NSFW"))
+        assertTrue("写实" in all)
+        // Base-model tags (SDXL) must precede style/content tags (动漫, NSFW) in preferred order.
+        assertTrue(all.indexOf("SDXL") < all.indexOf("动漫"))
+        assertTrue(all.indexOf("动漫") < all.indexOf("NSFW"))
     }
 }
