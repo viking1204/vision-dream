@@ -7,11 +7,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -45,6 +47,8 @@ fun GenerationParamsDialog(
     onCopyPrompts: (() -> Unit)? = null,
     onCopyPrompt: (() -> Unit)? = null,
     onCopyNegativePrompt: (() -> Unit)? = null,
+    /** Promotes these parameters to the defaults of the model that made them. */
+    onSetAsModelDefaults: (() -> Unit)? = null,
     onShare: () -> Unit,
     onSendToImg2img: () -> Unit,
     onReproduce: () -> Unit,
@@ -204,12 +208,28 @@ fun GenerationParamsDialog(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (showImg2imgButton) {
-                    TextButton(onClick = onSendToImg2img) {
-                        Text("img2img")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (showImg2imgButton) {
+                        TextButton(onClick = onSendToImg2img) {
+                            Text("img2img")
+                        }
                     }
-                } else {
-                    Spacer(modifier = Modifier.width(0.dp))
+                    if (onSetAsModelDefaults != null) {
+                        TextButton(onClick = onSetAsModelDefaults) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                text = stringResource(R.string.asset_set_model_defaults),
+                                modifier = Modifier.padding(start = 6.dp),
+                            )
+                        }
+                    }
+                    if (!showImg2imgButton && onSetAsModelDefaults == null) {
+                        Spacer(modifier = Modifier.width(0.dp))
+                    }
                 }
                 Row {
                     TextButton(onClick = onDismiss) {
@@ -239,6 +259,7 @@ internal fun GenerationParamsDialogLightPreview() {
             showShareButton = true,
             onCopyPrompt = {},
             onCopyNegativePrompt = {},
+            onSetAsModelDefaults = {},
             onShare = {},
             onSendToImg2img = {},
             onReproduce = {},
@@ -260,6 +281,7 @@ internal fun GenerationParamsDialogDarkPreview() {
             showShareButton = true,
             onCopyPrompt = {},
             onCopyNegativePrompt = {},
+            onSetAsModelDefaults = {},
             onShare = {},
             onSendToImg2img = {},
             onReproduce = {},

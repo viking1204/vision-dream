@@ -657,6 +657,9 @@
     <string name="generation_queue_status_queued">排队中</string>
     <string name="generation_queue_remove">从队列移除</string>
     <string name="generation_queue_start">开始队列</string>
+    <string name="asset_set_model_defaults">设为当前模型默认</string>
+    <string name="asset_set_model_defaults_done">已将参数设为 %1$s 默认值</string>
+    <string name="asset_set_model_defaults_failed">设置模型默认参数失败</string>
     <string name="generation_queue_move_up">上移</string>
     <string name="generation_queue_move_down">下移</string>
     <string name="chat_generation_send">发送</string>

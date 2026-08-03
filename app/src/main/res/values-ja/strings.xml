@@ -657,6 +657,9 @@
     <string name="generation_queue_status_queued">待機中</string>
     <string name="generation_queue_remove">キューから削除</string>
     <string name="generation_queue_start">キューを開始</string>
+    <string name="asset_set_model_defaults">モデルのデフォルトに設定</string>
+    <string name="asset_set_model_defaults_done">パラメータを %1$s のデフォルトに設定しました</string>
+    <string name="asset_set_model_defaults_failed">モデルデフォルトの設定に失敗しました</string>
     <string name="generation_queue_move_up">上へ移動</string>
     <string name="generation_queue_move_down">下へ移動</string>
     <string name="chat_generation_send">送信</string>

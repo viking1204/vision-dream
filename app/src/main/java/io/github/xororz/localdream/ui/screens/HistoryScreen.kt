@@ -68,6 +68,8 @@ import androidx.navigation.NavController
 import androidx.paging.compose.collectAsLazyPagingItems
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.AssetBrowserPreferences
+import io.github.xororz.localdream.data.AssetDefaultsCandidate
+import io.github.xororz.localdream.data.AssetDefaultsPromotion
 import io.github.xororz.localdream.data.AssetLayoutMode
 import io.github.xororz.localdream.data.GenerationPreferences
 import io.github.xororz.localdream.data.HistoryFilter
@@ -83,6 +85,7 @@ import io.github.xororz.localdream.ui.components.ZoomableImageOverlay
 import io.github.xororz.localdream.utils.saveImage
 import io.github.xororz.localdream.utils.saveImageFromFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -116,6 +119,7 @@ fun HistoryScreen(
     val msgPromptSaveFailed = stringResource(R.string.prompt_manager_save_failed)
     val msgPromptsCopied = stringResource(R.string.asset_prompts_copied)
     val msgPromptCopied = stringResource(R.string.asset_prompt_copied)
+    val msgDefaultsFailed = stringResource(R.string.asset_set_model_defaults_failed)
     val sensitiveContentDesc = stringResource(R.string.asset_sensitive_content_desc)
 
     val restoredFilterJson = assetBrowserPreferences.getHistoryFilterJson()
@@ -541,6 +545,49 @@ fun HistoryScreen(
                     showShareDialog = true
                 },
                 onSendToImg2img = {},
+                onSetAsModelDefaults = {
+                    scope.launch {
+                        runCatching {
+                            val current = generationPreferences.getPreferences(item.modelId).first()
+                            val candidate = AssetDefaultsCandidate(
+                                prompt = item.params.prompt,
+                                negativePrompt = item.params.negativePrompt,
+                                steps = item.params.steps,
+                                cfg = item.params.cfg,
+                                width = item.params.width,
+                                height = item.params.height,
+                                scheduler = item.params.scheduler,
+                            )
+                            val promoted = AssetDefaultsPromotion.promote(current, candidate)
+                            generationPreferences.saveAllFields(
+                                modelId = item.modelId,
+                                prompt = promoted.prompt,
+                                negativePrompt = promoted.negativePrompt,
+                                steps = promoted.steps,
+                                cfg = promoted.cfg,
+                                seed = current.seed,
+                                width = promoted.width,
+                                height = promoted.height,
+                                denoiseStrength = current.denoiseStrength,
+                                useOpenCL = current.useOpenCL,
+                                batchCounts = current.batchCounts,
+                                scheduler = promoted.scheduler,
+                                aspectRatio = current.aspectRatio,
+                            )
+                        }.onSuccess {
+                            Toast.makeText(
+                                context,
+                                resources.getString(
+                                    R.string.asset_set_model_defaults_done,
+                                    item.modelId,
+                                ),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }.onFailure {
+                            Toast.makeText(context, msgDefaultsFailed, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
                 onReproduce = {},
                 onDismiss = {
                     showParamsDialog = false

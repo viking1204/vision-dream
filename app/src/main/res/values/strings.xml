@@ -663,6 +663,9 @@
     <string name="generation_queue_status_queued">Queued</string>
     <string name="generation_queue_remove">Remove from queue</string>
     <string name="generation_queue_start">Start queue</string>
+    <string name="asset_set_model_defaults">Set as model default</string>
+    <string name="asset_set_model_defaults_done">Parameters set as %1$s defaults</string>
+    <string name="asset_set_model_defaults_failed">Failed to set model defaults</string>
     <string name="generation_queue_move_up">Move up</string>
     <string name="generation_queue_move_down">Move down</string>
     <string name="chat_generation_send">Send</string>
