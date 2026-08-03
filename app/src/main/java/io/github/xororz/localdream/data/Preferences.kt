@@ -234,7 +234,7 @@ class GenerationPreferences(private val context: Context) {
         .catch { exception ->
             if (exception is IOException) emit(emptyPreferences()) else throw exception
         }
-        .map { it[GENERATION_QUEUE_SMART_SORT_KEY] ?: false }
+        .map { it[GENERATION_QUEUE_SMART_SORT_KEY] ?: true }
 
     suspend fun setQueueSmartSort(enabled: Boolean) {
         context.dataStore.edit { it[GENERATION_QUEUE_SMART_SORT_KEY] = enabled }
