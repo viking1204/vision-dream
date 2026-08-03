@@ -3,6 +3,7 @@ package io.github.xororz.localdream.ui
 import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -17,9 +18,13 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.GenerationMode
+import io.github.xororz.localdream.data.GenerationTask
+import io.github.xororz.localdream.data.GenerationTaskStatus
 import io.github.xororz.localdream.data.HistoryFilter
 import io.github.xororz.localdream.data.HistoryItem
 import io.github.xororz.localdream.ui.components.GenerationParamsDialog
+import io.github.xororz.localdream.ui.components.GenerationQueueBar
+import io.github.xororz.localdream.ui.components.GenerationQueueSheet
 import io.github.xororz.localdream.ui.components.ZoomableImageOverlay
 import io.github.xororz.localdream.ui.screens.GenerationParameters
 import io.github.xororz.localdream.ui.screens.ModelRunHistoryPage
@@ -134,6 +139,103 @@ class UiAccessibilityInstrumentedTest {
             assertEquals(1, createCount)
         }
     }
+
+    @Test
+    fun generationParamsDialogExposesSetAsModelDefaultButton() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+        composeRule.setContent {
+            MaterialTheme {
+                GenerationParamsDialog(
+                    title = "Generation parameters",
+                    params = previewParameters(),
+                    modelId = "dream-shaper-8",
+                    displayMode = GenerationMode.TXT2IMG,
+                    showImg2imgButton = false,
+                    onSetAsModelDefaults = {},
+                    onShare = {},
+                    onSendToImg2img = {},
+                    onReproduce = {},
+                    onDismiss = {},
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // AC-06/AC-07: the "use these settings as this model's defaults" affordance
+        // is present and carries a human-readable label for assistive technology.
+        composeRule.onNodeWithText(context.getString(R.string.asset_set_model_defaults))
+            .assertExists()
+    }
+
+    @Test
+    fun generationQueueBarExposesOpenPanel() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        var openCount = 0
+
+        composeRule.setContent {
+            MaterialTheme {
+                GenerationQueueBar(
+                    pendingCount = 2,
+                    runningModelName = "dream-shaper-8",
+                    onOpenPanel = { openCount++ },
+                    modifier = Modifier,
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // AC-07: the always-on queue summary exposes a labelled icon and opens the
+        // full panel on activation.
+        composeRule.onNodeWithContentDescription(context.getString(R.string.generation_queue_title))
+            .assertExists()
+            .performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(1, openCount)
+        }
+    }
+
+    @Test
+    fun generationQueueSheetExposesReorderAndRemoveButtons() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+        val tasks = listOf(
+            sampleTask("t1", "dream-shaper-8", "DreamShaper", "a cat on a rooftop"),
+            sampleTask("t2", "dream-shaper-8", "DreamShaper", "a dog in a field"),
+        )
+
+        composeRule.setContent {
+            MaterialTheme {
+                GenerationQueueSheet(
+                    tasks = tasks,
+                    smartSortEnabled = false,
+                    onSmartSortChange = {},
+                    onRemove = {},
+                    onMove = { _, _ -> },
+                    onClear = {},
+                    onDismiss = {},
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // AC-07: manual reordering uses explicit up/down buttons (reachable with
+        // TalkBack / switch access) instead of a drag handle, plus a remove action.
+        composeRule.onNodeWithContentDescription(context.getString(R.string.generation_queue_move_up))
+            .assertExists()
+        composeRule.onNodeWithContentDescription(context.getString(R.string.generation_queue_move_down))
+            .assertExists()
+        composeRule.onNodeWithContentDescription(context.getString(R.string.generation_queue_remove))
+            .assertExists()
+    }
+
+    private fun sampleTask(id: String, modelId: String, modelName: String, prompt: String) = GenerationTask(
+        id = id,
+        modelId = modelId,
+        modelName = modelName,
+        prompt = prompt,
+    )
 
     private fun previewParameters() = GenerationParameters(
         steps = 20,

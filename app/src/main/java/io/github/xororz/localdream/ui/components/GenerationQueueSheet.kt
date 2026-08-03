@@ -29,11 +29,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.GenerationTask
@@ -264,5 +266,50 @@ fun GenerationQueueSheet(
                 }
             }
         }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+internal fun GenerationQueueBarPreview() {
+    MaterialTheme {
+        GenerationQueueBar(
+            pendingCount = 3,
+            runningModelName = "DreamShaper 8",
+            onOpenPanel = {},
+            modifier = Modifier.padding(12.dp),
+        )
+    }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF111113)
+@Composable
+internal fun GenerationQueueBarDarkPreview() {
+    MaterialTheme(colorScheme = darkColorScheme()) {
+        GenerationQueueBar(
+            pendingCount = 1,
+            runningModelName = null,
+            onOpenPanel = {},
+            modifier = Modifier.padding(12.dp),
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+internal fun GenerationQueueSheetPreview() {
+    MaterialTheme {
+        GenerationQueueSheet(
+            tasks = listOf(
+                GenerationTask(id = "t1", modelId = "dream-shaper-8", modelName = "DreamShaper 8", prompt = "a cat on a rooftop"),
+                GenerationTask(id = "t2", modelId = "dream-shaper-8", modelName = "DreamShaper 8", prompt = "a dog in a field"),
+            ),
+            smartSortEnabled = false,
+            onSmartSortChange = {},
+            onRemove = {},
+            onMove = { _, _ -> },
+            onClear = {},
+            onDismiss = {},
+        )
     }
 }
