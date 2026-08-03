@@ -103,7 +103,7 @@ fun RevealableImage(
                 IconButton(
                     onClick = onOpenPreview,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
+                        .align(Alignment.BottomEnd)
                         .minimumInteractiveComponentSize()
                         .size(34.dp),
                 ) {

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,7 +26,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Card
@@ -77,7 +77,6 @@ internal fun AssetHistoryCollection(
     selectedIds: Set<Long>,
     onPreview: (HistoryItem) -> Unit,
     onShowInfo: ((HistoryItem) -> Unit)?,
-    onCopyPrompts: ((HistoryItem) -> Unit)? = null,
     onLongClick: (HistoryItem) -> Unit,
     initialScroll: Pair<Int, Int> = 0 to 0,
     onAssetScroll: ((index: Int, offset: Int) -> Unit)? = null,
@@ -142,7 +141,6 @@ internal fun AssetHistoryCollection(
                 isSelected = item.id in selectedIds,
                 onPreview = { onPreview(item) },
                 onShowInfo = onShowInfo?.let { callback -> { callback(item) } },
-                onCopyPrompts = onCopyPrompts?.let { callback -> { callback(item) } },
                 onLongClick = { onLongClick(item) },
                 onToggleSelection = { onPreview(item) },
             )
@@ -216,7 +214,6 @@ private fun AssetHistoryCard(
     isSelected: Boolean,
     onPreview: () -> Unit,
     onShowInfo: (() -> Unit)?,
-    onCopyPrompts: (() -> Unit)?,
     onLongClick: () -> Unit,
     onToggleSelection: () -> Unit,
 ) {
@@ -251,10 +248,7 @@ private fun AssetHistoryCard(
                         )
                         AssetMetadata(
                             item = item,
-                            compact = true,
                             onShowInfo = onShowInfo,
-                            onCopyPrompts = onCopyPrompts,
-                            onLongClick = onLongClick,
                         )
                     }
                 }
@@ -277,10 +271,7 @@ private fun AssetHistoryCard(
                         )
                         AssetMetadata(
                             item = item,
-                            compact = false,
                             onShowInfo = onShowInfo,
-                            onCopyPrompts = onCopyPrompts,
-                            onLongClick = onLongClick,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -418,71 +409,39 @@ private fun AssetImageFrame(
 @Composable
 private fun AssetMetadata(
     item: HistoryItem,
-    compact: Boolean,
     onShowInfo: (() -> Unit)?,
-    onCopyPrompts: (() -> Unit)?,
-    onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val clickModifier = if (onShowInfo != null) {
-        Modifier.combinedClickable(
-            onClick = onShowInfo,
-            onLongClick = onLongClick,
-        )
-    } else {
-        Modifier
-    }
     Row(
         modifier = modifier
-            .then(clickModifier)
             .padding(horizontal = 10.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.Top,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+        Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ) {
-            Surface(
-                shape = RoundedCornerShape(6.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            ) {
-                Text(
-                    text = item.modelId,
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
             Text(
-                text = item.params.prompt.ifBlank { "—" },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = if (compact) 2 else 3,
+                text = item.modelId,
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (item.params.negativePrompt.isNotBlank()) {
-                Text(
-                    text = "${stringResource(R.string.negative_prompt)}: ${item.params.negativePrompt}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
-        if (onCopyPrompts != null) {
+        Spacer(modifier = Modifier.weight(1f))
+        if (onShowInfo != null) {
             IconButton(
-                onClick = onCopyPrompts,
+                onClick = onShowInfo,
                 modifier = Modifier
                     .minimumInteractiveComponentSize()
                     .size(34.dp),
             ) {
                 Icon(
-                    imageVector = Icons.Default.ContentCopy,
-                    contentDescription = stringResource(R.string.asset_copy_prompts),
+                    imageVector = Icons.Default.Info,
+                    contentDescription = stringResource(R.string.generation_params_title),
                     modifier = Modifier.size(17.dp),
                 )
             }

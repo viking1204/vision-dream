@@ -3,8 +3,6 @@ package io.github.xororz.localdream.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,12 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.automirrored.filled.ViewQuilt
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
@@ -49,7 +42,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -78,10 +70,9 @@ import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.data.PromptRepository
 import io.github.xororz.localdream.navigation.Screen
 import io.github.xororz.localdream.navigation.popBackStackIfResumed
+import io.github.xororz.localdream.ui.components.AssetImageLightbox
 import io.github.xororz.localdream.ui.components.GenerationParamsDialog
-import io.github.xororz.localdream.ui.components.OverlayIconButton
 import io.github.xororz.localdream.ui.components.ShareParamsFlow
-import io.github.xororz.localdream.ui.components.ZoomableImageOverlay
 import io.github.xororz.localdream.utils.saveImage
 import io.github.xororz.localdream.utils.saveImageFromFile
 import kotlinx.coroutines.Dispatchers
@@ -150,7 +141,9 @@ fun HistoryScreen(
     var batchSaveTotal by remember { mutableIntStateOf(0) }
     var batchSaveFailed by remember { mutableIntStateOf(0) }
 
-    var previewItem by remember { mutableStateOf<HistoryItem?>(null) }
+    var previewList by remember { mutableStateOf<List<HistoryItem>>(emptyList()) }
+    var previewIndex by remember { mutableIntStateOf(0) }
+    var deleteTargetItem by remember { mutableStateOf<HistoryItem?>(null) }
     var parameterItem by remember { mutableStateOf<HistoryItem?>(null) }
     var showParamsDialog by remember { mutableStateOf(false) }
     var showShareDialog by remember { mutableStateOf(false) }
@@ -329,7 +322,9 @@ fun HistoryScreen(
                             selectedIds.add(item.id)
                         }
                     } else {
-                        previewItem = item
+                        val list = pagedItems.itemSnapshotList.items.filterNotNull()
+                        previewIndex = list.indexOfFirst { it.id == item.id }.coerceAtLeast(0)
+                        previewList = list
                     }
                 },
                 onItemLongClick = { item ->
@@ -374,9 +369,6 @@ fun HistoryScreen(
                     parameterItem = item
                     showParamsDialog = true
                 },
-                onCopyPrompts = { item ->
-                    copyPromptPairToClipboard(context, item, msgPromptsCopied)
-                },
                 onGoCreate = {
                     navController.navigate(Screen.ChatGeneration.route)
                 },
@@ -391,80 +383,44 @@ fun HistoryScreen(
         }
     }
 
-    previewItem?.let { item ->
-        val imagePath = item.imageFile.absolutePath
-        val previewBitmap by produceState<Bitmap?>(null, imagePath) {
-            value = withContext(Dispatchers.IO) {
-                BitmapFactory.decodeFile(imagePath)
-            }
-        }
-        ZoomableImageOverlay(
-            bitmap = previewBitmap,
-            onDismiss = { previewItem = null },
-            showScaleIndicator = true,
-            zoomInEnabled = true,
-            topEndContent = {
-                OverlayIconButton(
-                    icon = Icons.Default.Info,
-                    contentDescription = "View parameters",
-                    onClick = {
-                        parameterItem = item
-                        showParamsDialog = true
-                    },
-                )
-                OverlayIconButton(
-                    icon = if (item.favorite) {
-                        Icons.Default.Favorite
-                    } else {
-                        Icons.Default.FavoriteBorder
-                    },
-                    contentDescription = "toggle favorite",
-                    onClick = {
-                        // Keep the overlay's own copy in sync; the grid
-                        // refreshes through the observed flow.
-                        previewItem = item.copy(favorite = !item.favorite)
-                        scope.launch(Dispatchers.IO) {
-                            historyManager.setFavorite(item.id, !item.favorite)
-                        }
-                    },
-                )
-                OverlayIconButton(
-                    icon = Icons.Default.Save,
-                    contentDescription = "Save to gallery",
-                    onClick = {
-                        val bitmapToSave = previewBitmap
-                        if (bitmapToSave != null) {
-                            scope.launch {
-                                saveImage(
-                                    context = context,
-                                    bitmap = bitmapToSave,
-                                    onSuccess = {
-                                        Toast.makeText(
-                                            context,
-                                            msgImageSaved,
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                    },
-                                    onError = { errorMsg ->
-                                        Toast.makeText(
-                                            context,
-                                            errorMsg,
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                    },
-                                )
-                            }
-                        }
-                    },
-                )
-                OverlayIconButton(
-                    icon = Icons.Default.Delete,
-                    contentDescription = "Delete image",
-                    onClick = { showDeleteDialog = true },
-                )
+    if (previewList.isNotEmpty()) {
+        AssetImageLightbox(
+            items = previewList,
+            initialIndex = previewIndex,
+            onDismiss = { previewList = emptyList() },
+            onShowInfo = { item ->
+                parameterItem = item
+                showParamsDialog = true
+            },
+            onToggleFavorite = { item ->
+                scope.launch(Dispatchers.IO) {
+                    historyManager.setFavorite(item.id, !item.favorite)
+                }
+            },
+            onSave = { item, bmp ->
+                if (bmp != null) {
+                    scope.launch {
+                        saveImage(
+                            context = context,
+                            bitmap = bmp,
+                            onSuccess = {
+                                Toast.makeText(context, msgImageSaved, Toast.LENGTH_SHORT).show()
+                            },
+                            onError = { errorMsg ->
+                                Toast.makeText(context, errorMsg, Toast.LENGTH_SHORT).show()
+                            },
+                        )
+                    }
+                }
+            },
+            onDelete = { item ->
+                deleteTargetItem = item
+                showDeleteDialog = true
             },
         )
+    }
 
+    deleteTargetItem?.let { item ->
         if (showDeleteDialog) {
             ModelRunConfirmDialog(
                 title = stringResource(R.string.delete_image),
@@ -475,15 +431,19 @@ fun HistoryScreen(
                     scope.launch {
                         val success = historyManager.deleteHistoryItem(item)
                         showDeleteDialog = false
+                        deleteTargetItem = null
                         if (success) {
-                            previewItem = null
+                            previewList = emptyList()
                             Toast.makeText(context, msgDeleted, Toast.LENGTH_SHORT).show()
                         } else {
                             Toast.makeText(context, msgDeleteFailed, Toast.LENGTH_SHORT).show()
                         }
                     }
                 },
-                onDismiss = { showDeleteDialog = false },
+                onDismiss = {
+                    showDeleteDialog = false
+                    deleteTargetItem = null
+                },
             )
         }
     }

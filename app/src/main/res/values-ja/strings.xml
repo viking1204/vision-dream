@@ -684,8 +684,8 @@
     <string name="asset_layout_waterfall">ウォーターフォール</string>
     <string name="asset_layout_list">リスト</string>
     <string name="asset_layout_grid">3列グリッド</string>
-    <string name="asset_show_all">センシティブなコンテンツを表示</string>
-    <string name="asset_sensitive_content_desc">アセット一覧でセンシティブ（成人）コンテンツを表示します</string>
+    <string name="asset_show_all">NSFW コンテンツを表示</string>
+    <string name="asset_sensitive_content_desc">アセット一覧で NSFW（成人）コンテンツを表示します</string>
     <string name="asset_go_create">作成へ</string>
     <string name="asset_zoom_in">拡大</string>
     <string name="asset_copy_positive_prompt">正のプロンプトをコピー</string>

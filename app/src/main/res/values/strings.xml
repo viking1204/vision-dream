@@ -690,8 +690,8 @@
     <string name="asset_layout_waterfall">Waterfall</string>
     <string name="asset_layout_list">List</string>
     <string name="asset_layout_grid">3-column grid</string>
-    <string name="asset_show_all">Show sensitive content</string>
-    <string name="asset_sensitive_content_desc">Reveal sensitive (adult) content in the asset list</string>
+    <string name="asset_show_all">Show NSFW content</string>
+    <string name="asset_sensitive_content_desc">Reveal NSFW (adult) content in the asset list</string>
     <string name="asset_go_create">Go create</string>
     <string name="asset_zoom_in">Zoom in</string>
     <string name="asset_copy_positive_prompt">Copy positive prompt</string>
