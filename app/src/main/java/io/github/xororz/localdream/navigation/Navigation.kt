@@ -47,6 +47,8 @@ sealed class Screen(val route: String) {
 
     object RemoteLink : Screen("remote_link")
 
+    object Settings : Screen("settings")
+
     object RepositoryConfig : Screen("repository_config")
 
     object ModelSearch : Screen("model_search")
@@ -58,4 +60,5 @@ val StudioTopLevelRoutes = listOf(
     Screen.History.route,
     Screen.ModelList.route,
     Screen.RemoteLink.route,
+    Screen.Settings.route,
 )

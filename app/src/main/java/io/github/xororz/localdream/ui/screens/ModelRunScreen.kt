@@ -1297,37 +1297,11 @@ fun ModelRunScreen(
         }
     }
 
-    LaunchedEffect(hasInitialized) {
-        if (hasInitialized) {
-            if (isRemote) {
-                // Ask the host to start (or keep serving) this model, and only
-                // then kick off the health check (via the restart trigger):
-                // polling in parallel could see the host still Ready on a
-                // previous selection.
-                val ok = remoteClient?.selectModel(modelId, currentWidth, currentHeight)
-                    ?: false
-                if (ok) {
-                    backendRestartTrigger++
-                } else {
-                    isCheckingBackend = false
-                    errorMessage = msgRemoteSelectFailed
-                }
-            } else {
-                // Always declare the target; BackendService reconciles idempotently
-                // (reuses a live process for the same model, restarts otherwise).
-                // Reading the shared backendState here to decide would race with the
-                // previous screen's still-pending stop and could skip the start.
-                val intent = Intent(context, BackendService::class.java).apply {
-                    putExtra("modelId", model?.id)
-                    putExtra("backendType", model?.backendType)
-                    putExtra("width", currentWidth)
-                    putExtra("height", currentHeight)
-                    putExtra("use_opencl", useOpenCL)
-                }
-                context.startForegroundService(intent)
-            }
-        }
-    }
+    // G5: do NOT auto-load the backend on entering this screen. The model is
+    // instead loaded lazily on the first generation (see the generate handler,
+    // which issues BackendService.ACTION_RESTART) or an explicit resolution
+    // change. This avoids pinning device memory / NPU the moment a model card
+    // is tapped, matching the "don't auto-load after selecting a model" intent.
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->

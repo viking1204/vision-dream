@@ -5,9 +5,9 @@ import org.junit.Test
 
 class NavigationStructureTest {
     @Test
-    fun `studio exposes five unique creation-first destinations`() {
+    fun `studio exposes six unique top-level destinations`() {
         assertEquals(Screen.Workbench.route, StudioTopLevelRoutes.first())
-        assertEquals(5, StudioTopLevelRoutes.size)
+        assertEquals(6, StudioTopLevelRoutes.size)
         assertEquals(StudioTopLevelRoutes.size, StudioTopLevelRoutes.toSet().size)
     }
 }

@@ -92,6 +92,8 @@
     <string name="theme_amber">Amber</string>
     <string name="confirm">Confirm</string>
     <string name="cancel">Cancel</string>
+    <string name="delete_messages">Delete messages</string>
+    <string name="selected_count">%1$d selected</string>
     <string name="save">Save</string>
     <string name="back">Back</string>
     <string name="close">Close</string>
@@ -616,6 +618,7 @@
     <string name="studio_nav_assets">Assets</string>
     <string name="studio_nav_models">Models</string>
     <string name="studio_nav_services">Services</string>
+    <string name="studio_nav_settings">Settings</string>
     <string name="studio_brand">VISION / DREAM</string>
     <string name="studio_home_title">What will you create?</string>
     <string name="studio_start_title">Bring an idea into focus</string>
@@ -730,5 +733,9 @@
     <string name="prompt_picker_create">New prompt</string>
     <string name="chat_generation_source_image_selected">Image selected</string>
     <string name="filter_all">All</string>
+    <string name="more_tags">More tags</string>
+    <string name="collapse_tags">Collapse</string>
     <string name="filter_by_tag">Filter by tag</string>
+    <string name="view_model_description">View description</string>
+    <string name="model_description_title">Model description</string>
 </resources>

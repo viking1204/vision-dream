@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -48,6 +49,7 @@ val StudioDestinations = listOf(
     StudioDestination(Screen.History.route, R.string.studio_nav_assets, Icons.Default.PhotoLibrary),
     StudioDestination(Screen.ModelList.route, R.string.studio_nav_models, Icons.Default.Memory),
     StudioDestination(Screen.RemoteLink.route, R.string.studio_nav_services, Icons.Default.Dns),
+    StudioDestination(Screen.Settings.route, R.string.studio_nav_settings, Icons.Default.Settings),
 )
 
 val StudioCyan = Color(0xFF5EE7D7)

@@ -25,7 +25,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -268,6 +267,10 @@ fun ModelListScreen(
     modifier: Modifier = Modifier,
     isTopLevel: Boolean = false,
     bottomBar: @Composable () -> Unit = {},
+    // G3: the global bottom-nav "Settings" item routes here with openSettings =
+    // true so the settings overlay opens immediately over the model list,
+    // replacing the old in-screen settings button.
+    openSettings: Boolean = false,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -319,7 +322,7 @@ fun ModelListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
-    var showSettingsDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember(openSettings) { mutableStateOf(openSettings) }
     var showFileManagerDialog by remember { mutableStateOf(false) }
     var showBackupDialog by remember { mutableStateOf(false) }
     var showCleanTempDialog by remember { mutableStateOf(false) }
@@ -333,6 +336,9 @@ fun ModelListScreen(
     var showLocalSearchSheet by remember { mutableStateOf(false) }
     var showAddMenu by remember { mutableStateOf(false) }
     var selectedTag by remember { mutableStateOf<String?>(null) }
+    // G2: the tag filter row is collapsed by default to keep the list compact;
+    // expanding reveals the full set of derived style/theme tags.
+    var tagsExpanded by remember { mutableStateOf(false) }
     var isConverting by remember { mutableStateOf(false) }
     var conversionProgress by remember { mutableStateOf("") }
     var extractByteProgress by remember { mutableStateOf<ExtractByteProgress?>(null) }
@@ -1122,13 +1128,54 @@ fun ModelListScreen(
                             null
                         },
                     )
-                    for (tag in availableTags) {
+                    if (tagsExpanded) {
+                        for (tag in availableTags) {
+                            FilterChip(
+                                selected = selectedTag == tag,
+                                onClick = { selectedTag = if (selectedTag == tag) null else tag },
+                                label = { Text(tag) },
+                            )
+                        }
+                    } else if (selectedTag != null) {
+                        // Collapsed but a tag is active: keep it visible so the
+                        // current filter is never hidden behind the expander.
                         FilterChip(
-                            selected = selectedTag == tag,
-                            onClick = { selectedTag = if (selectedTag == tag) null else tag },
-                            label = { Text(tag) },
+                            selected = true,
+                            onClick = { selectedTag = null },
+                            label = { Text(selectedTag!!) },
                         )
                     }
+                    AssistChip(
+                        onClick = { tagsExpanded = !tagsExpanded },
+                        label = {
+                            Text(
+                                stringResource(
+                                    if (tagsExpanded) {
+                                        R.string.collapse_tags
+                                    } else {
+                                        R.string.more_tags
+                                    },
+                                ),
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (tagsExpanded) {
+                                    Icons.Default.ExpandLess
+                                } else {
+                                    Icons.Default.ExpandMore
+                                },
+                                contentDescription = null,
+                                modifier = Modifier.size(AssistChipDefaults.IconSize),
+                            )
+                        },
+                        border = null,
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            leadingIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                    )
                 }
             }
 
@@ -1337,33 +1384,6 @@ fun ModelListScreen(
                 TabPageIndicator(
                     pageCount = 2,
                     currentPage = pagerState.currentPage,
-                )
-            }
-
-            // Settings relocated to the bottom functional area (compact, no
-            // big top-right button). Opens the existing settings overlay.
-            HorizontalDivider(
-                modifier = Modifier.padding(horizontal = 12.dp),
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { showSettingsDialog = true }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = stringResource(R.string.settings),
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = stringResource(R.string.settings),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -2341,6 +2361,9 @@ fun ModelCard(
 ) {
     val isDisabledInSelection = !model.isDownloaded && isSelectionMode
 
+    // G4: truncated description with a "view description" affordance.
+    var showDescriptionDialog by remember { mutableStateOf(false) }
+
     val elevation by animateFloatAsState(
         targetValue = if (isSelected) 4f else 1f,
         animationSpec = Motion.springExpressiveSpatial(),
@@ -2398,7 +2421,7 @@ fun ModelCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
+                    .padding(10.dp),
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -2435,13 +2458,30 @@ fun ModelCard(
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 if (model.description.isNotBlank()) {
-                    Text(
-                        text = model.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = secondaryContent,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = model.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = secondaryContent,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        TextButton(
+                            onClick = { showDescriptionDialog = true },
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                            modifier = Modifier.height(20.dp),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.view_model_description),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(
@@ -2494,7 +2534,7 @@ fun ModelCard(
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2585,7 +2625,7 @@ fun ModelCard(
                     }
                 }
                 if (isLoaded && !isSelectionMode) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -2621,7 +2661,7 @@ fun ModelCard(
                 }
 
                 if (!isSelectionMode) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
@@ -2669,6 +2709,24 @@ fun ModelCard(
                 }
             }
         }
+    }
+
+    if (showDescriptionDialog) {
+        AlertDialog(
+            onDismissRequest = { showDescriptionDialog = false },
+            title = { Text(stringResource(R.string.model_description_title)) },
+            text = {
+                Text(
+                    text = model.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showDescriptionDialog = false }) {
+                    Text(stringResource(R.string.confirm))
+                }
+            },
+        )
     }
 }
 

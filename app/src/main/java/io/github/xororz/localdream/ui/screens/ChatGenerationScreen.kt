@@ -6,11 +6,14 @@ import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -39,6 +42,9 @@ import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PhotoFilter
@@ -47,6 +53,8 @@ import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -263,6 +271,11 @@ fun ChatGenerationScreen(
     val generationPreferences = remember { GenerationPreferences(context) }
     val messages = remember { mutableStateListOf<ChatGenerationMessage>() }
     val listState = rememberLazyListState()
+    // G8: multi-select mode for deleting conversation messages. Deleting only
+    // removes entries from this in-memory list + the stored chat JSON; asset
+    // files on disk are never touched.
+    var selectionMode by remember { mutableStateOf(false) }
+    val selectedMessageIds = remember { mutableStateListOf<Long>() }
 
     var installedModels by remember {
         mutableStateOf<List<InstalledModelCatalog.Entry>>(emptyList())
@@ -449,9 +462,22 @@ fun ChatGenerationScreen(
         generationPreferences.saveChatHistoryJson(messages.toChatHistoryJson())
     }
 
+    // G7: when (re)entering the screen, jump instantly to the latest message
+    // instead of animating, so restored history is already scrolled to the
+    // bottom. Subsequent appends during a session animate so new content is
+    // visibly revealed.
+    var initialScrollDone by remember { mutableStateOf(false) }
     LaunchedEffect(messages.size, isGenerating, visibleMessageCount) {
+        if (visibleMessages.isEmpty()) {
+            initialScrollDone = true
+            return@LaunchedEffect
+        }
         val lastIndex = visibleMessages.size + if (isGenerating) 0 else -1
-        if (lastIndex >= 0) {
+        if (lastIndex < 0) return@LaunchedEffect
+        if (!initialScrollDone) {
+            listState.scrollToItem(lastIndex)
+            initialScrollDone = true
+        } else {
             listState.animateScrollToItem(lastIndex)
         }
     }
@@ -692,15 +718,52 @@ fun ChatGenerationScreen(
             CenterAlignedTopAppBar(
                 title = {
                     Text(
-                        text = stringResource(
-                            if (isTopLevel) {
-                                R.string.studio_nav_create
-                            } else {
-                                R.string.chat_generation_title
-                            },
-                        ),
+                        text = if (selectionMode) {
+                            stringResource(R.string.selected_count, selectedMessageIds.size)
+                        } else {
+                            stringResource(
+                                if (isTopLevel) {
+                                    R.string.studio_nav_create
+                                } else {
+                                    R.string.chat_generation_title
+                                },
+                            )
+                        },
                         style = MaterialTheme.typography.titleLarge,
                     )
+                },
+                actions = {
+                    if (selectionMode) {
+                        IconButton(
+                            onClick = {
+                                // G8: only remove conversation entries; asset
+                                // files referenced by Image messages stay on disk.
+                                messages.removeAll { it.id in selectedMessageIds }
+                                selectedMessageIds.clear()
+                                selectionMode = false
+                                scope.launch {
+                                    generationPreferences.saveChatHistoryJson(
+                                        messages.toChatHistoryJson(),
+                                    )
+                                }
+                            },
+                            enabled = selectedMessageIds.isNotEmpty(),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = stringResource(R.string.delete_messages),
+                            )
+                        }
+                        IconButton(onClick = {
+                            selectedMessageIds.clear()
+                            selectionMode = false
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = stringResource(R.string.cancel),
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     if (!isTopLevel) {
@@ -769,7 +832,33 @@ fun ChatGenerationScreen(
                     key = { message -> "message_${message.id}" },
                     contentType = { message -> message::class },
                 ) { message ->
-                    ChatGenerationMessageItem(message)
+                    ChatGenerationMessageItem(
+                        message = message,
+                        isSelected = message.id in selectedMessageIds,
+                        onLongClick = {
+                            if (!selectionMode) {
+                                selectionMode = true
+                                selectedMessageIds.add(message.id)
+                            } else {
+                                if (message.id in selectedMessageIds) {
+                                    selectedMessageIds.remove(message.id)
+                                } else {
+                                    selectedMessageIds.add(message.id)
+                                }
+                                if (selectedMessageIds.isEmpty()) selectionMode = false
+                            }
+                        },
+                        onClick = {
+                            if (selectionMode) {
+                                if (message.id in selectedMessageIds) {
+                                    selectedMessageIds.remove(message.id)
+                                } else {
+                                    selectedMessageIds.add(message.id)
+                                }
+                                if (selectedMessageIds.isEmpty()) selectionMode = false
+                            }
+                        },
+                    )
                 }
                 if (isGenerating) {
                     item(key = "generating") {
@@ -1022,11 +1111,30 @@ private fun ChatGenerationEmptyState(
 private fun ChatGenerationMessageItem(
     message: ChatGenerationMessage,
     modifier: Modifier = Modifier,
+    isSelected: Boolean = false,
+    onLongClick: () -> Unit = {},
+    onClick: () -> Unit = {},
 ) {
+    val selectionModifier = modifier
+        .fillMaxWidth()
+        .combinedClickable(
+            onClick = onClick,
+            onLongClick = onLongClick,
+        )
+        .then(
+            if (isSelected) {
+                Modifier.background(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                    shape = RoundedCornerShape(12.dp),
+                ).padding(4.dp)
+            } else {
+                Modifier
+            },
+        )
     when (message) {
         is ChatGenerationMessage.User -> {
             Row(
-                modifier = modifier.fillMaxWidth(),
+                modifier = selectionModifier,
                 horizontalArrangement = Arrangement.End,
             ) {
                 Surface(
@@ -1052,7 +1160,7 @@ private fun ChatGenerationMessageItem(
                     ?: message.fallbackBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
             }
             Row(
-                modifier = modifier.fillMaxWidth(),
+                modifier = selectionModifier,
                 horizontalArrangement = Arrangement.Start,
             ) {
                 Card(modifier = Modifier.fillMaxWidth(0.9f)) {
@@ -1102,7 +1210,7 @@ private fun ChatGenerationMessageItem(
 
         is ChatGenerationMessage.Error -> {
             Row(
-                modifier = modifier.fillMaxWidth(),
+                modifier = selectionModifier,
                 horizontalArrangement = Arrangement.Start,
             ) {
                 Surface(
@@ -1558,6 +1666,9 @@ private fun ChatGenerationModelPicker(
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
+    // G6: the tag filter row is collapsed by default to keep the picker compact.
+    var tagsExpanded by rememberSaveable { mutableStateOf(false) }
+    var descriptionToShow by rememberSaveable { mutableStateOf<String?>(null) }
     val availableTags = remember(models) {
         ModelTagDerivation.collectTags(models.mapNotNull { it.model })
     }
@@ -1613,13 +1724,52 @@ private fun ChatGenerationModelPicker(
                             Text(stringResource(R.string.chat_generation_model_filter_all))
                         },
                     )
-                    availableTags.forEach { tag ->
+                    if (tagsExpanded) {
+                        availableTags.forEach { tag ->
+                            FilterChip(
+                                selected = selectedTag == tag,
+                                onClick = { selectedTag = if (selectedTag == tag) null else tag },
+                                label = { Text(tag) },
+                            )
+                        }
+                    } else if (selectedTag != null) {
                         FilterChip(
-                            selected = selectedTag == tag,
-                            onClick = { selectedTag = if (selectedTag == tag) null else tag },
-                            label = { Text(tag) },
+                            selected = true,
+                            onClick = { selectedTag = null },
+                            label = { Text(selectedTag!!) },
                         )
                     }
+                    AssistChip(
+                        onClick = { tagsExpanded = !tagsExpanded },
+                        label = {
+                            Text(
+                                stringResource(
+                                    if (tagsExpanded) {
+                                        R.string.collapse_tags
+                                    } else {
+                                        R.string.more_tags
+                                    },
+                                ),
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (tagsExpanded) {
+                                    Icons.Default.ExpandLess
+                                } else {
+                                    Icons.Default.ExpandMore
+                                },
+                                contentDescription = null,
+                                modifier = Modifier.size(AssistChipDefaults.IconSize),
+                            )
+                        },
+                        border = null,
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            leadingIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                    )
                 }
             }
             LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
@@ -1642,6 +1792,21 @@ private fun ChatGenerationModelPicker(
                                         color = MaterialTheme.colorScheme.primary,
                                     )
                                 }
+                                entry.model?.description?.takeIf { it.isNotBlank() }?.let {
+                                    TextButton(
+                                        onClick = { descriptionToShow = it },
+                                        contentPadding = PaddingValues(
+                                            horizontal = 4.dp,
+                                            vertical = 0.dp,
+                                        ),
+                                        modifier = Modifier.height(20.dp),
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.view_model_description),
+                                            style = MaterialTheme.typography.labelSmall,
+                                        )
+                                    }
+                                }
                             }
                         },
                         leadingContent = {
@@ -1655,6 +1820,24 @@ private fun ChatGenerationModelPicker(
                 }
             }
         }
+    }
+
+    if (descriptionToShow != null) {
+        AlertDialog(
+            onDismissRequest = { descriptionToShow = null },
+            title = { Text(stringResource(R.string.model_description_title)) },
+            text = {
+                Text(
+                    text = descriptionToShow!!,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { descriptionToShow = null }) {
+                    Text(stringResource(R.string.confirm))
+                }
+            },
+        )
     }
 }
 

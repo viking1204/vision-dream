@@ -597,6 +597,17 @@ private fun AppContent() {
                 bottomBar = { VisionStudioNavigationBar(navController) },
             )
         }
+        composable(Screen.Settings.route) {
+            // G3: the global bottom-nav Settings item opens the existing
+            // settings overlay over the model list, replacing the old
+            // in-screen settings button.
+            ModelListScreen(
+                navController = navController,
+                isTopLevel = true,
+                bottomBar = { VisionStudioNavigationBar(navController) },
+                openSettings = true,
+            )
+        }
         composable(
             route = Screen.ModelRun.route,
             arguments = listOf(
