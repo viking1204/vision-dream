@@ -40,6 +40,8 @@ class GenerationPreferences(private val context: Context) {
     private val CUSTOM_REPOSITORIES_KEY = stringPreferencesKey("custom_repositories")
     private val CREATION_DRAFT_KEY = stringPreferencesKey("creation_draft")
     private val CREATION_CHAT_HISTORY_KEY = stringPreferencesKey("creation_chat_history")
+    private val GENERATION_QUEUE_KEY = stringPreferencesKey("generation_queue")
+    private val GENERATION_QUEUE_SMART_SORT_KEY = booleanPreferencesKey("generation_queue_smart_sort")
 
     // UltraFix step/denoise are per-model (each model keeps its own repair
     // recipe), independent of that model's main generation params. Denoise is
@@ -194,6 +196,48 @@ class GenerationPreferences(private val context: Context) {
         context.dataStore.edit { preferences ->
             preferences.remove(CREATION_CHAT_HISTORY_KEY)
         }
+    }
+
+    /**
+     * Persists the pending generation queue as a JSON envelope.
+     *
+     * A DataStore string rather than a Room table: the queue is transient UI
+     * state, and keeping it out of the database means no new entity and no
+     * schema bump. An empty queue is cleared rather than stored.
+     */
+    suspend fun saveGenerationQueue(tasks: List<GenerationTask>) {
+        context.dataStore.edit { preferences ->
+            val raw = GenerationQueueCodec.toJson(tasks)
+            if (raw == "[]") {
+                preferences.remove(GENERATION_QUEUE_KEY)
+            } else {
+                preferences[GENERATION_QUEUE_KEY] = raw
+            }
+        }
+    }
+
+    suspend fun getGenerationQueue(): List<GenerationTask> = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { preferences ->
+            preferences[GENERATION_QUEUE_KEY]?.let { GenerationQueueCodec.fromJson(it) }.orEmpty()
+        }.first()
+
+    suspend fun clearGenerationQueue() {
+        context.dataStore.edit { preferences ->
+            preferences.remove(GENERATION_QUEUE_KEY)
+        }
+    }
+
+    fun observeQueueSmartSort(): Flow<Boolean> = context.dataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { it[GENERATION_QUEUE_SMART_SORT_KEY] ?: false }
+
+    suspend fun setQueueSmartSort(enabled: Boolean) {
+        context.dataStore.edit { it[GENERATION_QUEUE_SMART_SORT_KEY] = enabled }
     }
 
     suspend fun saveSelectedSource(source: String) {

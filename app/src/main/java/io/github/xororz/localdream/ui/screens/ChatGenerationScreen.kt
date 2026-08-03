@@ -104,6 +104,9 @@ import io.github.xororz.localdream.data.CreationDraft
 import io.github.xororz.localdream.data.GenerationDefaults
 import io.github.xororz.localdream.data.GenerationMode
 import io.github.xororz.localdream.data.GenerationPreferences
+import io.github.xororz.localdream.data.GenerationQueueSorter
+import io.github.xororz.localdream.data.GenerationTask
+import io.github.xororz.localdream.data.GenerationTaskStatus
 import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.data.ModelTagDerivation
 import io.github.xororz.localdream.navigation.Screen
@@ -115,10 +118,13 @@ import io.github.xororz.localdream.openai.InstalledModelCatalog
 import io.github.xororz.localdream.openai.NativeBackendClient
 import io.github.xororz.localdream.service.BackendService
 import io.github.xororz.localdream.service.NativeRuntimeAttestationRecorder
+import io.github.xororz.localdream.ui.components.GenerationQueueBar
+import io.github.xororz.localdream.ui.components.GenerationQueueSheet
 import io.github.xororz.localdream.ui.components.PromptPickerDialog
 import io.github.xororz.localdream.ui.components.RevealableImage
 import io.github.xororz.localdream.utils.ParamShare
 import io.github.xororz.localdream.utils.schedulerDisplayName
+import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineStart
@@ -151,6 +157,30 @@ private class PendingChatRequest(
     val settings: ChatGenerationSettings,
     val chatMode: ChatMode,
     val sourceImage: ByteArray?,
+    /** Persistable projection rendered by the queue panel. */
+    val task: GenerationTask,
+)
+
+/** Rebuilds an in-memory request from a queue entry restored out of DataStore. */
+private fun PendingChatRequest(
+    entry: InstalledModelCatalog.Entry,
+    task: GenerationTask,
+): PendingChatRequest = PendingChatRequest(
+    entry = entry,
+    prompt = task.prompt,
+    negativePrompt = task.negativePrompt,
+    settings = ChatGenerationSettings(
+        width = task.width,
+        height = task.height,
+        steps = task.steps,
+        cfg = task.cfg,
+        seed = task.seed,
+        scheduler = task.scheduler,
+    ),
+    chatMode = ChatMode.fromKey(task.mode),
+    // Source bytes are never persisted, so only TXT2IMG entries survive a restart.
+    sourceImage = null,
+    task = task.copy(status = GenerationTaskStatus.QUEUED),
 )
 
 /** Generation modes exposed by the chat composer. Keeps prompt and model
@@ -255,6 +285,14 @@ fun ChatGenerationScreen(
     var showPromptPicker by remember { mutableStateOf(false) }
     var isGenerating by remember { mutableStateOf(false) }
     val pendingQueue = remember { mutableStateListOf<PendingChatRequest>() }
+    var runningTask by remember { mutableStateOf<GenerationTask?>(null) }
+    var showQueuePanel by remember { mutableStateOf(false) }
+    var queueRestored by remember { mutableStateOf(false) }
+    // A queue restored from a previous process must not start on its own: the
+    // user opens the app, they do not expect the GPU to be busy immediately.
+    var queueAutoRun by remember { mutableStateOf(true) }
+    val smartSortEnabled by generationPreferences.observeQueueSmartSort()
+        .collectAsState(initial = false)
     var activeJob by remember { mutableStateOf<Job?>(null) }
     var nextMessageId by remember { mutableLongStateOf(0L) }
 
@@ -436,6 +474,7 @@ fun ChatGenerationScreen(
         val sourceImage = request.sourceImage
         val requestMode = request.chatMode
         isGenerating = true
+        runningTask = request.task.copy(status = GenerationTaskStatus.RUNNING)
         activeJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             val startedAt = SystemClock.elapsedRealtime()
             try {
@@ -513,6 +552,7 @@ fun ChatGenerationScreen(
             } finally {
                 InferenceArbiter.process.releaseFromApp()
                 isGenerating = false
+                runningTask = null
                 activeJob = null
             }
         }
@@ -545,17 +585,37 @@ fun ChatGenerationScreen(
             }
 
             else -> {
+                val resolvedNegativePrompt = negativePrompt.text.trim()
+                    .ifBlank { globalNegativePrompt }
                 val request = PendingChatRequest(
                     entry = entry,
                     prompt = submittedPrompt,
-                    negativePrompt = negativePrompt.text.trim().ifBlank { globalNegativePrompt },
+                    negativePrompt = resolvedNegativePrompt,
                     settings = settings,
                     chatMode = chatMode,
                     sourceImage = sourceImageBytes,
+                    task = GenerationTask(
+                        id = UUID.randomUUID().toString(),
+                        modelId = entry.id,
+                        modelName = entry.name,
+                        prompt = submittedPrompt,
+                        negativePrompt = resolvedNegativePrompt,
+                        mode = chatMode.key,
+                        width = settings.width,
+                        height = settings.height,
+                        steps = settings.steps,
+                        cfg = settings.cfg,
+                        seed = settings.seed,
+                        scheduler = settings.scheduler,
+                        createdAt = System.currentTimeMillis(),
+                    ),
                 )
                 messages += ChatGenerationMessage.User(nextId(), submittedPrompt)
                 prompt = TextFieldValue()
                 keyboardController?.hide()
+                // An explicit submit is also the consent to drain anything that
+                // was restored from a previous session.
+                queueAutoRun = true
                 // The composer stays editable during a run, so extra submissions
                 // queue up instead of being rejected by the inference arbiter.
                 if (isGenerating) {
@@ -567,10 +627,53 @@ fun ChatGenerationScreen(
         }
     }
 
+    // Restores the queue parked by a previous process. Runs once the catalog is
+    // known so every entry can be matched back to an installed model; orphaned
+    // tasks (model uninstalled) are dropped rather than replayed blindly.
+    LaunchedEffect(modelsLoading) {
+        if (queueRestored || modelsLoading) return@LaunchedEffect
+        val restored = generationPreferences.getGenerationQueue()
+        val revived = restored.mapNotNull { task ->
+            installedModels.firstOrNull { it.id == task.modelId }
+                ?.let { entry -> PendingChatRequest(entry = entry, task = task) }
+        }
+        if (revived.isNotEmpty()) {
+            // Only park when the user has not already started working: an
+            // in-session submit is explicit consent to keep draining.
+            if (!isGenerating && pendingQueue.isEmpty()) queueAutoRun = false
+            pendingQueue.addAll(revived)
+        }
+        queueRestored = true
+    }
+
+    // Smart sort clusters same-model runs so the native backend reloads weights
+    // once per model instead of once per task. Size is a stable relaunch key:
+    // reordering keeps it constant, so this cannot loop.
+    LaunchedEffect(smartSortEnabled, pendingQueue.size) {
+        if (!smartSortEnabled) return@LaunchedEffect
+        val current = pendingQueue.toList()
+        val clustered = GenerationQueueSorter.clusterByModel(current.map { it.task })
+        if (clustered.map { it.id } != current.map { it.task.id }) {
+            val byId = current.associateBy { it.task.id }
+            pendingQueue.clear()
+            pendingQueue.addAll(clustered.mapNotNull { byId[it.id] })
+        }
+    }
+
+    val queueTasks = listOfNotNull(runningTask) + pendingQueue.map { it.task }
+
+    // Persist on any membership or status change. Skipped until the restore has
+    // run, otherwise the first empty composition would wipe the stored queue.
+    val queueSignature = queueTasks.joinToString("|") { "${it.id}:${it.status.name}" }
+    LaunchedEffect(queueSignature, queueRestored) {
+        if (!queueRestored) return@LaunchedEffect
+        generationPreferences.saveGenerationQueue(queueTasks)
+    }
+
     // Drains the queue on the idle edge: exactly one request starts per
     // completed run, so the native backend never sees concurrent sessions.
-    LaunchedEffect(isGenerating, pendingQueue.size) {
-        if (!isGenerating && pendingQueue.isNotEmpty()) {
+    LaunchedEffect(isGenerating, pendingQueue.size, queueAutoRun) {
+        if (queueAutoRun && !isGenerating && pendingQueue.isNotEmpty()) {
             startGeneration(pendingQueue.removeAt(0))
         }
     }
@@ -686,6 +789,12 @@ fun ChatGenerationScreen(
                     }
                 }
             }
+            GenerationQueueBar(
+                pendingCount = pendingQueue.size,
+                runningModelName = runningTask?.modelName,
+                onOpenPanel = { showQueuePanel = true },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            )
             ChatGenerationComposer(
                 selectedModelName = selectedModel?.name,
                 selectedModelBackend = selectedModel?.model?.runOnCpu?.let { if (it) "CPU" else "NPU" },
@@ -757,6 +866,36 @@ fun ChatGenerationScreen(
                 showModelPicker = false
             },
             onDismiss = { showModelPicker = false },
+        )
+    }
+
+    if (showQueuePanel) {
+        GenerationQueueSheet(
+            tasks = queueTasks,
+            smartSortEnabled = smartSortEnabled,
+            onSmartSortChange = { enabled ->
+                scope.launch { generationPreferences.setQueueSmartSort(enabled) }
+            },
+            onRemove = { task ->
+                pendingQueue.removeAll { it.task.id == task.id }
+            },
+            onMove = { task, delta ->
+                val index = pendingQueue.indexOfFirst { it.task.id == task.id }
+                val target = index + delta
+                if (index >= 0 && target in pendingQueue.indices) {
+                    pendingQueue.add(target, pendingQueue.removeAt(index))
+                }
+            },
+            onClear = { pendingQueue.clear() },
+            onDismiss = { showQueuePanel = false },
+            onStartQueue = if (!queueAutoRun && pendingQueue.isNotEmpty()) {
+                {
+                    queueAutoRun = true
+                    showQueuePanel = false
+                }
+            } else {
+                null
+            },
         )
     }
 
