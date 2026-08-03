@@ -25,6 +25,11 @@ internal sealed interface ChatGenerationMessage {
         val width: Int,
         val height: Int,
         val seed: Long?,
+        val prompt: String = "",
+        val negativePrompt: String = "",
+        val steps: Int = 20,
+        val cfg: Float = 7f,
+        val scheduler: String = "dpm",
     ) : ChatGenerationMessage
 
     data class Error(
@@ -57,6 +62,11 @@ internal fun List<ChatGenerationMessage>.toChatHistoryJson(): String {
                         put("w", message.width)
                         put("h", message.height)
                         if (message.seed != null) put("s", message.seed) else put("s", JSONObject.NULL)
+                        put("pr", message.prompt)
+                        put("np", message.negativePrompt)
+                        put("st", message.steps)
+                        put("cf", message.cfg)
+                        put("sc", message.scheduler)
                     }
                 } else {
                     null
@@ -104,6 +114,11 @@ internal fun chatHistoryFromJson(raw: String): List<ChatGenerationMessage>? = ru
                             width = obj.optInt("w", 512),
                             height = obj.optInt("h", 512),
                             seed = if (!obj.isNull("s")) obj.getLong("s") else null,
+                            prompt = obj.optString("pr", ""),
+                            negativePrompt = obj.optString("np", ""),
+                            steps = obj.optInt("st", 20),
+                            cfg = obj.optDouble("cf", 7.0).toFloat(),
+                            scheduler = obj.optString("sc", "dpm"),
                         ),
                     )
                 }

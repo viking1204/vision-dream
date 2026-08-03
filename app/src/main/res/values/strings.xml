@@ -677,6 +677,7 @@
     <string name="chat_generation_invalid_settings">Check the width, height, steps, CFG, seed, and scheduler.</string>
     <string name="chat_generation_generated_image">Generated image</string>
     <string name="chat_generation_image_metadata">%1$s · seed %2$s</string>
+    <string name="chat_generation_view_details">View</string>
     <string name="chat_generation_random_seed">random</string>
     <string name="chat_generation_width">Width</string>
     <string name="chat_generation_height">Height</string>

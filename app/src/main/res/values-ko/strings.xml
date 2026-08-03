@@ -671,6 +671,7 @@
     <string name="chat_generation_invalid_settings">너비, 높이, 스텝, CFG, 시드 및 스케줄러 설정을 확인하세요.</string>
     <string name="chat_generation_generated_image">생성된 이미지</string>
     <string name="chat_generation_image_metadata">%1$s · 시드 %2$s</string>
+    <string name="chat_generation_view_details">보기</string>
     <string name="chat_generation_random_seed">랜덤</string>
     <string name="chat_generation_width">너비</string>
     <string name="chat_generation_height">높이</string>

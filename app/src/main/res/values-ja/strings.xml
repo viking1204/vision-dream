@@ -671,6 +671,7 @@
     <string name="chat_generation_invalid_settings">幅、高さ、ステップ、CFG、シード、スケジューラーを確認してください。</string>
     <string name="chat_generation_generated_image">生成画像</string>
     <string name="chat_generation_image_metadata">%1$s · シード %2$s</string>
+    <string name="chat_generation_view_details">表示</string>
     <string name="chat_generation_random_seed">ランダム</string>
     <string name="chat_generation_width">幅</string>
     <string name="chat_generation_height">高さ</string>

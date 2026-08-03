@@ -1,8 +1,11 @@
 package io.github.xororz.localdream.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -15,7 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -38,7 +41,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PhotoFilter
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TextFields
@@ -86,6 +88,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -122,6 +125,7 @@ import io.github.xororz.localdream.ui.components.GenerationQueueBar
 import io.github.xororz.localdream.ui.components.GenerationQueueSheet
 import io.github.xororz.localdream.ui.components.PromptPickerDialog
 import io.github.xororz.localdream.ui.components.RevealableImage
+import io.github.xororz.localdream.ui.components.ZoomableImageOverlay
 import io.github.xororz.localdream.utils.ParamShare
 import io.github.xororz.localdream.utils.schedulerDisplayName
 import java.util.UUID
@@ -541,6 +545,11 @@ fun ChatGenerationScreen(
                     width = dimensions.first,
                     height = dimensions.second,
                     seed = image.seed ?: settings.seed,
+                    prompt = submittedPrompt,
+                    negativePrompt = submittedNegativePrompt,
+                    steps = settings.steps,
+                    cfg = settings.cfg,
+                    scheduler = settings.scheduler,
                 )
             } catch (error: CancellationException) {
                 throw error
@@ -1036,6 +1045,12 @@ private fun ChatGenerationMessageItem(
         }
 
         is ChatGenerationMessage.Image -> {
+            var showLightbox by remember { mutableStateOf(false) }
+            var showDetails by remember { mutableStateOf(false) }
+            val lightboxBitmap = remember(message.id) {
+                message.file?.let { BitmapFactory.decodeFile(it.absolutePath) }
+                    ?: message.fallbackBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+            }
             Row(
                 modifier = modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Start,
@@ -1049,6 +1064,7 @@ private fun ChatGenerationMessageItem(
                                 message.width.toFloat() /
                                     message.height.coerceAtLeast(1).toFloat(),
                             ),
+                        onOpenPreview = { showLightbox = true },
                     ) {
                         AsyncImage(
                             model = message.file ?: message.fallbackBytes,
@@ -1059,18 +1075,28 @@ private fun ChatGenerationMessageItem(
                             contentScale = ContentScale.Fit,
                         )
                     }
-                    Text(
-                        text = stringResource(
-                            R.string.chat_generation_image_metadata,
-                            message.modelName,
-                            message.seed?.toString()
-                                ?: stringResource(R.string.chat_generation_random_seed),
-                        ),
-                        modifier = Modifier.padding(12.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
+                    OutlinedButton(
+                        onClick = { showDetails = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                    ) {
+                        Text(stringResource(R.string.chat_generation_view_details))
+                    }
                 }
+            }
+            if (showLightbox) {
+                ZoomableImageOverlay(
+                    bitmap = lightboxBitmap,
+                    onDismiss = { showLightbox = false },
+                    zoomInEnabled = true,
+                )
+            }
+            if (showDetails) {
+                ImageDetailsSheet(
+                    message = message,
+                    onDismiss = { showDetails = false },
+                )
             }
         }
 
@@ -1093,6 +1119,85 @@ private fun ChatGenerationMessageItem(
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ImageDetailsSheet(
+    message: ChatGenerationMessage.Image,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = message.modelName.ifBlank { stringResource(R.string.chat_generation_select_model) },
+                style = MaterialTheme.typography.titleMedium,
+            )
+            DetailRow(
+                label = stringResource(R.string.chat_generation_prompt),
+                value = message.prompt.ifBlank { "—" },
+            )
+            DetailRow(
+                label = stringResource(R.string.chat_generation_negative_prompt),
+                value = message.negativePrompt.ifBlank { "—" },
+            )
+            DetailRow(
+                label = stringResource(R.string.chat_generation_steps),
+                value = message.steps.toString(),
+            )
+            DetailRow(
+                label = stringResource(R.string.chat_generation_cfg),
+                value = message.cfg.toString(),
+            )
+            DetailRow(
+                label = stringResource(
+                    R.string.chat_generation_scheduler_value,
+                    schedulerDisplayName(message.scheduler),
+                ),
+                value = "",
+            )
+            DetailRow(
+                label = stringResource(R.string.chat_generation_seed),
+                value = message.seed?.toString()
+                    ?: stringResource(R.string.chat_generation_random_seed),
+            )
+            DetailRow(
+                label = stringResource(R.string.chat_generation_width),
+                value = "${message.width} × ${message.height}",
+            )
+        }
+    }
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    if (value.isEmpty()) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
@@ -1120,22 +1225,29 @@ private fun ChatGenerationComposer(
 ) {
     var negativePromptExpanded by rememberSaveable { mutableStateOf(false) }
     var showModeMenu by remember { mutableStateOf(false) }
-    var showMoreMenu by remember { mutableStateOf(false) }
+    var showSourcePreview by remember { mutableStateOf(false) }
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .imePadding(),
+            .navigationBarsPadding(),
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 12.dp, top = 4.dp, end = 12.dp, bottom = 10.dp),
+                .padding(start = 12.dp, top = 4.dp, end = 12.dp, bottom = 6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             if (sourceImageBytes != null) {
-                ComposerAttachmentChip(onClear = onClearSourceImage)
+                val sourceBitmap = remember(sourceImageBytes) {
+                    BitmapFactory.decodeByteArray(sourceImageBytes, 0, sourceImageBytes.size)
+                }
+                ComposerAttachmentChip(
+                    bitmap = sourceBitmap,
+                    onPreview = { showSourcePreview = true },
+                    onClear = onClearSourceImage,
+                )
             }
             // One rounded card holds the text and an icon-only action bar, the
             // way ChatGPT and WorkBuddy compose. Labels live in the popovers,
@@ -1152,6 +1264,8 @@ private fun ChatGenerationComposer(
                         placeholder = stringResource(R.string.chat_generation_prompt_placeholder),
                         imeAction = ImeAction.Send,
                         onSend = onSend,
+                        minLines = if (negativePromptExpanded) 2 else 3,
+                        maxLines = 10,
                     )
                     if (negativePromptExpanded) {
                         HorizontalDivider(
@@ -1166,12 +1280,14 @@ private fun ChatGenerationComposer(
                             ),
                             imeAction = ImeAction.Default,
                             onSend = null,
+                            minLines = 2,
+                            maxLines = 4,
                         )
                     }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 4.dp, end = 8.dp, bottom = 6.dp),
+                            .padding(start = 2.dp, end = 6.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box {
@@ -1225,75 +1341,28 @@ private fun ChatGenerationComposer(
                             enabled = hasModels,
                             active = selectedModelName != null,
                         )
-                        Box {
-                            ComposerIconButton(
-                                icon = Icons.Default.MoreHoriz,
-                                contentDescription = stringResource(
-                                    R.string.chat_generation_more_actions,
-                                ),
-                                onClick = { showMoreMenu = true },
-                                active = negativePromptExpanded,
-                            )
-                            DropdownMenu(
-                                expanded = showMoreMenu,
-                                onDismissRequest = { showMoreMenu = false },
-                            ) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            stringResource(
-                                                R.string.chat_generation_prompt_library,
-                                            ),
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.Bookmarks, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onPromptPickerClick()
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(stringResource(R.string.chat_generation_advanced))
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.Tune, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onAdvancedSettingsClick()
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            stringResource(
-                                                R.string.chat_generation_negative_prompt,
-                                            ),
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.Block, contentDescription = null)
-                                    },
-                                    trailingIcon = {
-                                        if (negativePromptExpanded ||
-                                            negativePrompt.text.isNotBlank()
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Check,
-                                                contentDescription = null,
-                                            )
-                                        }
-                                    },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        negativePromptExpanded = !negativePromptExpanded
-                                    },
-                                )
-                            }
-                        }
+                        ComposerIconButton(
+                            icon = Icons.Default.Bookmarks,
+                            contentDescription = stringResource(
+                                R.string.chat_generation_prompt_library,
+                            ),
+                            onClick = onPromptPickerClick,
+                        )
+                        ComposerIconButton(
+                            icon = Icons.Default.Tune,
+                            contentDescription = stringResource(
+                                R.string.chat_generation_advanced,
+                            ),
+                            onClick = onAdvancedSettingsClick,
+                        )
+                        ComposerIconButton(
+                            icon = Icons.Default.Block,
+                            contentDescription = stringResource(
+                                R.string.chat_generation_negative_prompt,
+                            ),
+                            onClick = { negativePromptExpanded = !negativePromptExpanded },
+                            active = negativePromptExpanded || negativePrompt.text.isNotBlank(),
+                        )
                         Spacer(modifier = Modifier.weight(1f))
                         if (pendingCount > 0) {
                             Surface(
@@ -1351,6 +1420,17 @@ private fun ChatGenerationComposer(
             )
         }
     }
+
+    if (showSourcePreview) {
+        val previewBitmap = remember(sourceImageBytes) {
+            sourceImageBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+        }
+        ZoomableImageOverlay(
+            bitmap = previewBitmap,
+            onDismiss = { showSourcePreview = false },
+            zoomInEnabled = true,
+        )
+    }
 }
 
 /** Borderless multi-line field used inside the composer card. */
@@ -1361,6 +1441,8 @@ private fun ComposerTextField(
     placeholder: String,
     imeAction: ImeAction,
     onSend: (() -> Unit)?,
+    minLines: Int = 1,
+    maxLines: Int = 5,
 ) {
     TextField(
         value = value,
@@ -1373,8 +1455,8 @@ private fun ComposerTextField(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
-        minLines = 1,
-        maxLines = 5,
+        minLines = minLines,
+        maxLines = maxLines,
         colors = TextFieldDefaults.colors(
             focusedContainerColor = Color.Transparent,
             unfocusedContainerColor = Color.Transparent,
@@ -1400,7 +1482,7 @@ private fun ComposerIconButton(
     enabled: Boolean = true,
     active: Boolean = false,
 ) {
-    IconButton(onClick = onClick, enabled = enabled) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(40.dp)) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
@@ -1416,21 +1498,39 @@ private fun ComposerIconButton(
 
 /** Compact chip announcing the attached source image with a clear action. */
 @Composable
-private fun ComposerAttachmentChip(onClear: () -> Unit) {
+private fun ComposerAttachmentChip(
+    bitmap: Bitmap?,
+    onPreview: () -> Unit,
+    onClear: () -> Unit,
+) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.secondaryContainer,
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
     ) {
         Row(
-            modifier = Modifier.padding(start = 12.dp, end = 4.dp),
+            modifier = Modifier.padding(start = 8.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = Icons.Default.Image,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-            )
+            if (bitmap != null) {
+                IconButton(
+                    onClick = onPreview,
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = stringResource(R.string.chat_generation_source_image_selected),
+                        modifier = Modifier.size(32.dp),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
+            } else {
+                Icon(
+                    imageVector = Icons.Default.Image,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
             Text(
                 text = stringResource(R.string.chat_generation_source_image_selected),
                 modifier = Modifier.padding(start = 6.dp),

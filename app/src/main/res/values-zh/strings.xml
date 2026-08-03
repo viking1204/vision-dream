@@ -671,6 +671,7 @@
     <string name="chat_generation_invalid_settings">请检查宽高、步数、CFG、种子和调度器设置。</string>
     <string name="chat_generation_generated_image">生成的图片</string>
     <string name="chat_generation_image_metadata">%1$s · 种子 %2$s</string>
+    <string name="chat_generation_view_details">查看</string>
     <string name="chat_generation_random_seed">随机</string>
     <string name="chat_generation_width">宽度</string>
     <string name="chat_generation_height">高度</string>
