@@ -638,6 +638,9 @@
     <string name="chat_generation_load_models_failed">模型加载失败：%1$s</string>
     <string name="chat_generation_no_models">没有可用的已下载生图模型。</string>
     <string name="chat_generation_select_model">选择模型</string>
+    <string name="chat_generation_models_selected">%1$d 个模型</string>
+    <string name="chat_generation_select_at_least_one_model">请至少选择一个模型</string>
+    <string name="chat_generation_clear_selection">清除</string>
     <string name="chat_generation_prompt">提示词</string>
     <string name="chat_generation_negative_prompt">负面提示词</string>
     <string name="negative_prompt_applied">负面提示词 · 已应用</string>

@@ -644,6 +644,9 @@
     <string name="chat_generation_load_models_failed">Could not load models: %1$s</string>
     <string name="chat_generation_no_models">No compatible downloaded generation model is available.</string>
     <string name="chat_generation_select_model">Select model</string>
+    <string name="chat_generation_models_selected">%1$d models</string>
+    <string name="chat_generation_select_at_least_one_model">Select at least one model</string>
+    <string name="chat_generation_clear_selection">Clear</string>
     <string name="chat_generation_prompt">Prompt</string>
     <string name="chat_generation_negative_prompt">Negative prompt</string>
     <string name="negative_prompt_applied">Negative prompt · Applied</string>

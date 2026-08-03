@@ -638,6 +638,9 @@
     <string name="chat_generation_load_models_failed">모델을 불러오지 못했습니다: %1$s</string>
     <string name="chat_generation_no_models">사용 가능한 다운로드 완료 이미지 생성 모델이 없습니다.</string>
     <string name="chat_generation_select_model">모델 선택</string>
+    <string name="chat_generation_models_selected">모델 %1$d개</string>
+    <string name="chat_generation_select_at_least_one_model">모델을 하나 이상 선택하세요</string>
+    <string name="chat_generation_clear_selection">지우기</string>
     <string name="chat_generation_prompt">프롬프트</string>
     <string name="chat_generation_negative_prompt">네거티브 프롬프트</string>
     <string name="negative_prompt_applied">네거티브 프롬프트 · 적용됨</string>

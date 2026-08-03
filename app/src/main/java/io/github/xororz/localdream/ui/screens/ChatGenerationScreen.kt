@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -58,6 +59,7 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -72,7 +74,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -282,7 +283,12 @@ fun ChatGenerationScreen(
     }
     var modelsLoading by remember { mutableStateOf(true) }
     var modelLoadError by remember { mutableStateOf<String?>(null) }
-    var selectedModelId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedModelIdsCsv by rememberSaveable { mutableStateOf("") }
+    val selectedModelIds = if (selectedModelIdsCsv.isBlank()) {
+        emptySet<String>()
+    } else {
+        selectedModelIdsCsv.split(',').toSet()
+    }
     var prompt by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue())
     }
@@ -345,11 +351,19 @@ fun ChatGenerationScreen(
         }
     }
 
-    val selectedModel = installedModels.firstOrNull { it.id == selectedModelId }
+    val selectedModels = installedModels.filter { it.id in selectedModelIds }
+    val selectedModelName: String? = when {
+        selectedModels.isEmpty() -> null
+        selectedModels.size == 1 -> selectedModels.first().name
+        else -> stringResource(R.string.chat_generation_models_selected, selectedModels.size)
+    }
+    val selectedModelBackend: String? = selectedModels.firstOrNull()
+        ?.model?.runOnCpu?.let { if (it) "CPU" else "NPU" }
     val busyMessage = stringResource(R.string.chat_generation_busy)
     val genericError = stringResource(R.string.chat_generation_error)
     val invalidSettings = stringResource(R.string.chat_generation_invalid_settings)
     val sourceImageRequired = stringResource(R.string.chat_generation_source_image_required)
+    val selectModelRequired = stringResource(R.string.chat_generation_select_at_least_one_model)
 
     fun nextId(): Long {
         nextMessageId += 1L
@@ -376,11 +390,11 @@ fun ChatGenerationScreen(
             catalog.all().filter { it.kind == InstalledModelCatalog.Kind.GENERATION }
         }.onSuccess { entries ->
             installedModels = entries
-            val preferred = entries.firstOrNull { it.id == selectedModelId }
+            val preferred = entries.firstOrNull { it.id in selectedModelIds }
                 ?: entries.firstOrNull { it.id == BackendService.servingModelId.value }
                 ?: entries.firstOrNull()
-            if (preferred != null && preferred.id != selectedModelId) {
-                selectedModelId = preferred.id
+            if (preferred != null && preferred.id !in selectedModelIds) {
+                selectedModelIdsCsv = preferred.id
                 applyModelDefaults(preferred)
             }
         }.onFailure { error ->
@@ -407,7 +421,7 @@ fun ChatGenerationScreen(
             cfgText = draft.cfg.toString()
             seedText = draft.seed
             scheduler = draft.scheduler
-            draft.modelId?.let { id -> selectedModelId = id }
+            draft.modelId?.let { id -> selectedModelIdsCsv = id }
         }
     }
 
@@ -427,7 +441,7 @@ fun ChatGenerationScreen(
     LaunchedEffect(
         prompt.text,
         negativePrompt.text,
-        selectedModelId,
+        selectedModelIds,
         chatMode,
         widthText,
         heightText,
@@ -441,7 +455,7 @@ fun ChatGenerationScreen(
             CreationDraft(
                 prompt = prompt.text,
                 negativePrompt = negativePrompt.text,
-                modelId = selectedModelId,
+                modelId = selectedModelIds.firstOrNull(),
                 mode = chatMode.key,
                 width = widthText.toIntOrNull() ?: 512,
                 height = heightText.toIntOrNull() ?: 512,
@@ -593,8 +607,8 @@ fun ChatGenerationScreen(
         }
     }
 
-    val submitGeneration = {
-        val entry = selectedModel
+    val submitGeneration: () -> Unit = {
+        val selectedEntries = installedModels.filter { it.id in selectedModelIds }
         val settings = parseChatGenerationSettings(
             width = widthText,
             height = heightText,
@@ -605,8 +619,8 @@ fun ChatGenerationScreen(
         )
         val submittedPrompt = prompt.text.trim()
         when {
-            entry == null -> {
-                messages += ChatGenerationMessage.Error(nextId(), genericError)
+            selectedEntries.isEmpty() -> {
+                messages += ChatGenerationMessage.Error(nextId(), selectModelRequired)
             }
 
             submittedPrompt.isEmpty() -> Unit
@@ -622,29 +636,33 @@ fun ChatGenerationScreen(
             else -> {
                 val resolvedNegativePrompt = negativePrompt.text.trim()
                     .ifBlank { globalNegativePrompt }
-                val request = PendingChatRequest(
-                    entry = entry,
-                    prompt = submittedPrompt,
-                    negativePrompt = resolvedNegativePrompt,
-                    settings = settings,
-                    chatMode = chatMode,
-                    sourceImage = sourceImageBytes,
-                    task = GenerationTask(
-                        id = UUID.randomUUID().toString(),
-                        modelId = entry.id,
-                        modelName = entry.name,
+                // One prompt splits into N per-model tasks; each becomes its own
+                // generation and appends its own image to the conversation.
+                val requests = selectedEntries.map { entry ->
+                    PendingChatRequest(
+                        entry = entry,
                         prompt = submittedPrompt,
                         negativePrompt = resolvedNegativePrompt,
-                        mode = chatMode.key,
-                        width = settings.width,
-                        height = settings.height,
-                        steps = settings.steps,
-                        cfg = settings.cfg,
-                        seed = settings.seed,
-                        scheduler = settings.scheduler,
-                        createdAt = System.currentTimeMillis(),
-                    ),
-                )
+                        settings = settings,
+                        chatMode = chatMode,
+                        sourceImage = sourceImageBytes,
+                        task = GenerationTask(
+                            id = UUID.randomUUID().toString(),
+                            modelId = entry.id,
+                            modelName = entry.name,
+                            prompt = submittedPrompt,
+                            negativePrompt = resolvedNegativePrompt,
+                            mode = chatMode.key,
+                            width = settings.width,
+                            height = settings.height,
+                            steps = settings.steps,
+                            cfg = settings.cfg,
+                            seed = settings.seed,
+                            scheduler = settings.scheduler,
+                            createdAt = System.currentTimeMillis(),
+                        ),
+                    )
+                }
                 messages += ChatGenerationMessage.User(nextId(), submittedPrompt)
                 prompt = TextFieldValue()
                 keyboardController?.hide()
@@ -653,11 +671,8 @@ fun ChatGenerationScreen(
                 queueAutoRun = true
                 // The composer stays editable during a run, so extra submissions
                 // queue up instead of being rejected by the inference arbiter.
-                if (isGenerating) {
-                    pendingQueue += request
-                } else {
-                    startGeneration(request)
-                }
+                // All per-model tasks drain sequentially through the arbiter.
+                pendingQueue.addAll(requests)
             }
         }
     }
@@ -808,7 +823,7 @@ fun ChatGenerationScreen(
                                 modelsLoading = modelsLoading,
                                 modelLoadError = modelLoadError,
                                 hasModels = installedModels.isNotEmpty(),
-                                selectedModelName = selectedModel?.name,
+                                selectedModelName = selectedModelName,
                             )
                         }
                     }
@@ -894,13 +909,14 @@ fun ChatGenerationScreen(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
             )
             ChatGenerationComposer(
-                selectedModelName = selectedModel?.name,
-                selectedModelBackend = selectedModel?.model?.runOnCpu?.let { if (it) "CPU" else "NPU" },
+                selectedModelName = selectedModelName,
+                selectedModelBackend = selectedModelBackend,
                 prompt = prompt,
                 negativePrompt = negativePrompt,
                 isGenerating = isGenerating,
                 pendingCount = pendingQueue.size,
                 hasModels = installedModels.isNotEmpty(),
+                selectedModelIds = selectedModelIds,
                 chatMode = chatMode,
                 onModeChange = { chatMode = it },
                 sourceImageBytes = sourceImageBytes,
@@ -957,12 +973,23 @@ fun ChatGenerationScreen(
     if (showModelPicker) {
         ChatGenerationModelPicker(
             models = installedModels,
-            selectedModelId = selectedModelId,
-            onSelect = { entry ->
-                selectedModelId = entry.id
-                applyModelDefaults(entry)
+            selectedModelIds = selectedModelIds,
+            onToggle = { entry ->
+                val next = if (entry.id in selectedModelIds) {
+                    selectedModelIds - entry.id
+                } else {
+                    selectedModelIds + entry.id
+                }
+                selectedModelIdsCsv = next.joinToString(",")
+            },
+            onConfirm = {
+                if (selectedModelIds.size == 1) {
+                    installedModels.firstOrNull { it.id in selectedModelIds }
+                        ?.let { applyModelDefaults(it) }
+                }
                 showModelPicker = false
             },
+            onClearAll = { selectedModelIdsCsv = "" },
             onDismiss = { showModelPicker = false },
         )
     }
@@ -1018,7 +1045,7 @@ fun ChatGenerationScreen(
     if (showPromptPicker) {
         PromptPickerDialog(
             onDismissRequest = { showPromptPicker = false },
-            modelId = selectedModelId,
+            modelId = selectedModelIds.firstOrNull(),
             onNavigateToCreate = { navController.navigate(Screen.PromptManager.route) },
             onTemplateSelected = { template ->
                 prompt = TextFieldValue(
@@ -1318,6 +1345,7 @@ private fun ChatGenerationComposer(
     isGenerating: Boolean,
     pendingCount: Int,
     hasModels: Boolean,
+    selectedModelIds: Set<String>,
     chatMode: ChatMode,
     onModeChange: (ChatMode) -> Unit,
     sourceImageBytes: ByteArray?,
@@ -1338,7 +1366,8 @@ private fun ChatGenerationComposer(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            .imePadding(),
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
     ) {
         Column(
@@ -1494,7 +1523,7 @@ private fun ChatGenerationComposer(
                         }
                         FilledIconButton(
                             onClick = onSend,
-                            enabled = prompt.text.isNotBlank() && hasModels,
+                            enabled = prompt.text.isNotBlank() && selectedModelIds.isNotEmpty(),
                             modifier = Modifier.size(44.dp),
                         ) {
                             Icon(
@@ -1660,8 +1689,10 @@ private fun ComposerAttachmentChip(
 @Composable
 private fun ChatGenerationModelPicker(
     models: List<InstalledModelCatalog.Entry>,
-    selectedModelId: String?,
-    onSelect: (InstalledModelCatalog.Entry) -> Unit,
+    selectedModelIds: Set<String>,
+    onToggle: (InstalledModelCatalog.Entry) -> Unit,
+    onConfirm: () -> Unit,
+    onClearAll: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -1692,10 +1723,25 @@ private fun ChatGenerationModelPicker(
                 .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = stringResource(R.string.chat_generation_select_model),
-                style = MaterialTheme.typography.titleMedium,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.chat_generation_select_model),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                if (selectedModelIds.isNotEmpty()) {
+                    TextButton(onClick = onClearAll) {
+                        Text(stringResource(R.string.chat_generation_clear_selection))
+                    }
+                }
+                TextButton(onClick = onConfirm) {
+                    Text(stringResource(R.string.chat_generation_done))
+                }
+            }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -1810,12 +1856,12 @@ private fun ChatGenerationModelPicker(
                             }
                         },
                         leadingContent = {
-                            RadioButton(
-                                selected = entry.id == selectedModelId,
-                                onClick = null,
+                            Checkbox(
+                                checked = entry.id in selectedModelIds,
+                                onCheckedChange = null,
                             )
                         },
-                        modifier = Modifier.clickable { onSelect(entry) },
+                        modifier = Modifier.clickable { onToggle(entry) },
                     )
                 }
             }

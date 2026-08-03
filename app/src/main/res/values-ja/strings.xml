@@ -638,6 +638,9 @@
     <string name="chat_generation_load_models_failed">モデルを読み込めませんでした：%1$s</string>
     <string name="chat_generation_no_models">利用可能なダウンロード済み画像生成モデルがありません。</string>
     <string name="chat_generation_select_model">モデルを選択</string>
+    <string name="chat_generation_models_selected">%1$d 個のモデル</string>
+    <string name="chat_generation_select_at_least_one_model">少なくとも1つのモデルを選択してください</string>
+    <string name="chat_generation_clear_selection">クリア</string>
     <string name="chat_generation_prompt">プロンプト</string>
     <string name="chat_generation_negative_prompt">ネガティブプロンプト</string>
     <string name="negative_prompt_applied">ネガティブプロンプト · 適用中</string>
