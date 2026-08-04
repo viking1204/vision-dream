@@ -690,7 +690,9 @@
     <string name="asset_layout_waterfall">瀑布流</string>
     <string name="asset_layout_list">列表</string>
     <string name="asset_layout_grid">九宫格</string>
-    <string name="asset_show_all">显示 NSFW 内容</string>
+    <string name="collapse_nav">收起底部栏</string>
+    <string name="expand_nav">展开底部栏</string>
+    <string name="asset_nsfw_toggle">切换 NSFW 内容显示</string>
     <string name="asset_sensitive_content_desc">显示资产生成中的 NSFW（成人）内容</string>
     <string name="asset_go_create">去创作</string>
     <string name="asset_zoom_in">放大</string>

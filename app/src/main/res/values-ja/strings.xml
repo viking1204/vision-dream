@@ -690,7 +690,9 @@
     <string name="asset_layout_waterfall">ウォーターフォール</string>
     <string name="asset_layout_list">リスト</string>
     <string name="asset_layout_grid">3列グリッド</string>
-    <string name="asset_show_all">NSFW コンテンツを表示</string>
+    <string name="collapse_nav">ナビゲーションバーを折りたたむ</string>
+    <string name="expand_nav">ナビゲーションバーを展開</string>
+    <string name="asset_nsfw_toggle">NSFW コンテンツの表示を切り替え</string>
     <string name="asset_sensitive_content_desc">アセット一覧で NSFW（成人）コンテンツを表示します</string>
     <string name="asset_go_create">作成へ</string>
     <string name="asset_zoom_in">拡大</string>

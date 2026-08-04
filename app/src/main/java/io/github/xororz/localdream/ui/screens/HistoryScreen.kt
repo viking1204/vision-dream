@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -21,8 +21,9 @@ import androidx.compose.material.icons.automirrored.filled.ViewQuilt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,7 +53,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -272,27 +272,32 @@ fun HistoryScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .toggleable(
-                            value = revealAll,
-                            role = Role.Checkbox,
-                            onValueChange = {
-                                revealAll = it
-                                revealRevision++
-                                itemRevealOverrides.clear()
-                            },
-                        )
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Checkbox(
-                        checked = revealAll,
-                        onCheckedChange = null,
-                    )
-                    Text(
-                        text = stringResource(R.string.asset_show_all),
-                        style = MaterialTheme.typography.labelLarge,
-                    )
+                    IconButton(
+                        onClick = {
+                            revealAll = !revealAll
+                            revealRevision++
+                            itemRevealOverrides.clear()
+                        },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (revealAll) {
+                                Icons.Default.Visibility
+                            } else {
+                                Icons.Default.VisibilityOff
+                            },
+                            contentDescription = stringResource(R.string.asset_nsfw_toggle),
+                            tint = if (revealAll) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
                         text = stringResource(R.string.asset_count, totalCount),

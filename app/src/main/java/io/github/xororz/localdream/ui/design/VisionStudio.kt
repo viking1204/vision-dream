@@ -1,18 +1,26 @@
 package io.github.xororz.localdream.ui.design
 
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -22,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -57,44 +66,95 @@ val StudioCoral = Color(0xFFFF8A7A)
 val StudioSuccess = Color(0xFF63D9A4)
 
 /**
+ * Shared collapse state for the bottom navigation bar. Hoisted to a process
+ * level singleton so the collapsed state survives top-level screen switches
+ * (each top-level screen renders its own Scaffold bottomBar).
+ */
+object NavigationBarState {
+    val collapsed = mutableStateOf(false)
+}
+
+/**
  * Stable product-level navigation shared by each top-level screen scaffold.
  */
 @Composable
 fun VisionStudioNavigationBar(navController: NavController) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
+    val collapsed by NavigationBarState.collapsed
 
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 0.dp,
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.BottomCenter,
     ) {
-        StudioDestinations.forEach { destination ->
-            val selected = currentDestination?.hierarchy?.any {
-                it.route == destination.route
-            } == true
-            NavigationBarItem(
-                selected = selected,
-                onClick = { navController.navigateTopLevel(destination.route) },
-                icon = {
+        AnimatedVisibility(visible = !collapsed) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                IconButton(
+                    onClick = { NavigationBarState.collapsed.value = true },
+                    modifier = Modifier.size(28.dp),
+                ) {
                     Icon(
-                        imageVector = destination.icon,
-                        contentDescription = null,
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = stringResource(R.string.collapse_nav),
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                },
-                label = {
-                    Text(
-                        text = stringResource(destination.labelRes),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    selectedTextColor = MaterialTheme.colorScheme.onSurface,
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-            )
+                }
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 0.dp,
+                ) {
+                    StudioDestinations.forEach { destination ->
+                        val selected = currentDestination?.hierarchy?.any {
+                            it.route == destination.route
+                        } == true
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = { navController.navigateTopLevel(destination.route) },
+                            icon = {
+                                Icon(
+                                    imageVector = destination.icon,
+                                    contentDescription = null,
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = stringResource(destination.labelRes),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+        AnimatedVisibility(visible = collapsed) {
+            Surface(
+                onClick = { NavigationBarState.collapsed.value = false },
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                tonalElevation = 2.dp,
+                modifier = Modifier.padding(bottom = 12.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowUp,
+                    contentDescription = stringResource(R.string.expand_nav),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .padding(10.dp),
+                )
+            }
         }
     }
 }

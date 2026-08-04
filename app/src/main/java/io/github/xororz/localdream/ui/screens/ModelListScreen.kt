@@ -1430,10 +1430,6 @@ fun ModelListScreen(
                     .padding(bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Text(
-                    text = stringResource(R.string.search_local_models),
-                    style = MaterialTheme.typography.titleLarge,
-                )
                 OutlinedTextField(
                     value = localSearchQuery,
                     onValueChange = { localSearchQuery = it },

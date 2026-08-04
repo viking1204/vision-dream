@@ -690,7 +690,9 @@
     <string name="asset_layout_waterfall">워터폴</string>
     <string name="asset_layout_list">목록</string>
     <string name="asset_layout_grid">3열 그리드</string>
-    <string name="asset_show_all">NSFW 콘텐츠 표시</string>
+    <string name="collapse_nav">하단 바 접기</string>
+    <string name="expand_nav">하단 바 펼치기</string>
+    <string name="asset_nsfw_toggle">NSFW 콘텐츠 표시 전환</string>
     <string name="asset_sensitive_content_desc">자산 목록에서 NSFW(성인) 콘텐츠 표시</string>
     <string name="asset_go_create">생성하러 가기</string>
     <string name="asset_zoom_in">확대</string>

@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.outlined.ClearAll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -1723,25 +1724,6 @@ private fun ChatGenerationModelPicker(
                 .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.chat_generation_select_model),
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f),
-                )
-                if (selectedModelIds.isNotEmpty()) {
-                    TextButton(onClick = onClearAll) {
-                        Text(stringResource(R.string.chat_generation_clear_selection))
-                    }
-                }
-                TextButton(onClick = onConfirm) {
-                    Text(stringResource(R.string.chat_generation_done))
-                }
-            }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -1752,6 +1734,41 @@ private fun ChatGenerationModelPicker(
                         imageVector = Icons.Default.Search,
                         contentDescription = null,
                     )
+                },
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (selectedModelIds.isNotEmpty()) {
+                            IconButton(
+                                onClick = onClearAll,
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.ClearAll,
+                                    contentDescription = stringResource(R.string.chat_generation_clear_selection),
+                                )
+                            }
+                        }
+                        if (query.isNotEmpty()) {
+                            IconButton(
+                                onClick = { query = "" },
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.clear),
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = onConfirm,
+                            modifier = Modifier.size(32.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = stringResource(R.string.chat_generation_done),
+                            )
+                        }
+                    }
                 },
                 singleLine = true,
                 shape = MaterialTheme.shapes.large,
@@ -1821,7 +1838,7 @@ private fun ChatGenerationModelPicker(
                     )
                 }
             }
-            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+            LazyColumn(modifier = Modifier.heightIn(max = 600.dp)) {
                 items(filtered, key = { it.id }) { entry ->
                     val tags = entry.model?.let { ModelTagDerivation.deriveTags(it) }.orEmpty()
                     ListItem(
