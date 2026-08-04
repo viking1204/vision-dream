@@ -538,7 +538,6 @@ class ModelRepository private constructor(private val context: Context) {
                 add(createIllustriousV16Dmd2Model())
                 add(createCyberRealisticV10Model())
                 add(createCyberRealisticV10Dmd2Model())
-                add(createNovaMatureXlV40Model())
             }
             add(createAnythingV5Model())
             add(createAnythingV5ModelCPU())
@@ -550,16 +549,6 @@ class ModelRepository private constructor(private val context: Context) {
             add(createCuteYukiMixModelCPU())
             add(createChilloutMixModelCPU())
             add(createChilloutMixModel())
-            // Hugging Face QNN (Qualcomm NPU) SD 1.5 models
-            add(createDreamShaperV8Model())
-            add(createMeinaMixV12Model())
-            add(createMajicmixRealisticV7Model())
-            add(createCounterfeitV30Model())
-            add(createRealisticVisionHyperModel())
-            add(createSweetMixV22FlatModel())
-            add(createNeverEndingDreamV122Model())
-            add(createDarkSushiV4Model())
-            add(createSd15QnnModel())
         }
 
         return customModels + predefinedModels.map { applyConfigDefaults(it) }
@@ -908,252 +897,6 @@ class ModelRepository private constructor(private val context: Context) {
         )
     }
 
-    // ---- Qualcomm NPU (QNN) models from Hugging Face ----
-    // All use runOnCpu = false and pull prebuilt .zip weights that ship the
-    // clip/unet/vae/tokenizer layout the QNN backend expects. The chipset
-    // suffix (min / 8gen1 / 8gen2) is resolved per-device; "min" is the
-    // universal fallback guaranteed by every repo below.
-
-    private fun createDreamShaperV8Model(): Model {
-        val id = "dreamshaper_v8"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/DreamShaperV8_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-        return Model(
-            id = id,
-            name = "DreamShaper V8",
-            description = context.getString(R.string.dreamshaper_v8_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, vibrant, detailed,",
-                negativePrompt = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, cropped, worst quality, low quality, blurry,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createMeinaMixV12Model(): Model {
-        val id = "meinamix_v12"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/MeinaMixV12_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-        return Model(
-            id = id,
-            name = "MeinaMix V12",
-            description = context.getString(R.string.meinamix_v12_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, cute, anime,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, poorly drawn face, worst quality, low quality, blurry,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createMajicmixRealisticV7Model(): Model {
-        val id = "majicmix_realistic_v7"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/MajicmixRealisticV7_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-        return Model(
-            id = id,
-            name = "Majicmix Realistic V7",
-            description = context.getString(R.string.majicmix_realistic_v7_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "RAW photo, masterpiece, best quality, realistic, 1girl, portrait,",
-                negativePrompt = "paintings, cartoon, anime, lowres, bad anatomy, bad hands, text, error, worst quality, low quality, blurry,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createCounterfeitV30Model(): Model {
-        val id = "counterfeit_v30"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/counterfeitV30_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-        return Model(
-            id = id,
-            name = "Counterfeit V3.0",
-            description = context.getString(R.string.counterfeit_v30_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, anime, detailed,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, poorly drawn face, worst quality, low quality, blurry,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createRealisticVisionHyperModel(): Model {
-        val id = "realisticvision_hyper"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/RealisticVisionHyper_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-        return Model(
-            id = id,
-            name = "RealisticVision Hyper",
-            description = context.getString(R.string.realisticvision_hyper_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "photorealistic, masterpiece, best quality, 8k, 1woman, portrait,",
-                negativePrompt = "cartoon, anime, illustration, lowres, bad anatomy, worst quality, low quality, blurry,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createSweetMixV22FlatModel(): Model {
-        val id = "sweetmix_v22_flat"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/SweetMixV22Flat_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-        return Model(
-            id = id,
-            name = "SweetMix V22 Flat",
-            description = context.getString(R.string.sweetmix_v22_flat_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, cute, sweet, anime,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, worst quality, low quality, blurry,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createNeverEndingDreamV122Model(): Model {
-        val id = "neverendingdream_v122"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/NeverEndingDreamV122_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-        return Model(
-            id = id,
-            name = "NeverEndingDream V122",
-            description = context.getString(R.string.neverendingdream_v122_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, semi-realistic, anime,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, worst quality, low quality, blurry,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createDarkSushiV4Model(): Model {
-        val id = "darksushi_v4"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/DarkSushiV4_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-        return Model(
-            id = id,
-            name = "DarkSushi V4",
-            description = context.getString(R.string.darksushi_v4_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, anime, detailed,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, worst quality, low quality, blurry,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createSd15QnnModel(): Model {
-        // Community QNN build of the base Stable Diffusion 1.5 checkpoint.
-        val id = "sd15_qnn"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "Mr-J-369/StableDiffusion-SD1.5-qnn2.28/resolve/main/StableDiffusion-qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-        return Model(
-            id = id,
-            name = "Stable Diffusion 1.5 (QNN)",
-            description = context.getString(R.string.sd15_qnn_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "a highly detailed photo of a cat,",
-                negativePrompt = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, cropped, worst quality, low quality, blurry,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
-    private fun createNovaMatureXlV40Model(): Model {
-        // Community SDXL QNN build — only offered on SDXL-capable SoCs.
-        val id = "novamaturexl_v40"
-        val fileUri = "YuuiKurata/novaMatureXL_qnn2.28/resolve/main/novaMatureXL_v40_qnn2.28_8gen3.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        return Model(
-            id = id,
-            name = "novaMatureXL v40",
-            description = context.getString(R.string.novamaturexl_v40_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            generationSize = 1024,
-            approximateSize = "4.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, photorealistic, 1woman, mature, elegant,",
-                negativePrompt = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, cropped, worst quality, low quality, blurry, watermark,",
-            ),
-            runOnCpu = false,
-            isSdxl = true,
-        )
-    }
-
     suspend fun refreshModelState(modelId: String) {
         val refreshedModels = refreshMutex.withLock {
             val current = models
@@ -1204,12 +947,8 @@ class ModelRepository private constructor(private val context: Context) {
             // SDXL (NPU)
             "illustrious_v16", "illustrious_v16_dmd2",
             "cyber_realistic_v10", "cyber_realistic_v10_dmd2",
-            "novamaturexl_v40",
             // SD 1.5 NPU
             "anythingv5", "qteamix", "cuteyukimix", "absolutereality", "chilloutmix",
-            "dreamshaper_v8", "meinamix_v12", "majicmix_realistic_v7", "counterfeit_v30",
-            "realisticvision_hyper", "sweetmix_v22_flat", "neverendingdream_v122",
-            "darksushi_v4", "sd15_qnn",
             // SD 1.5 CPU
             "anythingv5cpu", "qteamixcpu", "cuteyukimixcpu",
             "absoluterealitycpu", "chilloutmixcpu",
