@@ -67,6 +67,16 @@
     <string name="qteamix_description">动漫Q版风格模型</string>
     <string name="cuteyukimix_description">动漫特化可爱风格</string>
     <string name="absolutereality_description">现实场景生成模型</string>
+    <string name="dreamshaper_v8_description">通用模型 — 半写实与动漫</string>
+    <string name="meinamix_v12_description">动漫人物，以女生为主</string>
+    <string name="majicmix_realistic_v7_description">写实风格人像</string>
+    <string name="counterfeit_v30_description">动漫与插画风格</string>
+    <string name="realisticvision_hyper_description">写实照片（高速）</string>
+    <string name="sweetmix_v22_flat_description">动漫，柔和甜美风格</string>
+    <string name="neverendingdream_v122_description">半写实动漫</string>
+    <string name="darksushi_v4_description">动漫，精致且风格化</string>
+    <string name="sd15_qnn_description">Stable Diffusion 1.5 基础模型</string>
+    <string name="novamaturexl_v40_description">成熟写实 SDXL 模型</string>
     <!-- Models -->
     <string name="backend_notify">模型服务运行中</string>
     <string name="backend_notify_title">SD模型后端</string>

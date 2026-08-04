@@ -67,6 +67,16 @@
     <string name="qteamix_description">Chibi Style Anime</string>
     <string name="cuteyukimix_description">Cute Style Anime</string>
     <string name="absolutereality_description">Realistic Image Generation</string>
+    <string name="dreamshaper_v8_description">汎用 — セミリアル＆アニメ</string>
+    <string name="meinamix_v12_description">アニメ肖像、主に女の子</string>
+    <string name="majicmix_realistic_v7_description">写実的なポートレート</string>
+    <string name="counterfeit_v30_description">アニメ＆イラスト</string>
+    <string name="realisticvision_hyper_description">リアルな写真（高速）</string>
+    <string name="sweetmix_v22_flat_description">アニメ、やさしく甘いスタイル</string>
+    <string name="neverendingdream_v122_description">セミリアルなアニメ</string>
+    <string name="darksushi_v4_description">アニメ、細かくスタイリズド</string>
+    <string name="sd15_qnn_description">ベース Stable Diffusion 1.5</string>
+    <string name="novamaturexl_v40_description">成熟したリアル系 SDXL</string>
     <!-- Models -->
     <string name="backend_notify">バックエンドサービス実行中</string>
     <string name="backend_notify_title">SD モデルのバックエンド</string>

@@ -67,6 +67,16 @@
     <string name="qteamix_description">치비 스타일 애니 이미지 생성</string>
     <string name="cuteyukimix_description">귀여운 스타일 애니 이미지 생성</string>
     <string name="absolutereality_description">사실적인 이미지 생성</string>
+    <string name="dreamshaper_v8_description">범용 — 반사실/애니</string>
+    <string name="meinamix_v12_description">애니 캐릭터, 주로 여성</string>
+    <string name="majicmix_realistic_v7_description">사실적인 인물 사진</string>
+    <string name="counterfeit_v30_description">애니 및 일러스트</string>
+    <string name="realisticvision_hyper_description">사실적인 사진 (고속)</string>
+    <string name="sweetmix_v22_flat_description">애니, 부드럽고 달콤한 스타일</string>
+    <string name="neverendingdream_v122_description">반사실 애니</string>
+    <string name="darksushi_v4_description">애니, 디테일하고 스타일화</string>
+    <string name="sd15_qnn_description">기본 Stable Diffusion 1.5</string>
+    <string name="novamaturexl_v40_description">성숙한 사실적 SDXL</string>
     <!-- Models -->
     <string name="backend_notify">모델 백엔드 서비스 실행 중</string>
     <string name="backend_notify_title">SD 모델 백엔드</string>
