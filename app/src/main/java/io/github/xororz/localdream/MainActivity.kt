@@ -59,6 +59,7 @@ import io.github.xororz.localdream.ui.screens.ModelStorageAccessScreen
 import io.github.xororz.localdream.ui.screens.PerformancePresetScreen
 import io.github.xororz.localdream.ui.screens.PromptManagerScreen
 import io.github.xororz.localdream.ui.screens.RemoteScreen
+import io.github.xororz.localdream.ui.screens.SettingsScreen
 import io.github.xororz.localdream.ui.screens.StudioHomeScreen
 import io.github.xororz.localdream.ui.screens.UpscaleScreen
 import io.github.xororz.localdream.ui.screens.repository.ModelSearchScreen
@@ -598,15 +599,7 @@ private fun AppContent() {
             )
         }
         composable(Screen.Settings.route) {
-            // G3: the global bottom-nav Settings item opens the existing
-            // settings overlay over the model list, replacing the old
-            // in-screen settings button.
-            ModelListScreen(
-                navController = navController,
-                isTopLevel = true,
-                bottomBar = { VisionStudioNavigationBar(navController) },
-                openSettings = true,
-            )
+            SettingsScreen(navController = navController)
         }
         composable(
             route = Screen.ModelRun.route,
