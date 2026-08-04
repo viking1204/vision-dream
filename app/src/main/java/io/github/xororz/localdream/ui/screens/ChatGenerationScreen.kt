@@ -9,10 +9,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -1757,11 +1757,10 @@ private fun ChatGenerationModelPicker(
                 shape = MaterialTheme.shapes.large,
             )
             if (availableTags.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     FilterChip(
                         selected = selectedTag == null,
@@ -1769,6 +1768,7 @@ private fun ChatGenerationModelPicker(
                         label = {
                             Text(stringResource(R.string.chat_generation_model_filter_all))
                         },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                     )
                     if (tagsExpanded) {
                         availableTags.forEach { tag ->
@@ -1776,6 +1776,7 @@ private fun ChatGenerationModelPicker(
                                 selected = selectedTag == tag,
                                 onClick = { selectedTag = if (selectedTag == tag) null else tag },
                                 label = { Text(tag) },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                             )
                         }
                     } else if (selectedTag != null) {
@@ -1783,6 +1784,7 @@ private fun ChatGenerationModelPicker(
                             selected = true,
                             onClick = { selectedTag = null },
                             label = { Text(selectedTag!!) },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                         )
                     }
                     AssistChip(
@@ -1810,6 +1812,7 @@ private fun ChatGenerationModelPicker(
                             )
                         },
                         border = null,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                         colors = AssistChipDefaults.assistChipColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                             labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
