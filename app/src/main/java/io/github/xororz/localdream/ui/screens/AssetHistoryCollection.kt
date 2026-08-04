@@ -153,9 +153,9 @@ internal fun AssetHistoryCollection(
                 columns = StaggeredGridCells.Fixed(2),
                 state = staggeredState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalItemSpacing = 10.dp,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalItemSpacing = 6.dp,
             ) {
                 items(
                     count = pagedItems.itemCount,
@@ -170,8 +170,8 @@ internal fun AssetHistoryCollection(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 items(
                     count = pagedItems.itemCount,
@@ -187,9 +187,9 @@ internal fun AssetHistoryCollection(
                 columns = GridCells.Fixed(3),
                 state = gridState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(
                     count = pagedItems.itemCount,

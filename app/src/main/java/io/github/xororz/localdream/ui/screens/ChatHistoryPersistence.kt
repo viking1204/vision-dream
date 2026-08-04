@@ -30,6 +30,12 @@ internal sealed interface ChatGenerationMessage {
         val steps: Int = 20,
         val cfg: Float = 7f,
         val scheduler: String = "dpm",
+        /**
+         * Wall-clock generation duration already formatted for display (e.g.
+         * "12.3s"). Empty when unknown, which is the case for conversations
+         * restored from a build that predates this field.
+         */
+        val generationTime: String = "",
     ) : ChatGenerationMessage
 
     data class Error(
@@ -67,6 +73,7 @@ internal fun List<ChatGenerationMessage>.toChatHistoryJson(): String {
                         put("st", message.steps)
                         put("cf", message.cfg)
                         put("sc", message.scheduler)
+                        put("gt", message.generationTime)
                     }
                 } else {
                     null
@@ -119,6 +126,9 @@ internal fun chatHistoryFromJson(raw: String): List<ChatGenerationMessage>? = ru
                             steps = obj.optInt("st", 20),
                             cfg = obj.optDouble("cf", 7.0).toFloat(),
                             scheduler = obj.optString("sc", "dpm"),
+                            // Absent in envelopes written before generation
+                            // timing was tracked; empty simply hides the row.
+                            generationTime = obj.optString("gt", ""),
                         ),
                     )
                 }

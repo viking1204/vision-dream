@@ -2,25 +2,26 @@ package io.github.xororz.localdream.ui.design
 
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -36,7 +37,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -84,7 +88,9 @@ fun VisionStudioNavigationBar(navController: NavController) {
     val collapsed by NavigationBarState.collapsed
 
     Box(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding(),
         contentAlignment = Alignment.BottomCenter,
     ) {
         AnimatedVisibility(visible = !collapsed) {
@@ -92,20 +98,17 @@ fun VisionStudioNavigationBar(navController: NavController) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                IconButton(
+                NavigationCollapseHandle(
                     onClick = { NavigationBarState.collapsed.value = true },
-                    modifier = Modifier.size(28.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = stringResource(R.string.collapse_nav),
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                    contentDescription = stringResource(R.string.collapse_nav),
+                    slotHeight = 14.dp,
+                )
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     tonalElevation = 0.dp,
+                    // The parent already applies the navigation bar inset; the
+                    // default here would add it a second time.
+                    windowInsets = WindowInsets(0, 0, 0, 0),
                 ) {
                     StudioDestinations.forEach { destination ->
                         val selected = currentDestination?.hierarchy?.any {
@@ -139,22 +142,47 @@ fun VisionStudioNavigationBar(navController: NavController) {
             }
         }
         AnimatedVisibility(visible = collapsed) {
-            Surface(
+            // Collapsed state is a bare grab handle. Anything larger (the old
+            // 40dp icon in a pill) still read as a bar and defeated the point
+            // of collapsing.
+            NavigationCollapseHandle(
                 onClick = { NavigationBarState.collapsed.value = false },
-                shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 2.dp,
-                modifier = Modifier.padding(bottom = 12.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowUp,
-                    contentDescription = stringResource(R.string.expand_nav),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .padding(10.dp),
-                )
-            }
+                contentDescription = stringResource(R.string.expand_nav),
+                slotHeight = 22.dp,
+            )
+        }
+    }
+}
+
+/**
+ * Thin, tappable grab handle used to toggle the bottom navigation. The visible
+ * bar is 4dp tall while the touch slot stays comfortably tappable, which keeps
+ * the collapsed navigation footprint at roughly a quarter of the expanded one.
+ */
+@Composable
+private fun NavigationCollapseHandle(
+    onClick: () -> Unit,
+    contentDescription: String,
+    slotHeight: Dp,
+) {
+    val label = contentDescription
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(slotHeight)
+            .clickable(onClick = onClick, onClickLabel = label)
+            .semantics { this.contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(40.dp)
+                    .height(4.dp),
+            )
         }
     }
 }

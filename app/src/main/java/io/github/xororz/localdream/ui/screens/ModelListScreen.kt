@@ -662,18 +662,17 @@ fun ModelListScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(
-                            text = stringResource(
-                                if (isTopLevel) {
-                                    R.string.studio_nav_models
-                                } else {
-                                    R.string.app_name
-                                },
-                            ),
-                            style = MaterialTheme.typography.titleLarge,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        // G9: as a top-level destination the bottom navigation
+                        // already says "Models", so the redundant headline is
+                        // dropped and only the status line remains.
+                        if (!isTopLevel) {
+                            Text(
+                                text = stringResource(R.string.app_name),
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         Text(
                             text = if (isSelectionMode) {
                                 pluralStringResource(
@@ -689,7 +688,11 @@ fun ModelListScreen(
                             } else {
                                 stringResource(R.string.available_models)
                             },
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = if (isTopLevel) {
+                                MaterialTheme.typography.titleSmall
+                            } else {
+                                MaterialTheme.typography.bodyMedium
+                            },
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -891,9 +894,9 @@ fun ModelListScreen(
                 FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     FilterChip(
                         selected = selectedTag == null,
@@ -998,8 +1001,8 @@ fun ModelListScreen(
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     items(
                         items = models,

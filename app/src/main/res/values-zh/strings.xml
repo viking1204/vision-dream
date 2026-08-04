@@ -678,6 +678,9 @@
     <string name="chat_generation_generated_image">生成的图片</string>
     <string name="chat_generation_image_metadata">%1$s · 种子 %2$s</string>
     <string name="chat_generation_view_details">查看</string>
+    <string name="chat_generation_view_large">查看大图</string>
+    <string name="chat_generation_delete_message">删除消息</string>
+    <string name="chat_generation_generation_time">生成耗时</string>
     <string name="chat_generation_random_seed">随机</string>
     <string name="chat_generation_width">宽度</string>
     <string name="chat_generation_height">高度</string>

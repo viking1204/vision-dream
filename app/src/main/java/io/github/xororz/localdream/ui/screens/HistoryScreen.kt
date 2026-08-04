@@ -29,7 +29,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -154,38 +153,96 @@ fun HistoryScreen(
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(
-                            if (isTopLevel) {
-                                R.string.studio_nav_assets
-                            } else {
-                                R.string.asset_manager_title
-                            },
-                        ),
-                        style = MaterialTheme.typography.titleLarge,
-                    )
-                },
-                navigationIcon = {
-                    if (!isTopLevel) {
+            // G9: at top level the bottom navigation already names this screen,
+            // so the app bar (title + a lone layout button) is dropped and the
+            // layout switch moves into the toolbar row below.
+            if (!isTopLevel) {
+                CenterAlignedTopAppBar(
+                    title = {
+                        Text(
+                            text = stringResource(R.string.asset_manager_title),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    },
+                    navigationIcon = {
                         IconButton(onClick = { navController.popBackStackIfResumed() }) {
                             Icon(
                                 Icons.AutoMirrored.Filled.ArrowBack,
                                 stringResource(R.string.back),
                             )
                         }
+                    },
+                    scrollBehavior = scrollBehavior,
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    ),
+                )
+            }
+        },
+        bottomBar = bottomBar,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues),
+        ) {
+            Surface(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .fillMaxWidth()
+                    .semantics {
+                        contentDescription = sensitiveContentDesc
+                    },
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = {
+                            revealAll = !revealAll
+                            revealRevision++
+                            itemRevealOverrides.clear()
+                        },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (revealAll) {
+                                Icons.Default.Visibility
+                            } else {
+                                Icons.Default.VisibilityOff
+                            },
+                            contentDescription = stringResource(R.string.asset_nsfw_toggle),
+                            tint = if (revealAll) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
                     }
-                },
-                actions = {
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = stringResource(R.string.asset_count, totalCount),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Box {
                         IconButton(
                             onClick = { showLayoutMenu = true },
-                            colors = IconButtonDefaults.filledTonalIconButtonColors(),
+                            modifier = Modifier.size(36.dp),
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ViewModule,
-                                contentDescription = stringResource(R.string.asset_layout_action),
+                                contentDescription = stringResource(
+                                    R.string.asset_layout_action,
+                                ),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         DropdownMenu(
@@ -244,66 +301,6 @@ fun HistoryScreen(
                             }
                         }
                     }
-                },
-                scrollBehavior = scrollBehavior,
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-                ),
-            )
-        },
-        bottomBar = bottomBar,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-        ) {
-            Surface(
-                modifier = Modifier
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                    .fillMaxWidth()
-                    .semantics {
-                        contentDescription = sensitiveContentDesc
-                    },
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(
-                        onClick = {
-                            revealAll = !revealAll
-                            revealRevision++
-                            itemRevealOverrides.clear()
-                        },
-                        modifier = Modifier.size(36.dp),
-                    ) {
-                        Icon(
-                            imageVector = if (revealAll) {
-                                Icons.Default.Visibility
-                            } else {
-                                Icons.Default.VisibilityOff
-                            },
-                            contentDescription = stringResource(R.string.asset_nsfw_toggle),
-                            tint = if (revealAll) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    }
-                    Spacer(modifier = Modifier.weight(1f))
-                    Text(
-                        text = stringResource(R.string.asset_count, totalCount),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
             }
             ModelRunHistoryPage(

@@ -678,6 +678,9 @@
     <string name="chat_generation_generated_image">생성된 이미지</string>
     <string name="chat_generation_image_metadata">%1$s · 시드 %2$s</string>
     <string name="chat_generation_view_details">보기</string>
+    <string name="chat_generation_view_large">크게 보기</string>
+    <string name="chat_generation_delete_message">메시지 삭제</string>
+    <string name="chat_generation_generation_time">생성 시간</string>
     <string name="chat_generation_random_seed">랜덤</string>
     <string name="chat_generation_width">너비</string>
     <string name="chat_generation_height">높이</string>

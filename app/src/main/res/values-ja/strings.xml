@@ -678,6 +678,9 @@
     <string name="chat_generation_generated_image">生成画像</string>
     <string name="chat_generation_image_metadata">%1$s · シード %2$s</string>
     <string name="chat_generation_view_details">表示</string>
+    <string name="chat_generation_view_large">拡大表示</string>
+    <string name="chat_generation_delete_message">メッセージを削除</string>
+    <string name="chat_generation_generation_time">生成時間</string>
     <string name="chat_generation_random_seed">ランダム</string>
     <string name="chat_generation_width">幅</string>
     <string name="chat_generation_height">高さ</string>

@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -44,16 +45,21 @@ import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Deselect
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PhotoFilter
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.outlined.ClearAll
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -108,6 +114,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
@@ -483,10 +490,11 @@ fun ChatGenerationScreen(
     // visibly revealed.
     var initialScrollDone by remember { mutableStateOf(false) }
     LaunchedEffect(messages.size, isGenerating, visibleMessageCount) {
-        if (visibleMessages.isEmpty()) {
-            initialScrollDone = true
-            return@LaunchedEffect
-        }
+        // An empty list must NOT consume the "initial" budget: restoring the
+        // persisted conversation happens a frame or two after composition, so
+        // flipping the flag here would demote the first real positioning to an
+        // animated scroll and make entering the screen crawl through history.
+        if (visibleMessages.isEmpty()) return@LaunchedEffect
         val lastIndex = visibleMessages.size + if (isGenerating) 0 else -1
         if (lastIndex < 0) return@LaunchedEffect
         if (!initialScrollDone) {
@@ -591,6 +599,7 @@ fun ChatGenerationScreen(
                     steps = settings.steps,
                     cfg = settings.cfg,
                     scheduler = settings.scheduler,
+                    generationTime = generationTime,
                 )
             } catch (error: CancellationException) {
                 throw error
@@ -664,7 +673,10 @@ fun ChatGenerationScreen(
                         ),
                     )
                 }
-                messages += ChatGenerationMessage.User(nextId(), submittedPrompt)
+                // The prompt is intentionally NOT echoed into the conversation
+                // here. Queued work is represented by the queue bar/panel; the
+                // prompt reaches the transcript together with its image once
+                // the task actually runs, so one generation = one message.
                 prompt = TextFieldValue()
                 keyboardController?.hide()
                 // An explicit submit is also the consent to drain anything that
@@ -729,72 +741,104 @@ fun ChatGenerationScreen(
         }
     }
 
+    val allMessagesSelected = messages.isNotEmpty() &&
+        selectedMessageIds.size == messages.size
+
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        text = if (selectionMode) {
-                            stringResource(R.string.selected_count, selectedMessageIds.size)
-                        } else {
-                            stringResource(
-                                if (isTopLevel) {
-                                    R.string.studio_nav_create
-                                } else {
-                                    R.string.chat_generation_title
-                                },
+            // G9: as a top-level destination the screen is already labelled by
+            // the bottom navigation, so the app bar is dropped entirely and the
+            // reclaimed height goes to the transcript. It only comes back when
+            // it carries an action: nested navigation (back) or multi-select.
+            if (!isTopLevel || selectionMode) {
+                CenterAlignedTopAppBar(
+                    title = {
+                        if (selectionMode) {
+                            Text(
+                                text = stringResource(
+                                    R.string.selected_count,
+                                    selectedMessageIds.size,
+                                ),
+                                style = MaterialTheme.typography.titleMedium,
                             )
-                        },
-                        style = MaterialTheme.typography.titleLarge,
-                    )
-                },
-                actions = {
-                    if (selectionMode) {
-                        IconButton(
-                            onClick = {
-                                // G8: only remove conversation entries; asset
-                                // files referenced by Image messages stay on disk.
-                                messages.removeAll { it.id in selectedMessageIds }
+                        } else {
+                            Text(
+                                text = stringResource(R.string.chat_generation_title),
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        }
+                    },
+                    actions = {
+                        if (selectionMode) {
+                            IconButton(onClick = {
+                                // Selection spans the whole conversation, not
+                                // just the paged-in window.
+                                selectedMessageIds.clear()
+                                if (!allMessagesSelected) {
+                                    selectedMessageIds.addAll(messages.map { it.id })
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = if (allMessagesSelected) {
+                                        Icons.Default.Deselect
+                                    } else {
+                                        Icons.Default.SelectAll
+                                    },
+                                    contentDescription = stringResource(
+                                        if (allMessagesSelected) {
+                                            R.string.deselect_all
+                                        } else {
+                                            R.string.select_all
+                                        },
+                                    ),
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    // G8: only remove conversation entries; asset
+                                    // files referenced by Image messages stay on disk.
+                                    messages.removeAll { it.id in selectedMessageIds }
+                                    selectedMessageIds.clear()
+                                    selectionMode = false
+                                    scope.launch {
+                                        generationPreferences.saveChatHistoryJson(
+                                            messages.toChatHistoryJson(),
+                                        )
+                                    }
+                                },
+                                enabled = selectedMessageIds.isNotEmpty(),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = stringResource(R.string.delete_messages),
+                                )
+                            }
+                            IconButton(onClick = {
                                 selectedMessageIds.clear()
                                 selectionMode = false
-                                scope.launch {
-                                    generationPreferences.saveChatHistoryJson(
-                                        messages.toChatHistoryJson(),
-                                    )
-                                }
-                            },
-                            enabled = selectedMessageIds.isNotEmpty(),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = stringResource(R.string.delete_messages),
-                            )
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.cancel),
+                                )
+                            }
                         }
-                        IconButton(onClick = {
-                            selectedMessageIds.clear()
-                            selectionMode = false
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = stringResource(R.string.cancel),
-                            )
+                    },
+                    navigationIcon = {
+                        if (!isTopLevel && !selectionMode) {
+                            IconButton(onClick = { navController.popBackStackIfResumed() }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = stringResource(R.string.back),
+                                )
+                            }
                         }
-                    }
-                },
-                navigationIcon = {
-                    if (!isTopLevel) {
-                        IconButton(onClick = { navController.popBackStackIfResumed() }) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = stringResource(R.string.back),
-                            )
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-                ),
-            )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    ),
+                )
+            }
         },
         bottomBar = bottomBar,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
@@ -809,8 +853,11 @@ fun ChatGenerationScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 12.dp,
+                    vertical = 10.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (messages.isEmpty() && !isGenerating) {
                     item(key = "empty") {
@@ -851,6 +898,18 @@ fun ChatGenerationScreen(
                     ChatGenerationMessageItem(
                         message = message,
                         isSelected = message.id in selectedMessageIds,
+                        onDelete = {
+                            // Same contract as batch delete: drop the transcript
+                            // entry, never the asset file on disk.
+                            messages.removeAll { it.id == message.id }
+                            selectedMessageIds.remove(message.id)
+                            if (selectedMessageIds.isEmpty()) selectionMode = false
+                            scope.launch {
+                                generationPreferences.saveChatHistoryJson(
+                                    messages.toChatHistoryJson(),
+                                )
+                            }
+                        },
                         onLongClick = {
                             if (!selectionMode) {
                                 selectionMode = true
@@ -1142,6 +1201,7 @@ private fun ChatGenerationMessageItem(
     isSelected: Boolean = false,
     onLongClick: () -> Unit = {},
     onClick: () -> Unit = {},
+    onDelete: () -> Unit = {},
 ) {
     val selectionModifier = modifier
         .fillMaxWidth()
@@ -1191,7 +1251,7 @@ private fun ChatGenerationMessageItem(
                 modifier = selectionModifier,
                 horizontalArrangement = Arrangement.Start,
             ) {
-                Card(modifier = Modifier.fillMaxWidth(0.9f)) {
+                Card(modifier = Modifier.fillMaxWidth(0.94f)) {
                     RevealableImage(
                         revealKey = message.id,
                         modifier = Modifier
@@ -1211,13 +1271,57 @@ private fun ChatGenerationMessageItem(
                             contentScale = ContentScale.Fit,
                         )
                     }
-                    OutlinedButton(
-                        onClick = { showDetails = true },
+                    // G9: the prompt lives on the image card instead of a
+                    // separate bubble, so one generation reads as one message.
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(12.dp),
+                            .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Text(stringResource(R.string.chat_generation_view_details))
+                        if (message.prompt.isNotBlank()) {
+                            Text(
+                                text = message.prompt,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = listOf(
+                                    message.modelName,
+                                    message.generationTime,
+                                ).filter { it.isNotBlank() }.joinToString(" · "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                                ChatImageAction(
+                                    icon = Icons.Outlined.Info,
+                                    descriptionRes = R.string.chat_generation_view_details,
+                                    onClick = { showDetails = true },
+                                )
+                                ChatImageAction(
+                                    icon = Icons.Outlined.OpenInFull,
+                                    descriptionRes = R.string.chat_generation_view_large,
+                                    onClick = { showLightbox = true },
+                                )
+                                ChatImageAction(
+                                    icon = Icons.Outlined.Delete,
+                                    descriptionRes = R.string.chat_generation_delete_message,
+                                    onClick = onDelete,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1255,6 +1359,29 @@ private fun ChatGenerationMessageItem(
                 }
             }
         }
+    }
+}
+
+/**
+ * Compact, label-free action on an image card. The icon carries no text, so the
+ * string resource is surfaced as the accessibility description instead.
+ */
+@Composable
+private fun ChatImageAction(
+    icon: ImageVector,
+    @StringRes descriptionRes: Int,
+    onClick: () -> Unit,
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.size(36.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = stringResource(descriptionRes),
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -1310,6 +1437,12 @@ private fun ImageDetailsSheet(
                 label = stringResource(R.string.chat_generation_width),
                 value = "${message.width} × ${message.height}",
             )
+            if (message.generationTime.isNotBlank()) {
+                DetailRow(
+                    label = stringResource(R.string.chat_generation_generation_time),
+                    value = message.generationTime,
+                )
+            }
         }
     }
 }
