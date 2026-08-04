@@ -2,6 +2,7 @@ package io.github.xororz.localdream.modelcatalog
 
 import java.io.IOException
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
@@ -51,6 +52,58 @@ class HuggingFaceModelCatalogClient(
                 toSearchResult(repository, artifact)
             }
         }
+
+    /**
+     * Fetches every file of a single Hugging Face repository and evaluates it
+     * for vision-dream compatibility. This is how curated default repositories
+     * (see [DefaultModelRepositories]) are surfaced: the global keyword search
+     * only matches repository ids/metadata, so individual archives nested
+     * inside a repo such as `xororz/sd-qnn` would never surface by model name.
+     *
+     * Results are cached per (baseUrl, repoId) so re-browsing the same
+     * repository (e.g. when the search screen is reopened) does not re-hit the
+     * network.
+     */
+    suspend fun browseRepository(repoId: String): List<ModelCatalogSearchResult> = withContext(Dispatchers.IO) {
+        val normalized = repoId.trim()
+        require(normalized.isNotBlank()) { "Repository id must not be blank" }
+        val cacheKey = repositoryBaseUrl.toString() + "|" + normalized
+        repositoryBrowseCache[cacheKey]?.let { return@withContext it }
+
+        val request = Request.Builder()
+            .url(buildBrowseUrl(normalized))
+            .header("Accept", "application/json")
+            .header("User-Agent", USER_AGENT)
+            .get()
+            .build()
+        val results = client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw HuggingFaceCatalogException("Model repository browse failed with HTTP ${response.code}")
+            }
+            val body = response.body ?: throw HuggingFaceCatalogException("Model repository browse returned no body")
+            val raw = body.source().readUtf8Limited(MAX_RESPONSE_BYTES)
+            // The single-repository endpoint returns a JSON object; wrap it in an
+            // array so the shared [HuggingFaceCatalogJsonParser.parseRepositories]
+            // (which only understands arrays or wrapper objects) can parse it.
+            val repository = HuggingFaceCatalogJsonParser.parseRepositories("[$raw]").firstOrNull()
+                ?: throw HuggingFaceCatalogException("Model repository $normalized not found")
+            ModelCompatibilityEvaluator()
+                .evaluate(repository)
+                .artifacts
+                .mapNotNull { toSearchResult(repository, it) }
+        }
+        repositoryBrowseCache[cacheKey] = results
+        results
+    }
+
+    /**
+     * Browses every entry in [DefaultModelRepositories] and flattens the
+     * results into a single list. Shares the per-repository cache with
+     * [browseRepository].
+     */
+    suspend fun browseDefaultRepositories(): List<ModelCatalogSearchResult> = withContext(Dispatchers.IO) {
+        DefaultModelRepositories.repositories.flatMap { entry -> browseRepository(entry.repoId) }
+    }
 
     fun downloadUrl(artifact: CompatibleModelArtifact): String {
         val revision = artifact.repositorySha?.takeIf { SAFE_REVISION.matches(it) } ?: DEFAULT_REVISION
@@ -163,6 +216,15 @@ class HuggingFaceModelCatalogClient(
         .addQueryParameter("cardData", "true")
         .build()
 
+    internal fun buildBrowseUrl(repoId: String): HttpUrl = repositoryBaseUrl.newBuilder()
+        .addPathSegment("api")
+        .addPathSegment("models")
+        .addRepositoryPath(repoId)
+        .addQueryParameter("full", "true")
+        .addQueryParameter("config", "true")
+        .addQueryParameter("cardData", "true")
+        .build()
+
     private fun HttpUrl.Builder.addRepositoryPath(repositoryId: String): HttpUrl.Builder {
         val segments = repositoryId.split('/')
         val validSegments = segments.all {
@@ -216,6 +278,7 @@ class HuggingFaceModelCatalogClient(
         const val USER_AGENT = "vision-dream-model-catalog/1"
         val SAFE_REPOSITORY_SEGMENT = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,95}")
         val SAFE_REVISION = Regex("[A-Fa-f0-9]{7,64}")
+        private val repositoryBrowseCache = ConcurrentHashMap<String, List<ModelCatalogSearchResult>>()
     }
 }
 

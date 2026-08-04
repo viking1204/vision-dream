@@ -64,7 +64,7 @@ fun ModelSearchScreen(navController: NavController) {
 
     fun search() {
         val query = state.query.trim()
-        if (query.isEmpty() || state.status == SearchStatus.SEARCHING) return
+        if (state.status == SearchStatus.SEARCHING) return
         state = state.copy(status = SearchStatus.SEARCHING)
         scope.launch {
             try {
@@ -75,21 +75,23 @@ fun ModelSearchScreen(navController: NavController) {
                     builtInClient = HuggingFaceModelCatalogClient(baseUrl, Http.client),
                     customRepositories = customRepos,
                 )
-                val result = client.searchCompatible(query)
+                // An empty query browses the curated default model repositories;
+                // a keyword query searches the catalog and folds in the default
+                // repositories as well.
+                val result = if (query.isEmpty()) {
+                    client.browseDefaultRepositories()
+                } else {
+                    client.searchWithDefaults(query)
+                }
                 val compatible = result.results.filter {
                     CatalogDeviceCompatibility.isCurrentDeviceCompatible(it.installExpectation())
                 }
-                val status = when (result.status) {
-                    MultiRepositorySearchStatus.SUCCESS ->
-                        if (compatible.isEmpty()) SearchStatus.EMPTY else SearchStatus.SUCCESS
-
-                    MultiRepositorySearchStatus.PARTIAL_FAILURE ->
-                        if (compatible.isEmpty()) SearchStatus.EMPTY else SearchStatus.PARTIAL_FAILURE
-
-                    MultiRepositorySearchStatus.ALL_FAILED -> SearchStatus.ALL_FAILED
-
-                    MultiRepositorySearchStatus.NO_REPOSITORIES ->
-                        if (compatible.isEmpty()) SearchStatus.EMPTY else SearchStatus.SUCCESS
+                val status = when {
+                    result.status == MultiRepositorySearchStatus.ALL_FAILED && compatible.isEmpty() -> SearchStatus.ALL_FAILED
+                    compatible.isEmpty() -> SearchStatus.EMPTY
+                    result.status == MultiRepositorySearchStatus.ALL_FAILED -> SearchStatus.ALL_FAILED
+                    result.status == MultiRepositorySearchStatus.PARTIAL_FAILURE -> SearchStatus.PARTIAL_FAILURE
+                    else -> SearchStatus.SUCCESS
                 }
                 val errors = result.perRepositoryErrors
                     .mapNotNull { (id, throwable) -> id?.let { it to (throwable.message ?: unknownErrorMessage) } }
@@ -135,6 +137,12 @@ fun ModelSearchScreen(navController: NavController) {
                 activeModelId = null
             }
         }
+    }
+
+    // Surface the curated default model repositories as soon as the screen
+    // opens, so users see installable models without first typing a query.
+    LaunchedEffect(Unit) {
+        if (state.status == SearchStatus.IDLE) search()
     }
 
     Scaffold(

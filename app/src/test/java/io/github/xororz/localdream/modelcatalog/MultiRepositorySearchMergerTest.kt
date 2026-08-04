@@ -3,7 +3,12 @@ package io.github.xororz.localdream.modelcatalog
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -346,6 +351,27 @@ class MultiRepositorySearchMergerTest {
         assertEquals("ok", merged.results.first().repositoryConfigId)
     }
 
+    @Test
+    fun mergeDeduplicatesIdenticalRepositoryAndModelIdKeepingFirstOccurrence() {
+        val outcomes = listOf(
+            RepositorySearchOutcome.Success(
+                repositoryConfigId = null,
+                results = listOf(result(localModelId = "dup", displayName = "Builtin Dup")),
+            ),
+            RepositorySearchOutcome.Success(
+                repositoryConfigId = "default",
+                results = listOf(result(localModelId = "dup", displayName = "Default Dup")),
+            ),
+        )
+
+        val merged = SearchResultMerger.merge("portrait", outcomes)
+
+        assertEquals(1, merged.results.size)
+        assertEquals(listOf("dup"), merged.results.map { it.localModelId })
+        // The first occurrence (built-in) wins over the later default-repo copy.
+        assertEquals(null, merged.results.first().repositoryConfigId)
+    }
+
     private fun result(
         localModelId: String,
         displayName: String,
@@ -370,6 +396,91 @@ class MultiRepositorySearchMergerTest {
      * network, so the built-in [HuggingFaceModelCatalogClient] fails
      * deterministically and hermetically.
      */
+    @Test
+    fun browseDefaultRepositoriesTagsResultsWithDefaultConfigId() = runBlocking {
+        val client = MultiRepositorySearchClient(
+            builtInClient = HuggingFaceModelCatalogClient(
+                baseUrl = "https://example.test",
+                client = fakeJsonClient(REPO_JSON_WITH_QNN),
+            ),
+            customRepositories = emptyList(),
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        val merged = client.browseDefaultRepositories()
+
+        assertTrue(merged.results.isNotEmpty())
+        assertEquals(MultiRepositorySearchStatus.SUCCESS, merged.status)
+        assertTrue(merged.results.all { it.repositoryConfigId == "default" })
+    }
+
+    @Test
+    fun searchWithDefaultsFoldsInDefaultRepositoriesWhenGlobalSearchEmpty() = runBlocking {
+        // The routing fake returns an empty array for keyword search but the
+        // curated repository body for browse requests, isolating the
+        // default-repository contribution.
+        val client = MultiRepositorySearchClient(
+            builtInClient = HuggingFaceModelCatalogClient(
+                baseUrl = "https://example.test",
+                client = routingFakeClient(REPO_JSON_WITH_QNN),
+            ),
+            customRepositories = emptyList(),
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        val merged = client.searchWithDefaults("DreamShaper")
+
+        assertEquals(1, merged.results.size)
+        assertEquals("default", merged.results.first().repositoryConfigId)
+    }
+
+    private val REPO_JSON_WITH_QNN = """
+        {
+          "id": "xororz/sd-qnn",
+          "sha": "0123456789abcdef0123456789abcdef01234567",
+          "pipeline_tag": "text-to-image",
+          "tags": ["text-to-image"],
+          "siblings": [
+            {
+              "rfilename": "DreamShaper_qnn2.28_min.zip",
+              "size": 1073741824,
+              "lfs": { "sha256": "abc123def456", "size": 1073741824 }
+            }
+          ]
+        }
+    """.trimIndent()
+
+    private fun fakeJsonClient(body: String): OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(ResponseBody.create("application/json".toMediaType(), body))
+                .build()
+        }
+        .build()
+
+    /**
+     * Returns [body] for repository-browse requests and an empty array for
+     * keyword-search requests (identified by the `search=` query parameter),
+     * so tests can exercise the default-repository path independently.
+     */
+    private fun routingFakeClient(body: String): OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            val url = chain.request().url.toString()
+            val responseBody = if (url.contains("search=")) "[]" else body
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(ResponseBody.create("application/json".toMediaType(), responseBody))
+                .build()
+        }
+        .build()
+
     private fun failingOkHttpClient(message: String): OkHttpClient = OkHttpClient.Builder()
         .addInterceptor { _ -> throw IOException(message) }
         .build()

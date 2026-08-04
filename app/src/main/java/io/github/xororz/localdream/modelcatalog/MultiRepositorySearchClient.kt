@@ -92,6 +92,13 @@ object SearchResultMerger {
             }
         }
         val ranked = flattened.sortedBy { result -> tierOf(result, lowerQuery) }
+        // De-duplicate by (repositoryId, localModelId) keeping the first
+        // occurrence; stable sort preserves the tier/relevance ordering. The
+        // artifact file name is the fallback key for results without a model id.
+        val seen = LinkedHashSet<String>()
+        val deduped = ranked.filter { result ->
+            seen.add(result.repositoryId + "|" + result.localModelId.ifBlank { result.artifactFileName })
+        }
         val status = when {
             outcomes.isEmpty() -> MultiRepositorySearchStatus.NO_REPOSITORIES
             errors.size == outcomes.size -> MultiRepositorySearchStatus.ALL_FAILED
@@ -99,7 +106,7 @@ object SearchResultMerger {
             else -> MultiRepositorySearchStatus.PARTIAL_FAILURE
         }
         return MultiRepositorySearchResult(
-            results = ranked,
+            results = deduped,
             perRepositoryErrors = errors,
             status = status,
         )
@@ -173,6 +180,85 @@ class MultiRepositorySearchClient(
     }
 
     /**
+     * Browses every curated [DefaultModelRepositories] entry and merges the
+     * results into a single ranked list, tagged with
+     * [DEFAULT_REPOSITORY_CONFIG_ID]. Used when the user opens the search screen
+     * or submits an empty query: these models are listed directly instead of
+     * being discovered through the global keyword search.
+     */
+    suspend fun browseDefaultRepositories(): MultiRepositorySearchResult = withContext(ioDispatcher) {
+        coroutineScope {
+            val deferreds = DefaultModelRepositories.repositories.map { def ->
+                async {
+                    safeSearch(DEFAULT_REPOSITORY_CONFIG_ID) {
+                        builtInClient
+                            .browseRepository(def.repoId)
+                            .map { it.copy(repositoryConfigId = DEFAULT_REPOSITORY_CONFIG_ID) }
+                    }
+                }
+            }
+            val outcomes = deferreds.map { it.await() }
+            SearchResultMerger.merge("", outcomes)
+        }
+    }
+
+    /**
+     * Searches the built-in catalog and enabled custom repositories (as
+     * [searchCompatible]) and additionally folds in the curated default
+     * repositories browsed via [browseDefaultRepositories]. When [keyword] is
+     * non-empty, default-repository results are filtered to those whose id or
+     * display name contains the query, so browsing broadens discovery without
+     * drowning out keyword matches. Results are de-duplicated by the merger.
+     */
+    suspend fun searchWithDefaults(
+        keyword: String,
+        limit: Int = DEFAULT_SEARCH_LIMIT,
+    ): MultiRepositorySearchResult = withContext(ioDispatcher) {
+        coroutineScope {
+            val query = keyword.trim()
+            val builtInDeferred = async {
+                safeSearch(BUILT_IN_REPOSITORY_CONFIG_ID) {
+                    builtInClient
+                        .searchCompatible(query, limit = limit)
+                        .map { it.copy(repositoryConfigId = BUILT_IN_REPOSITORY_CONFIG_ID) }
+                }
+            }
+            val customDeferreds = customRepositories.filter { it.enabled }.map { config ->
+                async {
+                    safeSearch(config.id) {
+                        customSearcher(config, query, limit)
+                            .map { it.copy(repositoryConfigId = config.id) }
+                    }
+                }
+            }
+            val defaultDeferred = async {
+                safeSearch(DEFAULT_REPOSITORY_CONFIG_ID) {
+                    builtInClient
+                        .browseDefaultRepositories()
+                        .map { it.copy(repositoryConfigId = DEFAULT_REPOSITORY_CONFIG_ID) }
+                }
+            }
+
+            val outcomes = buildList {
+                add(builtInDeferred.await())
+                customDeferreds.forEach { add(it.await()) }
+                add(defaultDeferred.await())
+            }
+
+            val merged = SearchResultMerger.merge(query, outcomes)
+            if (query.isEmpty()) return@coroutineScope merged
+
+            val lowerQuery = query.lowercase()
+            val filtered = merged.results.filter { result ->
+                result.repositoryConfigId != DEFAULT_REPOSITORY_CONFIG_ID ||
+                    result.localModelId.lowercase().contains(lowerQuery) ||
+                    result.displayName.lowercase().contains(lowerQuery)
+            }
+            merged.copy(results = filtered)
+        }
+    }
+
+    /**
      * Runs [block] and wraps its outcome, isolating non-cancellation failures
      * into [RepositorySearchOutcome.Failure] so they cannot tear down the
      * surrounding [coroutineScope].
@@ -191,6 +277,12 @@ class MultiRepositorySearchClient(
     companion object {
         /** [repositoryConfigId] assigned to results sourced from [builtInClient]. */
         val BUILT_IN_REPOSITORY_CONFIG_ID: String? = null
+
+        /**
+         * [repositoryConfigId] assigned to results sourced from the curated
+         * [DefaultModelRepositories] (browsed, not keyword-searched).
+         */
+        const val DEFAULT_REPOSITORY_CONFIG_ID: String = "default"
 
         const val DEFAULT_SEARCH_LIMIT = 30
 

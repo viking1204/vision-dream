@@ -1,7 +1,16 @@
 package io.github.xororz.localdream.modelcatalog
 
+import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HuggingFaceModelCatalogClientTest {
@@ -134,6 +143,89 @@ class HuggingFaceModelCatalogClientTest {
             }
         }
     }
+
+    @Test
+    fun browseRepositoryReturnsCompatibleQnnArtifact() {
+        runBlocking {
+            val client = HuggingFaceModelCatalogClient(
+                baseUrl = "https://example.test",
+                client = fakeJsonClient(REPO_JSON_WITH_QNN),
+            )
+
+            val results = client.browseRepository("xororz/sd-qnn")
+
+            assertTrue(results.isNotEmpty())
+            val qnn = results.firstOrNull { it.backendHint == CatalogBackendHint.QNN_NPU }
+            assertNotNull(qnn)
+            assertEquals("xororz/sd-qnn", qnn!!.repositoryId)
+            assertTrue(qnn.downloadUrl.contains("xororz/sd-qnn/resolve/"))
+            assertTrue(qnn.downloadUrl.endsWith("DreamShaper_qnn2.28_min.zip"))
+        }
+    }
+
+    @Test
+    fun browseRepositoryRejectsBlankRepositoryId() {
+        val client = HuggingFaceModelCatalogClient("https://example.test")
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { client.browseRepository("   ") }
+        }
+    }
+
+    @Test
+    fun browseRepositoryThrowsWhenRepositoryMissing() {
+        val client = HuggingFaceModelCatalogClient(
+            baseUrl = "https://example.test",
+            client = fakeJsonClient("""{"error":"Repository not found"}"""),
+        )
+
+        assertThrows(HuggingFaceCatalogException::class.java) {
+            runBlocking { client.browseRepository("xororz/does-not-exist") }
+        }
+    }
+
+    @Test
+    fun browseDefaultRepositoriesReturnsAllCuratedRepos() {
+        runBlocking {
+            val client = HuggingFaceModelCatalogClient(
+                baseUrl = "https://example.test",
+                client = fakeJsonClient(REPO_JSON_WITH_QNN),
+            )
+
+            val results = client.browseDefaultRepositories()
+
+            assertTrue(results.isNotEmpty())
+            assertTrue(results.all { it.backendHint == CatalogBackendHint.QNN_NPU })
+        }
+    }
+
+    private val REPO_JSON_WITH_QNN = """
+        {
+          "id": "xororz/sd-qnn",
+          "sha": "0123456789abcdef0123456789abcdef01234567",
+          "pipeline_tag": "text-to-image",
+          "tags": ["text-to-image"],
+          "siblings": [
+            {
+              "rfilename": "DreamShaper_qnn2.28_min.zip",
+              "size": 1073741824,
+              "lfs": { "sha256": "abc123def456", "size": 1073741824 }
+            }
+          ]
+        }
+    """.trimIndent()
+
+    private fun fakeJsonClient(body: String): OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(ResponseBody.create("application/json".toMediaType(), body))
+                .build()
+        }
+        .build()
 
     private fun artifact(
         repositoryId: String = "owner/model",
