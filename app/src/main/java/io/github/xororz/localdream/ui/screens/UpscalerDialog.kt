@@ -203,14 +203,20 @@ fun UpscalerSelectDialog(
     onConfirm: () -> Unit,
     onDownload: (UpscalerModel) -> Unit,
 ) {
+    // Installed upscalers first so the usable choices stay above the fold as
+    // the built-in catalogue grows. Deliberately not keyed on the current
+    // selection: re-sorting while the user taps would move cards under them.
+    val orderedUpscalers = remember(upscalers) {
+        upscalers.sortedByDescending { it.isDownloaded }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.select_upscaler_model)) },
         text = {
             LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                items(upscalers) { upscaler ->
+                items(orderedUpscalers) { upscaler ->
                     UpscalerModelCard(
                         upscaler = upscaler,
                         isSelected = upscaler.id == selectedUpscalerId,
@@ -327,7 +333,7 @@ fun UpscalerModelCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -373,8 +379,8 @@ fun UpscalerModelCard(
                     progress = downloadProgress.progress,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(bottom = 16.dp),
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 10.dp),
                 )
             }
         }

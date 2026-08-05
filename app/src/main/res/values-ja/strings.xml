@@ -359,6 +359,15 @@
     <string name="upscaler_anime_desc">アニメや漫画の画像に最適化</string>
     <string name="upscaler_realistic">現実風</string>
     <string name="upscaler_realistic_desc">リアルな写真に最適化</string>
+    <string name="upscaler_mrj_realesrgan_x4plus_name">Real-ESRGAN x4+</string>
+    <string name="upscaler_mrj_realesrgan_x4plus_desc">QNN リアル系アップスケールモデル (Mr-J-369)</string>
+    <string name="upscaler_mrj_nmkd_siax_name">4x NMKD-Siax</string>
+    <string name="upscaler_mrj_nmkd_siax_desc">QNN アニメ系アップスケールモデル (Mr-J-369)</string>
+    <string name="upscaler_mrj_yandere_neoxl_name">4x NMKD-YandereNeoXL</string>
+    <string name="upscaler_mrj_yandere_neoxl_desc">QNN アニメ系アップスケールモデル (Mr-J-369)</string>
+    <string name="upscaler_mrj_faces_name">Faces 04 N</string>
+    <string name="upscaler_mrj_faces_desc">QNN 顔専用アップスケールモデル (Mr-J-369)</string>
+    <string name="upscaler_archive_missing_weight">アップスケールモデルのアーカイブに重みファイルが見つかりません</string>
     <string name="image_upscale">画像の拡大</string>
     <string name="upscale">拡大</string>
     <string name="add_image">画像を追加</string>
@@ -387,6 +396,8 @@
     <string name="aspect_ratio_invalid">無効な比率です。2つの正の整数を入力してください。</string>
     <string name="scheduler">スケジューラー</string>
     <string name="extracting">抽出中…</string>
+    <string name="installing">インストール中…</string>
+    <string name="downloading">ダウンロード中…</string>
 
     <!-- History migration -->
     <string name="migration_title">履歴をインポート中</string>

@@ -17,6 +17,7 @@ import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.Model
 import io.github.xororz.localdream.data.ModelRepository
 import io.github.xororz.localdream.data.PatchScanner
+import io.github.xororz.localdream.data.UpscalerRepository
 import io.github.xororz.localdream.remote.RemoteCatalog
 import io.github.xororz.localdream.remote.RemoteHostInfo
 import io.github.xororz.localdream.remote.RemoteHostServer
@@ -352,11 +353,12 @@ class RemoteHostService : Service() {
     // Upscalers installed on this device, with the absolute weight paths the
     // native /upscale endpoint expects in X-Upscaler-Path. The controller
     // echoes the path back when it requests a remote upscale.
-    private fun installedUpscalers(context: Context): List<RemoteUpscalerInfo> = UPSCALER_IDS.mapNotNull { id ->
-        if (!Model.isUpscalerDownloaded(context, id)) return@mapNotNull null
-        val file = File(File(Model.getModelsDir(context), id), Model.UPSCALER_FILE_NAME)
-        RemoteUpscalerInfo(id = id, path = file.absolutePath)
-    }
+    private fun installedUpscalers(context: Context): List<RemoteUpscalerInfo> =
+        UpscalerRepository.builtinUpscalerIds.mapNotNull { id ->
+            if (!Model.isUpscalerDownloaded(context, id)) return@mapNotNull null
+            val file = File(File(Model.getModelsDir(context), id), Model.UPSCALER_FILE_NAME)
+            RemoteUpscalerInfo(id = id, path = file.absolutePath)
+        }
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
@@ -394,9 +396,6 @@ class RemoteHostService : Service() {
         private const val CHANNEL_ID = "remote_host_channel"
         private const val NOTIFICATION_ID = 4
         private const val PREFS_NAME = "app_prefs"
-
-        // Keep in sync with UpscalerRepository's fixed upscaler set.
-        private val UPSCALER_IDS = listOf("upscaler_anime", "upscaler_realistic")
 
         const val ACTION_STOP = "io.github.xororz.localdream.STOP_REMOTE_HOST"
 

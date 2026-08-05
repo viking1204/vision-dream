@@ -6,7 +6,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.edit
-import io.github.xororz.localdream.R
 import io.github.xororz.localdream.remote.RemoteApiClient
 import io.github.xororz.localdream.remote.RemoteCatalog
 import io.github.xororz.localdream.remote.RemoteProtocol
@@ -81,11 +80,7 @@ class RemoteRepository private constructor(private val context: Context) {
      * files live on the host, there is nothing to download here.
      */
     fun remoteUpscalers(): List<UpscalerModel> = upscalerPaths.keys.sorted().map { id ->
-        val nameRes = when (id) {
-            "upscaler_anime" -> R.string.upscaler_anime
-            "upscaler_realistic" -> R.string.upscaler_realistic
-            else -> null
-        }
+        val nameRes = UpscalerRepository.displayNameResFor(id)
         UpscalerModel(
             id = id,
             name = nameRes?.let { context.getString(it) } ?: id,

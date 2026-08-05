@@ -359,6 +359,15 @@
     <string name="upscaler_anime_desc">针对动漫和卡通图像优化</string>
     <string name="upscaler_realistic">真实</string>
     <string name="upscaler_realistic_desc">针对真实照片优化</string>
+    <string name="upscaler_mrj_realesrgan_x4plus_name">Real-ESRGAN x4+</string>
+    <string name="upscaler_mrj_realesrgan_x4plus_desc">QNN 真实感放大模型 (Mr-J-369)</string>
+    <string name="upscaler_mrj_nmkd_siax_name">4x NMKD-Siax</string>
+    <string name="upscaler_mrj_nmkd_siax_desc">QNN 动漫放大模型 (Mr-J-369)</string>
+    <string name="upscaler_mrj_yandere_neoxl_name">4x NMKD-YandereNeoXL</string>
+    <string name="upscaler_mrj_yandere_neoxl_desc">QNN 动漫放大模型 (Mr-J-369)</string>
+    <string name="upscaler_mrj_faces_name">Faces 04 N</string>
+    <string name="upscaler_mrj_faces_desc">QNN 人脸放大模型 (Mr-J-369)</string>
+    <string name="upscaler_archive_missing_weight">放大模型压缩包中未找到权重文件</string>
     <string name="image_upscale">图像超分辨率</string>
     <string name="upscale">超分辨率</string>
     <string name="add_image">添加图像</string>
@@ -387,6 +396,8 @@
     <string name="aspect_ratio_invalid">无效的比例，必须为两个正整数。</string>
     <string name="scheduler">调度器</string>
     <string name="extracting">解压中…</string>
+    <string name="installing">安装中…</string>
+    <string name="downloading">下载中…</string>
 
     <!-- History migration -->
     <string name="migration_title">正在导入历史记录</string>

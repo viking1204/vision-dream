@@ -72,7 +72,12 @@ private fun getDeviceSoc(): String = if (Build.VERSION.SDK_INT >= Build.VERSION_
 }
 
 @Immutable
-data class DownloadProgress(val progress: Float, val downloadedBytes: Long, val totalBytes: Long)
+data class DownloadProgress(
+    val progress: Float,
+    val downloadedBytes: Long,
+    val totalBytes: Long,
+    val bytesPerSecond: Long = 0L,
+)
 
 val chipsetModelSuffixes = mapOf(
     "SM8475" to "8gen1",
@@ -313,6 +318,11 @@ data class Model(
     }
 }
 
+enum class UpscalerBackend {
+    MNN_CPU,
+    QNN_NPU,
+}
+
 @Immutable
 data class UpscalerModel(
     val id: String,
@@ -320,6 +330,8 @@ data class UpscalerModel(
     val description: String,
     val baseUrl: String,
     val fileUri: String,
+    val backend: UpscalerBackend = UpscalerBackend.QNN_NPU,
+    val isZip: Boolean = false,
     val isDownloaded: Boolean = false,
 ) {
     fun startDownload(context: Context) {
@@ -328,7 +340,7 @@ data class UpscalerModel(
             putExtra(ModelDownloadService.EXTRA_MODEL_ID, id)
             putExtra(ModelDownloadService.EXTRA_MODEL_NAME, name)
             putExtra(ModelDownloadService.EXTRA_FILE_URL, "${baseUrl.removeSuffix("/")}/$fileUri")
-            putExtra(ModelDownloadService.EXTRA_IS_ZIP, false)
+            putExtra(ModelDownloadService.EXTRA_IS_ZIP, isZip)
             putExtra(ModelDownloadService.EXTRA_IS_NPU, false)
             putExtra(ModelDownloadService.EXTRA_MODEL_TYPE, "upscaler")
         }
@@ -360,43 +372,26 @@ class UpscalerRepository private constructor(private val context: Context) {
         val soc = getDeviceSoc()
         val suffix = Model.getChipsetSuffix(soc) ?: "min"
 
-        return listOf(
-            createAnimeUpscaler(baseUrl, suffix),
-            createRealisticUpscaler(baseUrl, suffix),
-        )
-    }
+        return BUILTIN_UPSCALERS.map { cfg ->
+            val fileName = if (cfg.isZip) {
+                "${cfg.zipPrefix!!}_$suffix.zip"
+            } else {
+                cfg.fileNameTemplate.replace("%SUFFIX%", suffix)
+            }
+            val fileUri = "${cfg.repoPath}/$fileName"
+            val isDownloaded = Model.isUpscalerDownloaded(context, cfg.id)
 
-    private fun createAnimeUpscaler(baseUrl: String, suffix: String): UpscalerModel {
-        val id = "upscaler_anime"
-        val fileUri =
-            "xororz/upscaler/resolve/main/realesrgan_x4plus_anime_6b/upscaler_$suffix.bin"
-
-        val isDownloaded = Model.isUpscalerDownloaded(context, id)
-
-        return UpscalerModel(
-            id = id,
-            name = context.getString(R.string.upscaler_anime),
-            description = context.getString(R.string.upscaler_anime_desc),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            isDownloaded = isDownloaded,
-        )
-    }
-
-    private fun createRealisticUpscaler(baseUrl: String, suffix: String): UpscalerModel {
-        val id = "upscaler_realistic"
-        val fileUri = "xororz/upscaler/resolve/main/4x_UltraSharpV2_Lite/upscaler_$suffix.bin"
-
-        val isDownloaded = Model.isUpscalerDownloaded(context, id)
-
-        return UpscalerModel(
-            id = id,
-            name = context.getString(R.string.upscaler_realistic),
-            description = context.getString(R.string.upscaler_realistic_desc),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            isDownloaded = isDownloaded,
-        )
+            UpscalerModel(
+                id = cfg.id,
+                name = context.getString(cfg.nameRes),
+                description = context.getString(cfg.descRes),
+                baseUrl = baseUrl,
+                fileUri = fileUri,
+                backend = cfg.backend,
+                isZip = cfg.isZip,
+                isDownloaded = isDownloaded,
+            )
+        }
     }
 
     // Re-read the base URL and rebuild the upscaler list so a base-URL change
@@ -428,6 +423,98 @@ class UpscalerRepository private constructor(private val context: Context) {
     }
 
     companion object {
+        /**
+         * Declarative description of a built-in upscaler repository.
+         *
+         * [repoPath] is the HuggingFace path prefix appended to the configured
+         * base URL. For raw-weight repos the concrete file name comes from
+         * [fileNameTemplate] with `%SUFFIX%` replaced by the chipset suffix; for
+         * archive repos it is `${zipPrefix}_<suffix>.zip`.
+         */
+        private data class BuiltinUpscalerConfig(
+            val id: String,
+            val nameRes: Int,
+            val descRes: Int,
+            val repoPath: String,
+            val zipPrefix: String?,
+            val fileNameTemplate: String,
+            val backend: UpscalerBackend,
+            val isZip: Boolean,
+        )
+
+        private val BUILTIN_UPSCALERS = listOf(
+            BuiltinUpscalerConfig(
+                id = "upscaler_anime",
+                nameRes = R.string.upscaler_anime,
+                descRes = R.string.upscaler_anime_desc,
+                repoPath = "xororz/upscaler/resolve/main/realesrgan_x4plus_anime_6b",
+                zipPrefix = null,
+                fileNameTemplate = "upscaler_%SUFFIX%.bin",
+                backend = UpscalerBackend.QNN_NPU,
+                isZip = false,
+            ),
+            BuiltinUpscalerConfig(
+                id = "upscaler_realistic",
+                nameRes = R.string.upscaler_realistic,
+                descRes = R.string.upscaler_realistic_desc,
+                repoPath = "xororz/upscaler/resolve/main/4x_UltraSharpV2_Lite",
+                zipPrefix = null,
+                fileNameTemplate = "upscaler_%SUFFIX%.bin",
+                backend = UpscalerBackend.QNN_NPU,
+                isZip = false,
+            ),
+            // Mr-J-369 QNN upscale collection, expanded from the HuggingFace
+            // collection into its concrete repositories. Every artifact there is
+            // a per-chipset ZIP that wraps a single QNN context binary.
+            BuiltinUpscalerConfig(
+                id = "upscaler_mrj_realesrgan_x4plus",
+                nameRes = R.string.upscaler_mrj_realesrgan_x4plus_name,
+                descRes = R.string.upscaler_mrj_realesrgan_x4plus_desc,
+                repoPath = "Mr-J-369/RealESRGAN_x4plus-Upscale/resolve/main",
+                zipPrefix = "upscaler_realistic_qnn2.28",
+                fileNameTemplate = "",
+                backend = UpscalerBackend.QNN_NPU,
+                isZip = true,
+            ),
+            BuiltinUpscalerConfig(
+                id = "upscaler_mrj_nmkd_siax",
+                nameRes = R.string.upscaler_mrj_nmkd_siax_name,
+                descRes = R.string.upscaler_mrj_nmkd_siax_desc,
+                repoPath = "Mr-J-369/4x_NMKD-Siax_200k-Upscale/resolve/main",
+                zipPrefix = "upscaler__qnn2.28",
+                fileNameTemplate = "",
+                backend = UpscalerBackend.QNN_NPU,
+                isZip = true,
+            ),
+            BuiltinUpscalerConfig(
+                id = "upscaler_mrj_yandere_neoxl",
+                nameRes = R.string.upscaler_mrj_yandere_neoxl_name,
+                descRes = R.string.upscaler_mrj_yandere_neoxl_desc,
+                repoPath = "Mr-J-369/4x_NMKD-YandereNeoXL_200k-Upscale/resolve/main",
+                zipPrefix = "upscaler_anime_qnn2.28",
+                fileNameTemplate = "",
+                backend = UpscalerBackend.QNN_NPU,
+                isZip = true,
+            ),
+            BuiltinUpscalerConfig(
+                id = "upscaler_mrj_faces",
+                nameRes = R.string.upscaler_mrj_faces_name,
+                descRes = R.string.upscaler_mrj_faces_desc,
+                repoPath = "Mr-J-369/Faces_04_N-Upscale/resolve/main",
+                zipPrefix = "upscaler_realistic_qnn2.28",
+                fileNameTemplate = "",
+                backend = UpscalerBackend.QNN_NPU,
+                isZip = true,
+            ),
+        )
+
+        /** Ids of every built-in upscaler, in presentation order. */
+        val builtinUpscalerIds: List<String> = BUILTIN_UPSCALERS.map { it.id }
+
+        /** Localized name resource for a built-in upscaler id, or null. */
+        fun displayNameResFor(upscalerId: String): Int? =
+            BUILTIN_UPSCALERS.firstOrNull { it.id == upscalerId }?.nameRes
+
         @SuppressLint("StaticFieldLeak")
         @Volatile
         private var instance: UpscalerRepository? = null
@@ -952,9 +1039,7 @@ class ModelRepository private constructor(private val context: Context) {
             // SD 1.5 CPU
             "anythingv5cpu", "qteamixcpu", "cuteyukimixcpu",
             "absoluterealitycpu", "chilloutmixcpu",
-            // Upscalers
-            "upscaler_anime", "upscaler_realistic",
-        )
+        ) + UpscalerRepository.builtinUpscalerIds
 
         fun isReservedModelId(id: String): Boolean = id in RESERVED_MODEL_IDS
 

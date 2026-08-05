@@ -384,6 +384,15 @@
     <string name="upscaler_anime_desc">Optimized for anime and cartoon images</string>
     <string name="upscaler_realistic">Realistic</string>
     <string name="upscaler_realistic_desc">Optimized for realistic photos</string>
+    <string name="upscaler_mrj_realesrgan_x4plus_name">Real-ESRGAN x4+</string>
+    <string name="upscaler_mrj_realesrgan_x4plus_desc">QNN upscale model (Mr-J-369)</string>
+    <string name="upscaler_mrj_nmkd_siax_name">4x NMKD-Siax</string>
+    <string name="upscaler_mrj_nmkd_siax_desc">QNN anime upscale model (Mr-J-369)</string>
+    <string name="upscaler_mrj_yandere_neoxl_name">4x NMKD-YandereNeoXL</string>
+    <string name="upscaler_mrj_yandere_neoxl_desc">QNN anime upscale model (Mr-J-369)</string>
+    <string name="upscaler_mrj_faces_name">Faces 04 N</string>
+    <string name="upscaler_mrj_faces_desc">QNN face upscale model (Mr-J-369)</string>
+    <string name="upscaler_archive_missing_weight">No weight file found in the upscale model archive</string>
     <string name="image_upscale">Image Upscale</string>
     <string name="upscale">Upscale</string>
     <string name="add_image">Add Image</string>
@@ -415,6 +424,8 @@
     <string name="aspect_ratio_invalid">Invalid ratio. Must be two positive integers.</string>
     <string name="scheduler">Scheduler</string>
     <string name="extracting">Extracting…</string>
+    <string name="installing">Installing…</string>
+    <string name="downloading">Downloading…</string>
 
     <!-- History migration -->
     <string name="migration_title">Importing history</string>

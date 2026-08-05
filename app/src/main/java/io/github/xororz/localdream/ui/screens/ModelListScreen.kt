@@ -81,7 +81,6 @@ import io.github.xororz.localdream.service.ModelDownloadService
 import io.github.xororz.localdream.service.OpenAiApiService
 import io.github.xororz.localdream.ui.components.BlockingProgressOverlay
 import io.github.xororz.localdream.ui.components.SmoothCircularWavyProgressIndicator
-import io.github.xororz.localdream.ui.components.SmoothLinearWavyProgressIndicator
 import io.github.xororz.localdream.ui.theme.Motion
 import java.io.File
 import java.text.DecimalFormat
@@ -266,6 +265,9 @@ fun ModelListScreen(
 
     var downloadingModel by remember { mutableStateOf<Model?>(null) }
     var currentProgress by remember { mutableStateOf<DownloadProgress?>(null) }
+    // "extracting" / "installing" phases carry no byte progress but should still
+    // keep the card's inline progress UI alive and offer a cancel action.
+    var processingPhase by remember { mutableStateOf<String?>(null) }
     var localSearchQuery by remember { mutableStateOf("") }
     var downloadError by remember { mutableStateOf<String?>(null) }
     var showDownloadConfirm by remember { mutableStateOf<Model?>(null) }
@@ -322,10 +324,12 @@ fun ModelListScreen(
                     val model = modelRepository.models.find { it.id == state.modelId }
                     if (model != null) {
                         downloadingModel = model
+                        processingPhase = null
                         currentProgress = DownloadProgress(
                             progress = state.progress,
                             downloadedBytes = state.downloadedBytes,
                             totalBytes = state.totalBytes,
+                            bytesPerSecond = state.bytesPerSecond,
                         )
                     }
                 }
@@ -334,11 +338,13 @@ fun ModelListScreen(
                     val model = modelRepository.models.find { it.id == state.modelId }
                     if (model != null) {
                         downloadingModel = model
+                        processingPhase = "extracting"
                         currentProgress = null
                     }
                 }
 
                 is ModelDownloadService.DownloadState.Installing -> {
+                    processingPhase = "installing"
                     currentProgress = null
                 }
 
@@ -349,6 +355,7 @@ fun ModelListScreen(
                     modelRepository.refreshAllModels()
                     downloadingModel = null
                     currentProgress = null
+                    processingPhase = null
                     // Fire-and-forget so the snackbar's display time does not
                     // block this collector from seeing further states.
                     scope.launch { snackbarHostState.showSnackbar(msgDownloadDone) }
@@ -357,6 +364,7 @@ fun ModelListScreen(
                 is ModelDownloadService.DownloadState.AlreadyInstalled -> {
                     downloadingModel = null
                     currentProgress = null
+                    processingPhase = null
                     scope.launch {
                         snackbarHostState.showSnackbar(msgModelAlreadyInstalled)
                     }
@@ -365,11 +373,13 @@ fun ModelListScreen(
                 is ModelDownloadService.DownloadState.Cancelled -> {
                     downloadingModel = null
                     currentProgress = null
+                    processingPhase = null
                 }
 
                 is ModelDownloadService.DownloadState.Error -> {
                     downloadingModel = null
                     currentProgress = null
+                    processingPhase = null
                     downloadError = state.message
                 }
 
@@ -377,6 +387,7 @@ fun ModelListScreen(
                     if (downloadingModel != null) {
                         downloadingModel = null
                         currentProgress = null
+                        processingPhase = null
                     }
                 }
             }
@@ -1023,6 +1034,7 @@ fun ModelListScreen(
                                 servingModelId == model.id,
                             unloadEnabled = !backendBusy,
                             onClick = {
+                                if (downloadingModel?.id == model.id) return@ModelCard
                                 if (remoteActive) {
                                     // The model runs on the host device, so this
                                     // device's SoC support is irrelevant; just
@@ -1120,6 +1132,11 @@ fun ModelListScreen(
                                 selectedModels = setOf(model)
                                 showDeleteConfirm = true
                             },
+                            downloadProgress = if (downloadingModel?.id == model.id) currentProgress else null,
+                            downloadPhase = if (downloadingModel?.id == model.id) processingPhase else null,
+                            onCancelDownload = if (downloadingModel?.id == model.id) {
+                                { ModelDownloadService.cancel(context, model.id) }
+                            } else null,
                         )
                     }
 
@@ -1319,59 +1336,6 @@ fun ModelListScreen(
         }
     }
 
-    BlockingProgressOverlay(
-        visible = downloadingModel != null,
-        minWidth = 320.dp,
-        innerPadding = 24.dp,
-        verticalSpacing = 24.dp,
-    ) {
-        Text(
-            text = stringResource(R.string.downloading_model, downloadingModel?.name ?: ""),
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center,
-        )
-
-        currentProgress?.let { progress ->
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                SmoothLinearWavyProgressIndicator(
-                    progress = progress.progress,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                Text(
-                    text = "${(progress.progress * 100).toInt()}% - ${formatBytes(progress.downloadedBytes)} / ${
-                        formatBytes(progress.totalBytes)
-                    }",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontFeatureSettings = "tnum",
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        } ?: Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            ContainedLoadingIndicator()
-            Text(
-                text = stringResource(R.string.extracting),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        Text(
-            text = stringResource(R.string.download_background_hint),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-    }
 }
 
 internal fun formatBytes(bytes: Long): String = when {
@@ -1508,6 +1472,9 @@ fun ModelCard(
     onCopyIdClick: () -> Unit = {},
     onRenameClick: () -> Unit = {},
     onDeleteClick: () -> Unit = {},
+    downloadProgress: DownloadProgress? = null,
+    downloadPhase: String? = null,
+    onCancelDownload: (() -> Unit)? = null,
 ) {
     val isDisabledInSelection = !model.isDownloaded && isSelectionMode
 
@@ -1713,6 +1680,15 @@ fun ModelCard(
                     }
 
                     when {
+                        downloadProgress != null || downloadPhase != null -> {
+                            DownloadProgressRow(
+                                progress = downloadProgress,
+                                phase = downloadPhase,
+                                secondaryContent = secondaryContent,
+                                onCancelDownload = onCancelDownload,
+                            )
+                        }
+
                         model.isDownloaded -> {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -1877,6 +1853,86 @@ fun ModelCard(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun DownloadProgressRow(
+    progress: DownloadProgress?,
+    phase: String?,
+    secondaryContent: Color,
+    onCancelDownload: (() -> Unit)?,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (progress != null) {
+            LinearProgressIndicator(
+                progress = { progress.progress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                val speedPart = if (progress.bytesPerSecond > 0) {
+                    "  ${formatBytes(progress.bytesPerSecond)}/s"
+                } else ""
+                Text(
+                    text = if (progress.totalBytes > 0) {
+                        "${formatBytes(progress.downloadedBytes)} / ${
+                            formatBytes(progress.totalBytes)
+                        }$speedPart"
+                    } else {
+                        formatBytes(progress.downloadedBytes)
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = secondaryContent,
+                )
+                if (onCancelDownload != null) {
+                    TextButton(
+                        onClick = onCancelDownload,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.cancel),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+            }
+        } else {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = when (phase) {
+                        "extracting" -> stringResource(R.string.extracting)
+                        "installing" -> stringResource(R.string.installing)
+                        else -> stringResource(R.string.downloading)
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = secondaryContent,
+                )
+                if (onCancelDownload != null) {
+                    TextButton(
+                        onClick = onCancelDownload,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.cancel),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

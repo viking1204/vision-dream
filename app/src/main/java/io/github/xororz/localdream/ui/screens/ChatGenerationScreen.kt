@@ -2,7 +2,6 @@ package io.github.xororz.localdream.ui.screens
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
@@ -90,11 +89,10 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -119,7 +117,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import io.github.xororz.localdream.R
-import io.github.xororz.localdream.data.AssetOrigin
 import io.github.xororz.localdream.data.CreationDraft
 import io.github.xororz.localdream.data.GenerationDefaults
 import io.github.xororz.localdream.data.GenerationMode
@@ -132,12 +129,8 @@ import io.github.xororz.localdream.data.ModelTagDerivation
 import io.github.xororz.localdream.navigation.Screen
 import io.github.xororz.localdream.navigation.popBackStackIfResumed
 import io.github.xororz.localdream.openai.BackendRuntimeCoordinator
-import io.github.xororz.localdream.openai.ImageRequestParameters
-import io.github.xororz.localdream.openai.InferenceArbiter
 import io.github.xororz.localdream.openai.InstalledModelCatalog
-import io.github.xororz.localdream.openai.NativeBackendClient
 import io.github.xororz.localdream.service.BackendService
-import io.github.xororz.localdream.service.NativeRuntimeAttestationRecorder
 import io.github.xororz.localdream.ui.components.GenerationQueueBar
 import io.github.xororz.localdream.ui.components.GenerationQueueSheet
 import io.github.xororz.localdream.ui.components.PromptPickerDialog
@@ -146,16 +139,11 @@ import io.github.xororz.localdream.ui.components.ZoomableImageOverlay
 import io.github.xororz.localdream.utils.ParamShare
 import io.github.xororz.localdream.utils.schedulerDisplayName
 import java.util.UUID
-import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.roundToInt
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
-private data class ChatGenerationSettings(
+internal data class ChatGenerationSettings(
     val width: Int,
     val height: Int,
     val steps: Int,
@@ -171,7 +159,7 @@ private data class ChatGenerationSettings(
  * while a run is in flight: later edits to the prompt, mode or advanced
  * settings cannot retro-actively mutate an already queued request.
  */
-private class PendingChatRequest(
+internal class PendingChatRequest(
     val entry: InstalledModelCatalog.Entry,
     val prompt: String,
     val negativePrompt: String,
@@ -183,7 +171,7 @@ private class PendingChatRequest(
 )
 
 /** Rebuilds an in-memory request from a queue entry restored out of DataStore. */
-private fun PendingChatRequest(
+internal fun PendingChatRequest(
     entry: InstalledModelCatalog.Entry,
     task: GenerationTask,
 ): PendingChatRequest = PendingChatRequest(
@@ -206,7 +194,7 @@ private fun PendingChatRequest(
 
 /** Generation modes exposed by the chat composer. Keeps prompt and model
  *  context when switched; image-based modes require a source image. */
-private enum class ChatMode(val key: String) {
+internal enum class ChatMode(val key: String) {
     TXT2IMG("TXT2IMG"),
     IMG2IMG("IMG2IMG"),
     INPAINT("INPAINT"),
@@ -275,10 +263,12 @@ fun ChatGenerationScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val catalog = remember { InstalledModelCatalog(context) }
     val coordinator = remember { BackendRuntimeCoordinator(context) }
-    val backendClient = remember { NativeBackendClient() }
     val historyManager = remember { HistoryManager(context) }
     val generationPreferences = remember { GenerationPreferences(context) }
-    val messages = remember { mutableStateListOf<ChatGenerationMessage>() }
+    // The run lifecycle lives outside the composition so leaving this tab no
+    // longer aborts an in-flight generation; see ChatGenerationSession.
+    val session = ChatGenerationSession
+    val messages = session.messages
     val listState = rememberLazyListState()
     // G8: multi-select mode for deleting conversation messages. Deleting only
     // removes entries from this in-memory list + the stored chat JSON; asset
@@ -314,18 +304,16 @@ fun ChatGenerationScreen(
     var showModelPicker by remember { mutableStateOf(false) }
     var showAdvancedSettings by remember { mutableStateOf(false) }
     var showPromptPicker by remember { mutableStateOf(false) }
-    var isGenerating by remember { mutableStateOf(false) }
-    val pendingQueue = remember { mutableStateListOf<PendingChatRequest>() }
-    var runningTask by remember { mutableStateOf<GenerationTask?>(null) }
+    val isGenerating by session.isGeneratingState
+    val pendingQueue = session.pendingQueue
+    val runningTask by session.runningTaskState
     var showQueuePanel by remember { mutableStateOf(false) }
-    var queueRestored by remember { mutableStateOf(false) }
+    var queueRestored by session.queueRestoredState
     // A queue restored from a previous process must not start on its own: the
     // user opens the app, they do not expect the GPU to be busy immediately.
-    var queueAutoRun by remember { mutableStateOf(true) }
+    val queueAutoRun by session.queueAutoRunState
     val smartSortEnabled by generationPreferences.observeQueueSmartSort()
         .collectAsState(initial = false)
-    var activeJob by remember { mutableStateOf<Job?>(null) }
-    var nextMessageId by remember { mutableLongStateOf(0L) }
 
     var chatMode by rememberSaveable { mutableStateOf(ChatMode.TXT2IMG) }
     var sourceImageBytes by remember { mutableStateOf<ByteArray?>(null) }
@@ -373,9 +361,22 @@ fun ChatGenerationScreen(
     val sourceImageRequired = stringResource(R.string.chat_generation_source_image_required)
     val selectModelRequired = stringResource(R.string.chat_generation_select_at_least_one_model)
 
-    fun nextId(): Long {
-        nextMessageId += 1L
-        return nextMessageId
+    fun nextId(): Long = session.nextId()
+
+    // Re-installed on every entry so the long-lived runner always holds the
+    // current locale's strings, and never cleared: a run that outlives this
+    // composition still needs somewhere to write its result.
+    SideEffect {
+        session.installEnvironment(
+            ChatGenerationSession.Environment(
+                context = context,
+                coordinator = coordinator,
+                historyManager = historyManager,
+                generationPreferences = generationPreferences,
+                busyMessage = busyMessage,
+                genericError = genericError,
+            ),
+        )
     }
 
     fun applyModelDefaults(entry: InstalledModelCatalog.Entry) {
@@ -436,14 +437,13 @@ fun ChatGenerationScreen(
     // 恢复上一次的创作对话，让创作历史在进程被杀/App 重启后仍能保留。
     // 图片复用统一资产管理器已落盘的文件；文件已不存在的图会被丢弃。
     LaunchedEffect(Unit) {
-        generationPreferences.getChatHistoryJson()?.let { raw ->
-            chatHistoryFromJson(raw)?.let { restored ->
-                if (restored.isNotEmpty()) {
-                    messages.addAll(restored)
-                    nextMessageId = restored.maxOf { it.id } + 1L
-                }
-            }
-        }
+        if (session.historyRestoredState.value) return@LaunchedEffect
+        val restored = generationPreferences.getChatHistoryJson()
+            ?.let { chatHistoryFromJson(it) }
+            .orEmpty()
+        // The transcript now outlives the composition, so replaying it on every
+        // visit would duplicate the whole conversation.
+        session.restoreHistory(restored)
     }
 
     LaunchedEffect(
@@ -502,118 +502,6 @@ fun ChatGenerationScreen(
             initialScrollDone = true
         } else {
             listState.animateScrollToItem(lastIndex)
-        }
-    }
-
-    DisposableEffect(backendClient) {
-        onDispose {
-            // Cancelling the socket makes the native backend abandon a result
-            // that no longer has a visible consumer. The job's finally block
-            // still releases the process-wide app inference lease.
-            backendClient.cancelAll()
-            activeJob?.cancel()
-        }
-    }
-
-    fun startGeneration(request: PendingChatRequest) {
-        if (!InferenceArbiter.process.tryAcquireForApp()) {
-            messages += ChatGenerationMessage.Error(nextId(), busyMessage)
-            return
-        }
-        val entry = request.entry
-        val settings = request.settings
-        val submittedPrompt = request.prompt
-        val submittedNegativePrompt = request.negativePrompt
-        val sourceImage = request.sourceImage
-        val requestMode = request.chatMode
-        isGenerating = true
-        runningTask = request.task.copy(status = GenerationTaskStatus.RUNNING)
-        activeJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            val startedAt = SystemClock.elapsedRealtime()
-            try {
-                val dimensions = coordinator.ensureReady(
-                    entry = entry,
-                    requestedWidth = settings.width,
-                    requestedHeight = settings.height,
-                )
-                val image = withContext(Dispatchers.IO) {
-                    completeChatNativeGeneration(
-                        generate = {
-                            backendClient.generate(
-                                parameters = ImageRequestParameters(
-                                    modelId = entry.id,
-                                    prompt = submittedPrompt,
-                                    negativePrompt = submittedNegativePrompt,
-                                    width = dimensions.first,
-                                    height = dimensions.second,
-                                    steps = settings.steps,
-                                    cfg = settings.cfg,
-                                    seed = settings.seed,
-                                    scheduler = settings.scheduler,
-                                    sourceImage = sourceImage,
-                                ),
-                                width = dimensions.first,
-                                height = dimensions.second,
-                            )
-                        },
-                        // A returned native image is the only success boundary. Exceptions
-                        // and coroutine cancellation escape before this callback is reached.
-                        onNativeGenerationSuccess = {
-                            NativeRuntimeAttestationRecorder.record(context, entry.id)
-                        },
-                    )
-                }
-                val generationTime = (
-                    (SystemClock.elapsedRealtime() - startedAt) / 1000f
-                    ).let { "%.1fs".format(it) }
-                val saved = historyManager.enqueueEncodedImageSave(
-                    modelId = entry.id,
-                    encodedImage = image.bytes,
-                    mimeType = image.mimeType,
-                    params = GenerationParameters(
-                        steps = settings.steps,
-                        cfg = settings.cfg,
-                        seed = image.seed ?: settings.seed,
-                        prompt = submittedPrompt,
-                        negativePrompt = submittedNegativePrompt,
-                        generationTime = generationTime,
-                        width = dimensions.first,
-                        height = dimensions.second,
-                        runOnCpu = entry.model?.runOnCpu == true,
-                        scheduler = settings.scheduler,
-                        mode = requestMode.toGenerationMode(),
-                    ),
-                    mode = requestMode.toGenerationMode(),
-                    origin = AssetOrigin.CHAT_GENERATION,
-                ).await()
-                messages += ChatGenerationMessage.Image(
-                    id = nextId(),
-                    file = saved?.imageFile,
-                    fallbackBytes = image.bytes.takeIf { saved == null },
-                    modelName = entry.name,
-                    width = dimensions.first,
-                    height = dimensions.second,
-                    seed = image.seed ?: settings.seed,
-                    prompt = submittedPrompt,
-                    negativePrompt = submittedNegativePrompt,
-                    steps = settings.steps,
-                    cfg = settings.cfg,
-                    scheduler = settings.scheduler,
-                    generationTime = generationTime,
-                )
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                messages += ChatGenerationMessage.Error(
-                    id = nextId(),
-                    message = error.message ?: genericError,
-                )
-            } finally {
-                InferenceArbiter.process.releaseFromApp()
-                isGenerating = false
-                runningTask = null
-                activeJob = null
-            }
         }
     }
 
@@ -679,13 +567,12 @@ fun ChatGenerationScreen(
                 // the task actually runs, so one generation = one message.
                 prompt = TextFieldValue()
                 keyboardController?.hide()
-                // An explicit submit is also the consent to drain anything that
-                // was restored from a previous session.
-                queueAutoRun = true
                 // The composer stays editable during a run, so extra submissions
                 // queue up instead of being rejected by the inference arbiter.
-                // All per-model tasks drain sequentially through the arbiter.
-                pendingQueue.addAll(requests)
+                // All per-model tasks drain sequentially through the arbiter,
+                // and an explicit submit is also the consent to drain anything
+                // restored from a previous session.
+                session.enqueue(requests)
             }
         }
     }
@@ -700,12 +587,9 @@ fun ChatGenerationScreen(
             installedModels.firstOrNull { it.id == task.modelId }
                 ?.let { entry -> PendingChatRequest(entry = entry, task = task) }
         }
-        if (revived.isNotEmpty()) {
-            // Only park when the user has not already started working: an
-            // in-session submit is explicit consent to keep draining.
-            if (!isGenerating && pendingQueue.isEmpty()) queueAutoRun = false
-            pendingQueue.addAll(revived)
-        }
+        // Parks the revived queue unless the user has already started working:
+        // an in-session submit is explicit consent to keep draining.
+        session.adoptRestoredQueue(revived)
         queueRestored = true
     }
 
@@ -723,7 +607,7 @@ fun ChatGenerationScreen(
         }
     }
 
-    val queueTasks = listOfNotNull(runningTask) + pendingQueue.map { it.task }
+    val queueTasks = session.queueTasks()
 
     // Persist on any membership or status change. Skipped until the restore has
     // run, otherwise the first empty composition would wipe the stored queue.
@@ -735,10 +619,10 @@ fun ChatGenerationScreen(
 
     // Drains the queue on the idle edge: exactly one request starts per
     // completed run, so the native backend never sees concurrent sessions.
+    // This only covers edges observed while the screen is composed; a run that
+    // finishes in the background chains the next one from the session itself.
     LaunchedEffect(isGenerating, pendingQueue.size, queueAutoRun) {
-        if (queueAutoRun && !isGenerating && pendingQueue.isNotEmpty()) {
-            startGeneration(pendingQueue.removeAt(0))
-        }
+        session.drainNext()
     }
 
     val allMessagesSelected = messages.isNotEmpty() &&
@@ -1075,7 +959,7 @@ fun ChatGenerationScreen(
             onDismiss = { showQueuePanel = false },
             onStartQueue = if (!queueAutoRun && pendingQueue.isNotEmpty()) {
                 {
-                    queueAutoRun = true
+                    session.startQueue()
                     showQueuePanel = false
                 }
             } else {
@@ -1819,6 +1703,38 @@ private fun ComposerAttachmentChip(
     }
 }
 
+/**
+ * Height of the picker's tag chips.
+ *
+ * `FilterChipDefaults.Height` is 32.dp and content padding alone cannot shrink
+ * it, so the chip row stays taller than the text it holds. Pinning an exact
+ * height is the only way to make a long tag list read as a dense filter strip
+ * rather than a stack of buttons.
+ */
+private val CHAT_TAG_CHIP_HEIGHT = 26.dp
+
+@Composable
+private fun ChatGenerationTagChip(
+    selected: Boolean,
+    label: String,
+    onClick: () -> Unit,
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        modifier = Modifier.height(CHAT_TAG_CHIP_HEIGHT),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatGenerationModelPicker(
@@ -1837,7 +1753,7 @@ private fun ChatGenerationModelPicker(
     val availableTags = remember(models) {
         ModelTagDerivation.collectTags(models.mapNotNull { it.model })
     }
-    val filtered = remember(models, query, selectedTag) {
+    val filtered = remember(models, query, selectedTag, selectedModelIds) {
         models.filter { entry ->
             val tags = entry.model?.let { ModelTagDerivation.deriveTags(it) }.orEmpty()
             val matchesTag = selectedTag == null || selectedTag in tags
@@ -1845,6 +1761,10 @@ private fun ChatGenerationModelPicker(
             val matchesQuery = query.isBlank() || haystack.contains(query, ignoreCase = true)
             matchesTag && matchesQuery
         }
+            // Checked models pin to the top: a multi-model batch stays in view
+            // while the user keeps searching for the next one to add, instead
+            // of scattering across a long alphabetical list.
+            .sortedByDescending { it.id in selectedModelIds }
     }
 
     ModalBottomSheet(
@@ -1870,17 +1790,6 @@ private fun ChatGenerationModelPicker(
                 },
                 trailingIcon = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (selectedModelIds.isNotEmpty()) {
-                            IconButton(
-                                onClick = onClearAll,
-                                modifier = Modifier.size(32.dp),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.ClearAll,
-                                    contentDescription = stringResource(R.string.chat_generation_clear_selection),
-                                )
-                            }
-                        }
                         if (query.isNotEmpty()) {
                             IconButton(
                                 onClick = { query = "" },
@@ -1909,47 +1818,44 @@ private fun ChatGenerationModelPicker(
             if (availableTags.isNotEmpty()) {
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    FilterChip(
+                    ChatGenerationTagChip(
                         selected = selectedTag == null,
+                        label = stringResource(R.string.chat_generation_model_filter_all),
                         onClick = { selectedTag = null },
-                        label = {
-                            Text(stringResource(R.string.chat_generation_model_filter_all))
-                        },
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                     )
                     if (tagsExpanded) {
                         availableTags.forEach { tag ->
-                            FilterChip(
+                            ChatGenerationTagChip(
                                 selected = selectedTag == tag,
+                                label = tag,
                                 onClick = { selectedTag = if (selectedTag == tag) null else tag },
-                                label = { Text(tag) },
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                             )
                         }
                     } else if (selectedTag != null) {
-                        FilterChip(
+                        ChatGenerationTagChip(
                             selected = true,
+                            label = selectedTag!!,
                             onClick = { selectedTag = null },
-                            label = { Text(selectedTag!!) },
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                         )
                     }
                     AssistChip(
                         onClick = { tagsExpanded = !tagsExpanded },
                         label = {
                             Text(
-                                stringResource(
+                                text = stringResource(
                                     if (tagsExpanded) {
                                         R.string.collapse_tags
                                     } else {
                                         R.string.more_tags
                                     },
                                 ),
+                                style = MaterialTheme.typography.labelSmall,
                             )
                         },
+                        modifier = Modifier.height(CHAT_TAG_CHIP_HEIGHT),
                         leadingIcon = {
                             Icon(
                                 imageVector = if (tagsExpanded) {
@@ -1958,11 +1864,11 @@ private fun ChatGenerationModelPicker(
                                     Icons.Default.ExpandMore
                                 },
                                 contentDescription = null,
-                                modifier = Modifier.size(AssistChipDefaults.IconSize),
+                                modifier = Modifier.size(14.dp),
                             )
                         },
                         border = null,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
                         colors = AssistChipDefaults.assistChipColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                             labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1971,18 +1877,50 @@ private fun ChatGenerationModelPicker(
                     )
                 }
             }
+            if (selectedModelIds.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(
+                            R.string.chat_generation_models_selected,
+                            selectedModelIds.size,
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    // Icon-only on purpose: the counter next to it already
+                    // says what gets cleared, so a text label would just eat
+                    // width in an already dense sheet header.
+                    IconButton(
+                        onClick = onClearAll,
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.ClearAll,
+                            contentDescription = stringResource(
+                                R.string.chat_generation_clear_selection,
+                            ),
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            }
             LazyColumn(modifier = Modifier.heightIn(max = 600.dp)) {
                 items(filtered, key = { it.id }) { entry ->
                     val tags = entry.model?.let { ModelTagDerivation.deriveTags(it) }.orEmpty()
                     ListItem(
                         headlineContent = { Text(entry.name) },
                         supportingContent = {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
                                     text = entry.model?.description?.takeIf { it.isNotBlank() }
                                         ?: entry.id,
                                     style = MaterialTheme.typography.bodySmall,
                                     maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                                 if (tags.isNotEmpty()) {
                                     Text(

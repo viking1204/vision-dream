@@ -359,6 +359,15 @@
     <string name="upscaler_anime_desc">애니풍 및 만화 이미지에 최적화되어 있습니다</string>
     <string name="upscaler_realistic">실사</string>
     <string name="upscaler_realistic_desc">실사 사진에 최적화되어 있습니다</string>
+    <string name="upscaler_mrj_realesrgan_x4plus_name">Real-ESRGAN x4+</string>
+    <string name="upscaler_mrj_realesrgan_x4plus_desc">QNN 실사 업스케일 모델 (Mr-J-369)</string>
+    <string name="upscaler_mrj_nmkd_siax_name">4x NMKD-Siax</string>
+    <string name="upscaler_mrj_nmkd_siax_desc">QNN 애니풍 업스케일 모델 (Mr-J-369)</string>
+    <string name="upscaler_mrj_yandere_neoxl_name">4x NMKD-YandereNeoXL</string>
+    <string name="upscaler_mrj_yandere_neoxl_desc">QNN 애니풍 업스케일 모델 (Mr-J-369)</string>
+    <string name="upscaler_mrj_faces_name">Faces 04 N</string>
+    <string name="upscaler_mrj_faces_desc">QNN 얼굴 업스케일 모델 (Mr-J-369)</string>
+    <string name="upscaler_archive_missing_weight">업스케일 모델 아카이브에서 가중치 파일을 찾을 수 없습니다</string>
     <string name="image_upscale">이미지 업스케일</string>
     <string name="upscale">업스케일</string>
     <string name="add_image">이미지 추가</string>
@@ -387,6 +396,8 @@
     <string name="aspect_ratio_invalid">잘못된 비율입니다. 양의 정수 두 개여야 합니다.</string>
     <string name="scheduler">스케줄러</string>
     <string name="extracting">추출 중…</string>
+    <string name="installing">설치 중…</string>
+    <string name="downloading">다운로드 중…</string>
 
     <!-- History migration -->
     <string name="migration_title">기록을 가져오는 중</string>

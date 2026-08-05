@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import android.util.Log
@@ -68,6 +69,17 @@ class ModelDownloadService : Service() {
         private val _downloadState = MutableStateFlow<DownloadState>(DownloadState.Idle)
         val downloadState: StateFlow<DownloadState> = _downloadState
 
+        /** Cancels an in-flight download from the UI. The service is already
+         * running in the foreground, so this just re-delivers the cancel action
+         * to the live instance. */
+        fun cancel(context: Context, modelId: String) {
+            val intent = Intent(context, ModelDownloadService::class.java).apply {
+                action = ACTION_CANCEL_DOWNLOAD
+                putExtra(EXTRA_MODEL_ID, modelId)
+            }
+            context.startService(intent)
+        }
+
         const val ACTION_START_DOWNLOAD = "action_start_download"
         const val ACTION_CANCEL_DOWNLOAD = "action_cancel_download"
 
@@ -84,6 +96,9 @@ class ModelDownloadService : Service() {
         const val EXTRA_CATALOG_INSTALL_EXPECTATION = "catalog_install_expectation"
         const val EXTRA_MODEL_METADATA_JSON = "model_metadata_json"
 
+        /** Weight file extensions recognised inside an upscaler archive. */
+        private val UPSCALER_WEIGHT_EXTENSIONS = setOf("bin", "mnn")
+
         const val INSTALL_KIND_LOCAL_DREAM_ZIP = "local_dream_zip"
         const val INSTALL_KIND_LOCAL_DREAM_DIRECTORY = "local_dream_directory"
         const val INSTALL_KIND_SD15_CHECKPOINT = "sd15_checkpoint"
@@ -96,6 +111,7 @@ class ModelDownloadService : Service() {
             val progress: Float,
             val downloadedBytes: Long,
             val totalBytes: Long,
+            val bytesPerSecond: Long = 0L,
         ) : DownloadState()
 
         data class Extracting(val modelId: String) : DownloadState()
@@ -389,9 +405,39 @@ class ModelDownloadService : Service() {
                                 }
 
                                 currentCoroutineContext().ensureActive()
-                                if (!downloadedArtifact.renameTo(targetFile)) {
-                                    copyFileCancellable(downloadedArtifact, targetFile)
+                                val weightSource = if (isZip) {
+                                    // Archive-packaged upscalers wrap a single weight
+                                    // file. Extract it and normalise the name so the
+                                    // rest of the app keeps addressing upscaler.bin.
+                                    val stagingDir = File(
+                                        ModelStorage.requireStagingDir(
+                                            this@ModelDownloadService,
+                                        ),
+                                        "${modelId}_${System.currentTimeMillis()}_extract",
+                                    )
+                                    extractTempDir = stagingDir
+                                    stagingDir.mkdirs()
+
+                                    _downloadState.value = DownloadState.Extracting(modelId)
+                                    updateNotification(
+                                        modelId,
+                                        modelName,
+                                        0f,
+                                        isExtracting = true,
+                                    )
+
+                                    unzipFile(downloadedArtifact, stagingDir)
+                                    currentCoroutineContext().ensureActive()
+                                    findUpscalerWeight(stagingDir)
+                                } else {
+                                    downloadedArtifact
                                 }
+
+                                if (!weightSource.renameTo(targetFile)) {
+                                    copyFileCancellable(weightSource, targetFile)
+                                }
+                                extractTempDir?.deleteRecursively()
+                                extractTempDir = null
                             }
                         }
                     }
@@ -513,6 +559,7 @@ class ModelDownloadService : Service() {
                 }
                 var downloadedBytes = 0L
                 var lastUpdateTime = 0L
+                var lastBytes = 0L
                 val digest = expectedSha256?.let { MessageDigest.getInstance("SHA-256") }
                 val coroutineContext = currentCoroutineContext()
 
@@ -546,7 +593,15 @@ class ModelDownloadService : Service() {
                             if (currentTime - lastUpdateTime >= 500 ||
                                 downloadedBytes == totalBytes
                             ) {
+                                val elapsedMs = currentTime - lastUpdateTime
+                                val bytesPerSecond = if (lastUpdateTime > 0L && elapsedMs > 0) {
+                                    ((downloadedBytes - lastBytes) * 1000L / elapsedMs)
+                                        .coerceAtLeast(0L)
+                                } else {
+                                    0L
+                                }
                                 lastUpdateTime = currentTime
+                                lastBytes = downloadedBytes
                                 val reportedTotal = when {
                                     aggregateTotalBytes != null -> aggregateTotalBytes
                                     maximumAggregateBytes != null -> 0L
@@ -564,6 +619,7 @@ class ModelDownloadService : Service() {
                                     progress,
                                     reportedDownloaded,
                                     reportedTotal,
+                                    bytesPerSecond,
                                 )
 
                                 updateNotification(modelId, modelName, progress)
@@ -600,6 +656,20 @@ class ModelDownloadService : Service() {
         } finally {
             cancellationWatcher.cancel()
         }
+    }
+
+    /**
+     * Picks the single weight artifact out of an extracted upscaler archive.
+     *
+     * Publishers package the QNN context binary (or an MNN graph) alongside
+     * README/licence files, so the largest recognised weight wins.
+     */
+    private fun findUpscalerWeight(extractedDir: File): File {
+        val candidates = extractedDir.listFiles()
+            ?.filter { it.isFile && it.extension.lowercase() in UPSCALER_WEIGHT_EXTENSIONS }
+            .orEmpty()
+        return candidates.maxByOrNull { it.length() }
+            ?: throw IOException(getString(R.string.upscaler_archive_missing_weight))
     }
 
     private suspend fun unzipFile(zipFile: File, destDir: File) = withContext(Dispatchers.IO) {
