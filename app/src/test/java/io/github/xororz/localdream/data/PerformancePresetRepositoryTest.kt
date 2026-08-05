@@ -136,6 +136,72 @@ class PerformancePresetRepositoryTest {
     }
 
     @Test
+    fun highMemoryDeviceResolvesExtremePerformancePresetByDefault() {
+        val store = InMemoryPerformancePresetStore()
+        val repository = PerformancePresetRepository(
+            store,
+            deviceMemoryBytesProvider = { 24L * 1024 * 1024 * 1024 },
+        )
+        store.save(
+            PerformancePreset(
+                id = PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID,
+                name = "持续性能",
+                selector = "sustained_performance",
+                configJson = validConfig,
+                revision = 1,
+                isBuiltIn = true,
+            ),
+        )
+        store.save(
+            PerformancePreset(
+                id = PerformancePresetRepository.EXTREME_PERFORMANCE_PRESET_ID,
+                name = "极致性能",
+                selector = "extreme_performance",
+                configJson = validConfig,
+                revision = 1,
+                isBuiltIn = true,
+            ),
+        )
+        assertEquals(
+            PerformancePresetRepository.EXTREME_PERFORMANCE_PRESET_ID,
+            repository.resolve(modelId = "model-a").presetId,
+        )
+    }
+
+    @Test
+    fun lowMemoryDeviceKeepsSustainedPerformancePresetByDefault() {
+        val store = InMemoryPerformancePresetStore()
+        val repository = PerformancePresetRepository(
+            store,
+            deviceMemoryBytesProvider = { 8L * 1024 * 1024 * 1024 },
+        )
+        store.save(
+            PerformancePreset(
+                id = PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID,
+                name = "持续性能",
+                selector = "sustained_performance",
+                configJson = validConfig,
+                revision = 1,
+                isBuiltIn = true,
+            ),
+        )
+        store.save(
+            PerformancePreset(
+                id = PerformancePresetRepository.EXTREME_PERFORMANCE_PRESET_ID,
+                name = "极致性能",
+                selector = "extreme_performance",
+                configJson = validConfig,
+                revision = 1,
+                isBuiltIn = true,
+            ),
+        )
+        assertEquals(
+            PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID,
+            repository.resolve(modelId = "model-a").presetId,
+        )
+    }
+
+    @Test
     fun legacyCustomPresetCanKeepANameLaterUsedByABuiltIn() {
         val store = InMemoryPerformancePresetStore()
         val repository = PerformancePresetRepository(store)

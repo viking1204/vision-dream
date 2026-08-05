@@ -75,6 +75,7 @@ import io.github.xororz.localdream.data.PerformancePreset
 import io.github.xororz.localdream.data.PerformancePresetBinding
 import io.github.xororz.localdream.data.PerformancePresetConfig
 import io.github.xororz.localdream.data.PerformancePresetEngineConfig
+import io.github.xororz.localdream.data.DeviceMemory
 import io.github.xororz.localdream.data.PerformancePresetRepository
 import io.github.xororz.localdream.mcp.AndroidMcpPresetStore
 import io.github.xororz.localdream.mcp.McpPresetStore
@@ -138,9 +139,12 @@ fun PerformancePresetScreen(
     }
     val builtIns = presets.filter { it.isBuiltIn && !it.isFallback }
     val customPresets = presets.filter { !it.isBuiltIn && !it.isFallback }
-    val recommended = presets.firstOrNull {
-        it.id == PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID
+    val recommendedId = if (DeviceMemory.isHighMemoryDevice(context)) {
+        PerformancePresetRepository.EXTREME_PERFORMANCE_PRESET_ID
+    } else {
+        PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID
     }
+    val recommended = presets.firstOrNull { it.id == recommendedId }
     val effectivePreset = defaultBinding?.let { binding ->
         presets.firstOrNull { it.id == binding.presetId }
     } ?: recommended
@@ -162,7 +166,7 @@ fun PerformancePresetScreen(
                 if (enabled) {
                     "已启用自选预设"
                 } else {
-                    "已切换为推荐预设：${recommended?.let(::builtInDisplayName) ?: "持续性能"}"
+                    "已切换为推荐预设：${recommended?.let(::builtInDisplayName) ?: "推荐预设"}"
                 },
             )
         }.onFailure { snackbar.showSnackbar("切换失败：${it.message}") }
@@ -232,7 +236,7 @@ fun PerformancePresetScreen(
                     overrideEnabled = overrideEnabled,
                     effectivePresetName = effectivePreset?.let {
                         if (it.isBuiltIn) builtInDisplayName(it) else it.name
-                    } ?: "持续性能",
+                    } ?: recommended?.let(::builtInDisplayName) ?: "推荐预设",
                     onOverrideEnabledChange = ::setOverrideEnabled,
                 )
             }
@@ -244,7 +248,7 @@ fun PerformancePresetScreen(
                     BuiltInPresetCard(
                         preset = preset,
                         isEffective = effectivePreset?.id == preset.id,
-                        isRecommended = preset.id == PerformancePresetRepository.RECOMMENDED_DEFAULT_PRESET_ID,
+                        isRecommended = preset.id == recommendedId,
                         onView = { viewing = preset },
                         onActivate = { activatePreset(preset) },
                         onCopy = {

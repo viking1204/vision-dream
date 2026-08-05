@@ -72,6 +72,12 @@ interface PerformancePresetStore {
 class PerformancePresetRepository(
     private val store: PerformancePresetStore,
     private val qualifications: PerformancePresetQualificationStore? = null,
+    /**
+     * Total device RAM in bytes. Defaults to 0 so callers/tests that do not
+     * wire a probe keep the conservative (lowram) default. The local UI and
+     * MCP store inject [DeviceMemory.totalBytes] here.
+     */
+    private val deviceMemoryBytesProvider: () -> Long = { 0L },
 ) {
     init {
         if (store.get(COMPATIBILITY_FALLBACK_ID) == null) {
@@ -226,13 +232,19 @@ class PerformancePresetRepository(
     }
 
     private fun recommendedPresetId(): String {
-        val recommended = store.get(RECOMMENDED_DEFAULT_PRESET_ID)
+        // High-RAM devices (e.g. the 24 GB OnePlus 13) keep every QNN context
+        // resident and skip the per-step DiT reload, which is the dominant
+        // anima slowdown. Low-RAM devices keep the lowram preset to avoid
+        // context-creation failures from an over-committed scratch buffer.
+        val highMemory = deviceMemoryBytesProvider() >= DeviceMemory.HIGH_MEMORY_DEVICE_BYTES
+        val candidateId = if (highMemory) EXTREME_PERFORMANCE_PRESET_ID else RECOMMENDED_DEFAULT_PRESET_ID
+        val candidate = store.get(candidateId)
         return if (
-            recommended != null &&
-            !recommended.isFallback &&
-            PerformancePresetConfig.parse(recommended.configJson).isSupported
+            candidate != null &&
+            !candidate.isFallback &&
+            PerformancePresetConfig.parse(candidate.configJson).isSupported
         ) {
-            recommended.id
+            candidate.id
         } else {
             COMPATIBILITY_FALLBACK_ID
         }
@@ -249,6 +261,7 @@ class PerformancePresetRepository(
     companion object {
         const val COMPATIBILITY_FALLBACK_ID = "00000000-0000-4000-8000-000000000000"
         const val RECOMMENDED_DEFAULT_PRESET_ID = "10000000-0000-4000-8000-000000000004"
+        const val EXTREME_PERFORMANCE_PRESET_ID = "10000000-0000-4000-8000-000000000003"
         private val SELECTOR = Regex("[A-Za-z0-9_.-]{1,80}")
     }
 }

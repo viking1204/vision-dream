@@ -520,7 +520,7 @@ abstract class AppDatabase : RoomDatabase() {
                 id = "10000000-0000-4000-8000-000000000001",
                 name = "省内存",
                 selector = "memory_saver",
-                configJson = "{\"schemaVersion\":2,\"engine\":{\"sdxlLowRam\":true,\"animaLowRam\":true,\"animaSequentialDit\":true,\"cpuClipThreads\":2,\"htpPowerMode\":\"POWER_SAVER\",\"htpDynamicPartitioning\":\"AUTO\"}}",
+                configJson = "{\"schemaVersion\":2,\"engine\":{\"sdxlLowRam\":true,\"animaLowRam\":true,\"animaSequentialDit\":true,\"cpuClipThreads\":2,\"htpPowerMode\":\"ADJUST_UP_DOWN\",\"htpDynamicPartitioning\":\"AUTO\"}}",
             ),
             BuiltInPerformancePreset(
                 id = "10000000-0000-4000-8000-000000000002",
@@ -538,7 +538,10 @@ abstract class AppDatabase : RoomDatabase() {
                 id = "10000000-0000-4000-8000-000000000004",
                 name = "持续性能",
                 selector = "sustained_performance",
-                configJson = "{\"schemaVersion\":2,\"engine\":{\"sdxlLowRam\":true,\"animaLowRam\":true,\"animaSequentialDit\":true,\"cpuClipThreads\":8,\"htpPowerMode\":\"PERFORMANCE\",\"htpDynamicPartitioning\":\"ENABLED\"}}",
+                // Keep CLIP/VAE releasing per stage (safe for low-RAM devices)
+                // but stop reloading the DiT halves every denoise step, which
+                // was the dominant anima slowdown on every device.
+                configJson = "{\"schemaVersion\":2,\"engine\":{\"sdxlLowRam\":true,\"animaLowRam\":true,\"animaSequentialDit\":false,\"cpuClipThreads\":8,\"htpPowerMode\":\"PERFORMANCE\",\"htpDynamicPartitioning\":\"ENABLED\"}}",
             ),
         )
     }

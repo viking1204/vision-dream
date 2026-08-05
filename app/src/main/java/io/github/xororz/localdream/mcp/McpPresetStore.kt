@@ -2,6 +2,7 @@ package io.github.xororz.localdream.mcp
 
 import android.content.Context
 import androidx.room.withTransaction
+import io.github.xororz.localdream.data.DeviceMemory
 import io.github.xororz.localdream.data.PerformancePreset
 import io.github.xororz.localdream.data.PerformancePresetBinding
 import io.github.xororz.localdream.data.PerformancePresetQualification
@@ -61,7 +62,11 @@ class AndroidMcpPresetStore(context: Context) : McpPresetStore {
     private val applicationContext = context.applicationContext
     private val database = AppDatabase.get(applicationContext)
     private val qualificationStore = RoomPerformancePresetQualificationStore(database)
-    private val repository = PerformancePresetRepository(RoomPerformancePresetStore(database), qualificationStore)
+    private val repository = PerformancePresetRepository(
+        RoomPerformancePresetStore(database),
+        qualificationStore,
+        deviceMemoryBytesProvider = { DeviceMemory.totalBytes(applicationContext) },
+    )
 
     override fun list(): List<PerformancePreset> = repository.list()
 
@@ -128,7 +133,10 @@ class AndroidMcpPresetStore(context: Context) : McpPresetStore {
  */
 class AndroidPerformancePresetResolver(context: Context) {
     private val database = AppDatabase.get(context.applicationContext)
-    private val repository = PerformancePresetRepository(RoomPerformancePresetStore(database))
+    private val repository = PerformancePresetRepository(
+        RoomPerformancePresetStore(database),
+        deviceMemoryBytesProvider = { DeviceMemory.totalBytes(context.applicationContext) },
+    )
 
     fun resolve(modelId: String): PresetSnapshot = repository.resolve(modelId = modelId)
 }
