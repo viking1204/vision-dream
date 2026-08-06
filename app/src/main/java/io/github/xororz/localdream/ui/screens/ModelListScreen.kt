@@ -1573,6 +1573,12 @@ fun ModelCard(
                         }
                     }
                 }
+                Text(
+                    text = model.id,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = secondaryContent,
+                    modifier = Modifier.testTag("model-id-text-${model.id}"),
+                )
                 Spacer(modifier = Modifier.height(2.dp))
                 if (model.description.isNotBlank()) {
                     Row(
