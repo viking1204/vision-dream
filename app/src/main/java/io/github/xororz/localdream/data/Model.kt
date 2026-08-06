@@ -618,24 +618,23 @@ class ModelRepository private constructor(private val context: Context) {
 
     private fun initializeModels(): List<Model> {
         val customModels = scanCustomModels()
+        val soc = getDeviceSoc()
+        val suffix = Model.getChipsetSuffix(soc) ?: "min"
+
+        // Built-in QNN models are declared once in BUILTIN_QNN_MODELS and
+        // materialized here; SDXL entries are gated to NPU-capable SoCs.
+        val qnnModels = BUILTIN_QNN_MODELS.mapNotNull { cfg ->
+            if (cfg.isSdxl && !isSdxlCapableSoc(soc)) return@mapNotNull null
+            buildQnnModel(cfg, suffix)
+        }
 
         val predefinedModels = mutableListOf<Model>().apply {
-            if (isSdxlCapableSoc(getDeviceSoc())) {
-                add(createIllustriousV16Model())
-                add(createIllustriousV16Dmd2Model())
-                add(createCyberRealisticV10Model())
-                add(createCyberRealisticV10Dmd2Model())
-            }
-            add(createAnythingV5Model())
+            addAll(qnnModels)
             add(createAnythingV5ModelCPU())
-            add(createQteaMixModel())
             add(createQteaMixModelCPU())
-            add(createAbsoluteRealityModel())
             add(createAbsoluteRealityModelCPU())
-            add(createCuteYukiMixModel())
             add(createCuteYukiMixModelCPU())
             add(createChilloutMixModelCPU())
-            add(createChilloutMixModel())
         }
 
         return customModels + predefinedModels.map { applyConfigDefaults(it) }
@@ -656,127 +655,38 @@ class ModelRepository private constructor(private val context: Context) {
 
     private fun isSdxlCapableSoc(soc: String): Boolean = soc in setOf("SM8750", "SM8750P", "SM8850", "SM8850P", "SM8845", "SM8650")
 
-    private fun createCyberRealisticV10Model(): Model {
-        val id = "cyber_realistic_v10"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/cyber_realistic_v10_qnn2.28_8gen3.zip"
-
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
+    /**
+     * Materialize a built-in QNN model from its declarative
+     * [BuiltinQnnModelConfig]. [suffix] is the chipset-specific artifact suffix
+     * (e.g. "8gen2"); SDXL configs hardcode their artifact name in
+     * [BuiltinQnnModelConfig.zipNameTemplate], so the suffix is simply unused
+     * there.
+     */
+    private fun buildQnnModel(cfg: BuiltinQnnModelConfig, suffix: String): Model {
+        val fileName = cfg.zipNameTemplate.replace("%SUFFIX%", suffix)
+        val fileUri = "${cfg.repoPath}/$fileName"
+        val isDownloaded = Model.isModelDownloaded(context, cfg.id, false)
+        val needsUpgrade = if (cfg.checkUpgrade) {
+            Model.needsModelUpgrade(context, cfg.id, true)
+        } else {
+            false
+        }
         return Model(
-            id = id,
-            name = "CyberRealistic v10",
-            description = context.getString(R.string.cyberrealistic_description),
+            id = cfg.id,
+            name = cfg.name,
+            description = context.getString(cfg.descRes),
             baseUrl = baseUrl,
             fileUri = fileUri,
-            generationSize = 1024,
-            approximateSize = "4.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, a majestic cat sitting on a windowsill at sunset,",
-                negativePrompt = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry,",
-            ),
-            runOnCpu = false,
-            isSdxl = true,
-        )
-    }
-
-    private fun createCyberRealisticV10Dmd2Model(): Model {
-        val id = "cyber_realistic_v10_dmd2"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/cyber_realistic_v10_dmd2_qnn2.28_8gen3.zip"
-
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "CyberRealistic v10 DMD2",
-            description = context.getString(R.string.dmd2_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            generationSize = 1024,
-            approximateSize = "4.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, a majestic cat sitting on a windowsill at sunset,",
-                negativePrompt = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry,",
-            ),
-            // steps/cfg/scheduler intentionally unset: the distilled model
-            // ships them in a config.json bundled inside the zip.
-            runOnCpu = false,
-            isSdxl = true,
-        )
-    }
-
-    private fun createIllustriousV16Model(): Model {
-        val id = "illustrious_v16"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/illustrious_v16_qnn2.28_8gen3.zip"
-
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "Illustrious v16",
-            description = context.getString(R.string.illustriousv16_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            generationSize = 1024,
-            approximateSize = "4.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "1girl, solo, blue twintails, very long hair, bangs, blue eyes, jewelry, necklace, hair bow, off-shoulder white frilled dress, bare shoulders, collarbone, underwater, floating hair, reaching towards viewer, air bubbles, blue theme, blurry foreground, masterpiece",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
-            runOnCpu = false,
-            isSdxl = true,
-        )
-    }
-
-    private fun createIllustriousV16Dmd2Model(): Model {
-        val id = "illustrious_v16_dmd2"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/illustrious_v16_dmd2_qnn2.28_8gen3.zip"
-
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-
-        return Model(
-            id = id,
-            name = "Illustrious v16 DMD2",
-            description = context.getString(R.string.dmd2_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            generationSize = 1024,
-            approximateSize = "4.2GB",
-            isDownloaded = isDownloaded,
-            codeDefaults = ModelConfig(
-                prompt = "1girl, solo, blue twintails, very long hair, bangs, blue eyes, jewelry, necklace, hair bow, off-shoulder white frilled dress, bare shoulders, collarbone, underwater, floating hair, reaching towards viewer, air bubbles, blue theme, blurry foreground, masterpiece",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
-            runOnCpu = false,
-            isSdxl = true,
-        )
-    }
-
-    private fun createAnythingV5Model(): Model {
-        val id = "anythingv5"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/AnythingV5_qnn2.28_$suffix.zip"
-
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-
-        return Model(
-            id = id,
-            name = "Anything V5.0",
-            description = context.getString(R.string.anythingv5_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
+            generationSize = cfg.generationSize,
+            approximateSize = cfg.approximateSize,
             isDownloaded = isDownloaded,
             needsUpgrade = needsUpgrade,
             codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, cute, white hair,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
+                prompt = cfg.prompt,
+                negativePrompt = cfg.negativePrompt,
             ),
             runOnCpu = false,
+            isSdxl = cfg.isSdxl,
         )
     }
 
@@ -802,30 +712,6 @@ class ModelRepository private constructor(private val context: Context) {
         )
     }
 
-    private fun createQteaMixModel(): Model {
-        val id = "qteamix"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/QteaMix_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-
-        return Model(
-            id = id,
-            name = "QteaMix",
-            description = context.getString(R.string.qteamix_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "chibi, best quality, 1girl, solo, cute, pink hair,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
-        )
-    }
-
     private fun createQteaMixModelCPU(): Model {
         val id = "qteamixcpu"
         val fileUri = "xororz/sd-mnn/resolve/main/QteaMix.zip"
@@ -844,30 +730,6 @@ class ModelRepository private constructor(private val context: Context) {
                 negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
             ),
             runOnCpu = true,
-        )
-    }
-
-    private fun createCuteYukiMixModel(): Model {
-        val id = "cuteyukimix"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/CuteYukiMix_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-
-        return Model(
-            id = id,
-            name = "CuteYukiMix",
-            description = context.getString(R.string.cuteyukimix_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, 1girl, solo, cute, white hair,",
-                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
-            ),
         )
     }
 
@@ -892,31 +754,6 @@ class ModelRepository private constructor(private val context: Context) {
         )
     }
 
-    private fun createAbsoluteRealityModel(): Model {
-        val id = "absolutereality"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/AbsoluteReality_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-
-        return Model(
-            id = id,
-            name = "Absolute Reality",
-            description = context.getString(R.string.absolutereality_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "masterpiece, best quality, ultra-detailed, realistic, 8k, a cat on grass,",
-                negativePrompt = "worst quality, low quality, normal quality, poorly drawn, lowres, low resolution, signature, watermarks, ugly, out of focus, error, blurry, unclear photo, bad photo, unrealistic, semi realistic, pixelated, cartoon, anime, cgi, drawing, 2d, 3d, censored, duplicate,",
-            ),
-            runOnCpu = false,
-        )
-    }
-
     private fun createAbsoluteRealityModelCPU(): Model {
         val id = "absoluterealitycpu"
         val fileUri = "xororz/sd-mnn/resolve/main/AbsoluteReality.zip"
@@ -935,31 +772,6 @@ class ModelRepository private constructor(private val context: Context) {
                 negativePrompt = "worst quality, low quality, normal quality, poorly drawn, lowres, low resolution, signature, watermarks, ugly, out of focus, error, blurry, unclear photo, bad photo, unrealistic, semi realistic, pixelated, cartoon, anime, cgi, drawing, 2d, 3d, censored, duplicate,",
             ),
             runOnCpu = true,
-        )
-    }
-
-    private fun createChilloutMixModel(): Model {
-        val id = "chilloutmix"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/ChilloutMix_qnn2.28_$suffix.zip"
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
-        val needsUpgrade = Model.needsModelUpgrade(context, id, true)
-
-        return Model(
-            id = id,
-            name = "ChilloutMix",
-            description = context.getString(R.string.chilloutmix_description),
-            baseUrl = baseUrl,
-            fileUri = fileUri,
-            approximateSize = "1.1GB",
-            isDownloaded = isDownloaded,
-            needsUpgrade = needsUpgrade,
-            codeDefaults = ModelConfig(
-                prompt = "RAW photo, best quality, realistic, photo-realistic, masterpiece, 1girl, upper body, facing front, portrait, white shirt",
-                negativePrompt = "paintings, cartoon, anime, lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, skin spots, acnes, skin blemishes",
-            ),
-            runOnCpu = false,
         )
     }
 
@@ -1026,16 +838,158 @@ class ModelRepository private constructor(private val context: Context) {
     }
 
     companion object {
+        /**
+         * Declarative description of a built-in QNN (NPU) generation model.
+         *
+         * [repoPath] is the HuggingFace path prefix appended to the configured
+         * base URL; [zipNameTemplate] is the concrete artifact file name with
+         * `%SUFFIX%` replaced by the chipset suffix (SDXL entries hardcode the
+         * artifact name and so ignore the suffix). [checkUpgrade] mirrors the
+         * prior per-model logic: SD1.5 QNN models check for a newer artifact,
+         * SDXL QNN models do not.
+         */
+        private data class BuiltinQnnModelConfig(
+            val id: String,
+            val name: String,
+            val descRes: Int,
+            val repoPath: String,
+            val zipNameTemplate: String,
+            val generationSize: Int,
+            val approximateSize: String,
+            val isSdxl: Boolean,
+            val checkUpgrade: Boolean,
+            val prompt: String,
+            val negativePrompt: String,
+        )
+
+        private val BUILTIN_QNN_MODELS = listOf(
+            // SDXL (NPU) — gated to capable SoCs via initializeModels()
+            BuiltinQnnModelConfig(
+                id = "cyber_realistic_v10",
+                name = "CyberRealistic v10",
+                descRes = R.string.cyberrealistic_description,
+                repoPath = "xororz/sdxl-qnn/resolve/main",
+                zipNameTemplate = "cyber_realistic_v10_qnn2.28_8gen3.zip",
+                generationSize = 1024,
+                approximateSize = "4.2GB",
+                isSdxl = true,
+                checkUpgrade = false,
+                prompt = "masterpiece, best quality, a majestic cat sitting on a windowsill at sunset,",
+                negativePrompt = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry,",
+            ),
+            BuiltinQnnModelConfig(
+                id = "cyber_realistic_v10_dmd2",
+                name = "CyberRealistic v10 DMD2",
+                descRes = R.string.dmd2_description,
+                repoPath = "xororz/sdxl-qnn/resolve/main",
+                zipNameTemplate = "cyber_realistic_v10_dmd2_qnn2.28_8gen3.zip",
+                generationSize = 1024,
+                approximateSize = "4.2GB",
+                isSdxl = true,
+                checkUpgrade = false,
+                prompt = "masterpiece, best quality, a majestic cat sitting on a windowsill at sunset,",
+                negativePrompt = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry,",
+            ),
+            BuiltinQnnModelConfig(
+                id = "illustrious_v16",
+                name = "Illustrious v16",
+                descRes = R.string.illustriousv16_description,
+                repoPath = "xororz/sdxl-qnn/resolve/main",
+                zipNameTemplate = "illustrious_v16_qnn2.28_8gen3.zip",
+                generationSize = 1024,
+                approximateSize = "4.2GB",
+                isSdxl = true,
+                checkUpgrade = false,
+                prompt = "1girl, solo, blue twintails, very long hair, bangs, blue eyes, jewelry, necklace, hair bow, off-shoulder white frilled dress, bare shoulders, collarbone, underwater, floating hair, reaching towards viewer, air bubbles, blue theme, blurry foreground, masterpiece",
+                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
+            ),
+            BuiltinQnnModelConfig(
+                id = "illustrious_v16_dmd2",
+                name = "Illustrious v16 DMD2",
+                descRes = R.string.dmd2_description,
+                repoPath = "xororz/sdxl-qnn/resolve/main",
+                zipNameTemplate = "illustrious_v16_dmd2_qnn2.28_8gen3.zip",
+                generationSize = 1024,
+                approximateSize = "4.2GB",
+                isSdxl = true,
+                checkUpgrade = false,
+                prompt = "1girl, solo, blue twintails, very long hair, bangs, blue eyes, jewelry, necklace, hair bow, off-shoulder white frilled dress, bare shoulders, collarbone, underwater, floating hair, reaching towards viewer, air bubbles, blue theme, blurry foreground, masterpiece",
+                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
+            ),
+            // SD 1.5 (NPU) — artifact name carries the chipset suffix
+            BuiltinQnnModelConfig(
+                id = "anythingv5",
+                name = "Anything V5.0",
+                descRes = R.string.anythingv5_description,
+                repoPath = "xororz/sd-qnn/resolve/main",
+                zipNameTemplate = "AnythingV5_qnn2.28_%SUFFIX%.zip",
+                generationSize = 512,
+                approximateSize = "1.1GB",
+                isSdxl = false,
+                checkUpgrade = true,
+                prompt = "masterpiece, best quality, 1girl, solo, cute, white hair,",
+                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
+            ),
+            BuiltinQnnModelConfig(
+                id = "qteamix",
+                name = "QteaMix",
+                descRes = R.string.qteamix_description,
+                repoPath = "xororz/sd-qnn/resolve/main",
+                zipNameTemplate = "QteaMix_qnn2.28_%SUFFIX%.zip",
+                generationSize = 512,
+                approximateSize = "1.1GB",
+                isSdxl = false,
+                checkUpgrade = true,
+                prompt = "chibi, best quality, 1girl, solo, cute, pink hair,",
+                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
+            ),
+            BuiltinQnnModelConfig(
+                id = "cuteyukimix",
+                name = "CuteYukiMix",
+                descRes = R.string.cuteyukimix_description,
+                repoPath = "xororz/sd-qnn/resolve/main",
+                zipNameTemplate = "CuteYukiMix_qnn2.28_%SUFFIX%.zip",
+                generationSize = 512,
+                approximateSize = "1.1GB",
+                isSdxl = false,
+                checkUpgrade = true,
+                prompt = "masterpiece, best quality, 1girl, solo, cute, white hair,",
+                negativePrompt = "lowres, bad anatomy, bad hands, missing fingers, extra fingers, bad arms, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, three crus, fused feet, fused thigh, extra crus, ugly fingers, horn, realistic photo, huge eyes, worst face, 2girl, long fingers, disconnected limbs,",
+            ),
+            BuiltinQnnModelConfig(
+                id = "absolutereality",
+                name = "Absolute Reality",
+                descRes = R.string.absolutereality_description,
+                repoPath = "xororz/sd-qnn/resolve/main",
+                zipNameTemplate = "AbsoluteReality_qnn2.28_%SUFFIX%.zip",
+                generationSize = 512,
+                approximateSize = "1.1GB",
+                isSdxl = false,
+                checkUpgrade = true,
+                prompt = "masterpiece, best quality, ultra-detailed, realistic, 8k, a cat on grass,",
+                negativePrompt = "worst quality, low quality, normal quality, poorly drawn, lowres, low resolution, signature, watermarks, ugly, out of focus, error, blurry, unclear photo, bad photo, unrealistic, semi realistic, pixelated, cartoon, anime, cgi, drawing, 2d, 3d, censored, duplicate,",
+            ),
+            BuiltinQnnModelConfig(
+                id = "chilloutmix",
+                name = "ChilloutMix",
+                descRes = R.string.chilloutmix_description,
+                repoPath = "xororz/sd-qnn/resolve/main",
+                zipNameTemplate = "ChilloutMix_qnn2.28_%SUFFIX%.zip",
+                generationSize = 512,
+                approximateSize = "1.1GB",
+                isSdxl = false,
+                checkUpgrade = true,
+                prompt = "RAW photo, best quality, realistic, photo-realistic, masterpiece, 1girl, upper body, facing front, portrait, white shirt",
+                negativePrompt = "paintings, cartoon, anime, lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, skin spots, acnes, skin blemishes",
+            ),
+        )
+
         // IDs reserved by built-in models and upscalers. Custom model
         // directories that match one of these would collide with the built-in
         // entry on disk and in the UI list, so they are skipped during scan.
-        // Keep in sync with the create*Model() functions and UpscalerRepository.
-        private val RESERVED_MODEL_IDS = setOf(
-            // SDXL (NPU)
-            "illustrious_v16", "illustrious_v16_dmd2",
-            "cyber_realistic_v10", "cyber_realistic_v10_dmd2",
-            // SD 1.5 NPU
-            "anythingv5", "qteamix", "cuteyukimix", "absolutereality", "chilloutmix",
+        // QNN ids are derived from BUILTIN_QNN_MODELS; CPU ids come from the
+        // create*ModelCPU() functions, and upscaler ids from UpscalerRepository.
+        private val RESERVED_MODEL_IDS = BUILTIN_QNN_MODELS.map { it.id }.toSet() + setOf(
             // SD 1.5 CPU
             "anythingv5cpu", "qteamixcpu", "cuteyukimixcpu",
             "absoluterealitycpu", "chilloutmixcpu",
