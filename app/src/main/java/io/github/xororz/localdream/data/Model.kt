@@ -531,7 +531,7 @@ class ModelRepository private constructor(private val context: Context) {
 
     // Read by the create*Model() builders during a scan; refreshed from
     // preferences at the start of every refresh, always under refreshMutex.
-    private var baseUrl = "https://huggingface.co/"
+    private var baseUrl = "https://hf-mirror.com/"
 
     var models by mutableStateOf<List<Model>>(emptyList())
         private set

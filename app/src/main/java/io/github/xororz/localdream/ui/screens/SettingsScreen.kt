@@ -107,8 +107,8 @@ fun SettingsContent(paddingValues: PaddingValues) {
     val modelRepository = remember { ModelRepository.getInstance(context) }
     val upscalerRepository = remember { UpscalerRepository.getInstance(context) }
     var tempBaseUrl by remember { mutableStateOf("") }
-    var selectedSource by remember { mutableStateOf("huggingface") }
-    var currentBaseUrl by remember { mutableStateOf("https://huggingface.co/") }
+    var selectedSource by remember { mutableStateOf("hf-mirror") }
+    var currentBaseUrl by remember { mutableStateOf("https://hf-mirror.com/") }
     var showBackupDialog by remember { mutableStateOf(false) }
     var showCleanTempDialog by remember { mutableStateOf(false) }
     var showFileManagerDialog by remember { mutableStateOf(false) }
