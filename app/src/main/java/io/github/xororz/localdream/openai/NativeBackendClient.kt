@@ -271,10 +271,10 @@ internal fun nativeGenerationPayload(
     put("height", height)
     put("denoise_strength", parameters.denoiseStrength)
     put("scheduler", parameters.scheduler)
-        put("show_diffusion_process", requestDiffusionPreviews)
-        put("output_format", "png")
-        parameters.aspectRatio?.let { put("aspect_ratio", it) }
-        parameters.seed?.let { put("seed", it) }
+    put("show_diffusion_process", requestDiffusionPreviews)
+    put("output_format", "png")
+    parameters.aspectRatio?.let { put("aspect_ratio", it) }
+    parameters.seed?.let { put("seed", it) }
     parameters.sourceImage?.let {
         put("image", Base64.getEncoder().encodeToString(it))
     }

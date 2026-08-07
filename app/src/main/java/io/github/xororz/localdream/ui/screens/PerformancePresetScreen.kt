@@ -69,13 +69,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import io.github.xororz.localdream.data.DeviceMemory
 import io.github.xororz.localdream.data.HtpDynamicPartitioning
 import io.github.xororz.localdream.data.HtpPowerMode
 import io.github.xororz.localdream.data.PerformancePreset
 import io.github.xororz.localdream.data.PerformancePresetBinding
 import io.github.xororz.localdream.data.PerformancePresetConfig
 import io.github.xororz.localdream.data.PerformancePresetEngineConfig
-import io.github.xororz.localdream.data.DeviceMemory
 import io.github.xororz.localdream.data.PerformancePresetRepository
 import io.github.xororz.localdream.mcp.AndroidMcpPresetStore
 import io.github.xororz.localdream.mcp.McpPresetStore

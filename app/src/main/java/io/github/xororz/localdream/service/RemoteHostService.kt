@@ -353,12 +353,11 @@ class RemoteHostService : Service() {
     // Upscalers installed on this device, with the absolute weight paths the
     // native /upscale endpoint expects in X-Upscaler-Path. The controller
     // echoes the path back when it requests a remote upscale.
-    private fun installedUpscalers(context: Context): List<RemoteUpscalerInfo> =
-        UpscalerRepository.builtinUpscalerIds.mapNotNull { id ->
-            if (!Model.isUpscalerDownloaded(context, id)) return@mapNotNull null
-            val file = File(File(Model.getModelsDir(context), id), Model.UPSCALER_FILE_NAME)
-            RemoteUpscalerInfo(id = id, path = file.absolutePath)
-        }
+    private fun installedUpscalers(context: Context): List<RemoteUpscalerInfo> = UpscalerRepository.builtinUpscalerIds.mapNotNull { id ->
+        if (!Model.isUpscalerDownloaded(context, id)) return@mapNotNull null
+        val file = File(File(Model.getModelsDir(context), id), Model.UPSCALER_FILE_NAME)
+        RemoteUpscalerInfo(id = id, path = file.absolutePath)
+    }
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(

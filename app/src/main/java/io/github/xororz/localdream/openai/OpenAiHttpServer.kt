@@ -805,11 +805,11 @@ private fun rejectBusyClient(client: Socket) {
 }
 
 private fun writeResponse(socket: Socket, response: HttpResponse) {
-        val reason = when (response.statusCode) {
-            200 -> "OK"
-            204 -> "No Content"
-            400 -> "Bad Request"
-            401 -> "Unauthorized"
+    val reason = when (response.statusCode) {
+        200 -> "OK"
+        204 -> "No Content"
+        400 -> "Bad Request"
+        401 -> "Unauthorized"
         404 -> "Not Found"
         408 -> "Request Timeout"
         411 -> "Length Required"

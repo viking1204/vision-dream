@@ -512,8 +512,7 @@ class UpscalerRepository private constructor(private val context: Context) {
         val builtinUpscalerIds: List<String> = BUILTIN_UPSCALERS.map { it.id }
 
         /** Localized name resource for a built-in upscaler id, or null. */
-        fun displayNameResFor(upscalerId: String): Int? =
-            BUILTIN_UPSCALERS.firstOrNull { it.id == upscalerId }?.nameRes
+        fun displayNameResFor(upscalerId: String): Int? = BUILTIN_UPSCALERS.firstOrNull { it.id == upscalerId }?.nameRes
 
         @SuppressLint("StaticFieldLeak")
         @Volatile
@@ -991,8 +990,11 @@ class ModelRepository private constructor(private val context: Context) {
         // create*ModelCPU() functions, and upscaler ids from UpscalerRepository.
         private val RESERVED_MODEL_IDS = BUILTIN_QNN_MODELS.map { it.id }.toSet() + setOf(
             // SD 1.5 CPU
-            "anythingv5cpu", "qteamixcpu", "cuteyukimixcpu",
-            "absoluterealitycpu", "chilloutmixcpu",
+            "anythingv5cpu",
+            "qteamixcpu",
+            "cuteyukimixcpu",
+            "absoluterealitycpu",
+            "chilloutmixcpu",
         ) + UpscalerRepository.builtinUpscalerIds
 
         fun isReservedModelId(id: String): Boolean = id in RESERVED_MODEL_IDS

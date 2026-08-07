@@ -110,8 +110,7 @@ internal object ChatGenerationSession {
     }
 
     /** Projection persisted by the queue panel: the running task first. */
-    fun queueTasks(): List<GenerationTask> =
-        listOfNotNull(runningTaskState.value) + pendingQueue.map { it.task }
+    fun queueTasks(): List<GenerationTask> = listOfNotNull(runningTaskState.value) + pendingQueue.map { it.task }
 
     /**
      * Replays a conversation stored by a previous process. Guarded because the

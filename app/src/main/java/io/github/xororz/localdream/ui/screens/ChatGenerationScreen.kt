@@ -92,6 +92,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -328,11 +329,20 @@ fun ChatGenerationScreen(
         }.getOrNull()
     }
 
-    val visibleMessages = remember(messages, visibleMessageCount) {
-        if (messages.size <= visibleMessageCount) {
-            messages
-        } else {
-            messages.takeLast(visibleMessageCount)
+    // `remember(messages, ...)` used to key on the SnapshotStateList *identity*,
+    // which never changes on add/remove because the session owns one long-lived
+    // list. Once the conversation grew past MAX_VISIBLE_MESSAGES the windowed
+    // view froze on its first takeLast(N) snapshot, so new results and deletions
+    // only surfaced after leaving and re-entering the screen. derivedStateOf
+    // tracks the snapshot reads performed inside the block instead, so the
+    // window invalidates on append, delete and any in-place element swap.
+    val visibleMessages by remember(visibleMessageCount) {
+        derivedStateOf {
+            if (messages.size <= visibleMessageCount) {
+                messages.toList()
+            } else {
+                messages.takeLast(visibleMessageCount)
+            }
         }
     }
 

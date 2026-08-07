@@ -1136,7 +1136,9 @@ fun ModelListScreen(
                             downloadPhase = if (downloadingModel?.id == model.id) processingPhase else null,
                             onCancelDownload = if (downloadingModel?.id == model.id) {
                                 { ModelDownloadService.cancel(context, model.id) }
-                            } else null,
+                            } else {
+                                null
+                            },
                         )
                     }
 
@@ -1335,7 +1337,6 @@ fun ModelListScreen(
             )
         }
     }
-
 }
 
 internal fun formatBytes(bytes: Long): String = when {
@@ -1883,7 +1884,9 @@ private fun DownloadProgressRow(
             ) {
                 val speedPart = if (progress.bytesPerSecond > 0) {
                     "  ${formatBytes(progress.bytesPerSecond)}/s"
-                } else ""
+                } else {
+                    ""
+                }
                 Text(
                     text = if (progress.totalBytes > 0) {
                         "${formatBytes(progress.downloadedBytes)} / ${

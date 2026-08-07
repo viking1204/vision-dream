@@ -469,18 +469,25 @@ class BackendService : Service() {
             // when a newer start exists, leaving the (re)started service alive
             // with its foreground notification intact.
             if (desired == null) {
-                stopBackend()
-                // While host mode is active the service must survive with its
-                // foreground status: remote /select commands arrive over the
-                // network with no visible activity, and Android 12+ blocks
-                // promoting a freshly started service to the foreground from
-                // that state. Keeping this one alive makes those commands
-                // plain startService() deliveries to a live FGS.
-                if (!RemoteHostService.isRunning.value &&
-                    !OpenAiApiService.isRunning.value &&
-                    stopSelfResult(startId)
-                ) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
+                // While a gateway (OpenAI API or remote host) is actively
+                // serving, keep the native backend resident. Back-to-back
+                // gateway requests would otherwise each pay a full model reload
+                // (~20s on NPU), which is what made consecutive HTTP generations
+                // slow and prone to client timeouts. The in-app path still
+                // idle-unloads normally because no gateway is running then.
+                val gatewayServing =
+                    RemoteHostService.isRunning.value || OpenAiApiService.isRunning.value
+                if (!gatewayServing) {
+                    stopBackend()
+                    // While host mode is active the service must survive with its
+                    // foreground status: remote /select commands arrive over the
+                    // network with no visible activity, and Android 12+ blocks
+                    // promoting a freshly started service to the foreground from
+                    // that state. Keeping this one alive makes those commands
+                    // plain startService() deliveries to a live FGS.
+                    if (stopSelfResult(startId)) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                    }
                 }
             }
         }

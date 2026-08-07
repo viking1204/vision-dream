@@ -21,6 +21,5 @@ object DeviceMemory {
         return info.totalMem
     }
 
-    fun isHighMemoryDevice(context: Context): Boolean =
-        totalBytes(context) >= HIGH_MEMORY_DEVICE_BYTES
+    fun isHighMemoryDevice(context: Context): Boolean = totalBytes(context) >= HIGH_MEMORY_DEVICE_BYTES
 }
