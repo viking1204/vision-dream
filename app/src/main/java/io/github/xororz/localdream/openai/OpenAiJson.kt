@@ -25,9 +25,19 @@ data class OpenAiModel(
     val type: String? = null,
     /** Backend identifier, e.g. "sdxl", "sd15npu", "anima", "upscaler". */
     val backendType: String? = null,
-    /** Whether the model advertises an image encoder for img2img/inpaint. */
-    val supportsImageInput: Boolean? = null,
+    /**
+     * Per-model capability advertisement in an OpenAI-compatible extension
+     * shape. Lets clients distinguish text-to-image, image-to-image (edit)
+     * and upscale models without guessing from the id.
+     */
+    val capabilities: ModelCapabilities? = null,
 ) {
+    data class ModelCapabilities(
+        val imageGeneration: Boolean,
+        val imageEdit: Boolean,
+        val imageUpscale: Boolean,
+    )
+
     init {
         require(id.isNotBlank()) { "id must not be blank" }
         require(created >= 0L) { "created must not be negative" }
@@ -97,10 +107,13 @@ object OpenAiJson {
             append(',')
             appendNameAndString("backend_type", it)
         }
-        model.supportsImageInput?.let {
+        model.capabilities?.let { caps ->
             append(',')
-            append("\"supports_image_input\":")
-            append(if (it) "true" else "false")
+            append("\"capabilities\":{")
+            append("\"image_generation\":").append(if (caps.imageGeneration) "true" else "false")
+            append(",\"image_edit\":").append(if (caps.imageEdit) "true" else "false")
+            append(",\"image_upscale\":").append(if (caps.imageUpscale) "true" else "false")
+            append('}')
         }
         append('}')
     }

@@ -78,7 +78,16 @@ below are a strict superset and are ignored by OpenAI-only clients:
 | `name` | string | Human-readable label. |
 | `type` | string | `"generation"` or `"upscaler"`. |
 | `backend_type` | string | Backend identifier, e.g. `sdxl`, `sd15npu`, `anima`, `upscaler`. |
-| `supports_image_input` | boolean | Whether the model exposes an image encoder for img2img/inpaint. |
+| `capabilities` | object | OpenAI-compatible capability advertisement (see below). |
+
+The `capabilities` object advertises what each model can do without the
+client having to guess from the id:
+
+| Capability | Type | Meaning |
+|------------|------|---------|
+| `image_generation` | boolean | Text-to-image generation is supported (generation models). |
+| `image_edit` | boolean | Image-to-image / inpaint is supported (requires an image encoder). |
+| `image_upscale` | boolean | Upscaling is supported (upscaler models). |
 
 ```json
 {
@@ -92,7 +101,11 @@ below are a strict superset and are ignored by OpenAI-only clients:
       "name": "Anything V5",
       "type": "generation",
       "backend_type": "sd15npu",
-      "supports_image_input": true
+      "capabilities": {
+        "image_generation": true,
+        "image_edit": true,
+        "image_upscale": false
+      }
     },
     {
       "id": "upscaler_realistic",
@@ -102,7 +115,11 @@ below are a strict superset and are ignored by OpenAI-only clients:
       "name": "Realistic Upscaler",
       "type": "upscaler",
       "backend_type": "upscaler",
-      "supports_image_input": true
+      "capabilities": {
+        "image_generation": false,
+        "image_edit": false,
+        "image_upscale": true
+      }
     }
   ]
 }

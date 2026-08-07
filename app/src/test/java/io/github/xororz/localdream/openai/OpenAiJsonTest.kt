@@ -54,27 +54,64 @@ class OpenAiJsonTest {
                 name = "Anything V5",
                 type = "generation",
                 backendType = "sd15npu",
-                supportsImageInput = true,
+                capabilities = OpenAiModel.ModelCapabilities(
+                    imageGeneration = true,
+                    imageEdit = true,
+                    imageUpscale = false,
+                ),
             ),
         )
 
         assertEquals(
-            """{"id":"anythingv5","object":"model","created":1754000000,"owned_by":"vision-dream","name":"Anything V5","type":"generation","backend_type":"sd15npu","supports_image_input":true}""",
+            """{"id":"anythingv5","object":"model","created":1754000000,"owned_by":"vision-dream","name":"Anything V5","type":"generation","backend_type":"sd15npu","capabilities":{"image_generation":true,"image_edit":true,"image_upscale":false}}""",
             json,
         )
     }
 
     @Test
-    fun modelObjectOmitsFalseImageInputFlagRatherThanDroppingField() {
+    fun modelObjectEmitsCapabilitiesBlockWithFalseFlags() {
         val json = OpenAiJson.model(
             OpenAiModel(
-                id = "bare",
+                id = "up",
                 created = 1L,
-                supportsImageInput = false,
+                type = "upscaler",
+                backendType = "upscaler",
+                capabilities = OpenAiModel.ModelCapabilities(
+                    imageGeneration = false,
+                    imageEdit = false,
+                    imageUpscale = true,
+                ),
             ),
         )
 
-        assertTrue(json.contains(""""supports_image_input":false"""))
+        assertTrue(
+            json.contains(
+                """"capabilities":{"image_generation":false,"image_edit":false,"image_upscale":true}""",
+            ),
+        )
+    }
+
+    @Test
+    fun generationModelWithoutImageEncoderAdvertisesNoImageEdit() {
+        val json = OpenAiJson.model(
+            OpenAiModel(
+                id = "txt2img-only",
+                created = 2L,
+                type = "generation",
+                backendType = "sdxl",
+                capabilities = OpenAiModel.ModelCapabilities(
+                    imageGeneration = true,
+                    imageEdit = false,
+                    imageUpscale = false,
+                ),
+            ),
+        )
+
+        assertTrue(
+            json.contains(
+                """"capabilities":{"image_generation":true,"image_edit":false,"image_upscale":false}""",
+            ),
+        )
     }
 
     @Test

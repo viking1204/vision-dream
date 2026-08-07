@@ -67,7 +67,7 @@ class OpenAiApiController(
                     request.method == "GET" && request.path.startsWith("/v1/models/") -> {
                         val id = request.path.removePrefix("/v1/models/")
                         if (id.isEmpty()) {
-                            error(404, "Model identifier missing", code = "not_found")
+                            models()
                         } else {
                             model(id)
                         }
@@ -142,13 +142,25 @@ class OpenAiApiController(
 
     private fun toOpenAiModel(entry: InstalledModelCatalog.Entry): OpenAiModel {
         val path = File(Model.getModelsDir(context), entry.id)
+        val capabilities = when (entry.kind) {
+            InstalledModelCatalog.Kind.GENERATION -> OpenAiModel.ModelCapabilities(
+                imageGeneration = true,
+                imageEdit = entry.supportsImageInput,
+                imageUpscale = false,
+            )
+            InstalledModelCatalog.Kind.UPSCALER -> OpenAiModel.ModelCapabilities(
+                imageGeneration = false,
+                imageEdit = false,
+                imageUpscale = true,
+            )
+        }
         return OpenAiModel(
             id = entry.id,
             created = (path.lastModified() / 1000L).coerceAtLeast(0L),
             name = entry.name,
             type = entry.kind.name.lowercase(),
             backendType = entry.backendType,
-            supportsImageInput = entry.supportsImageInput,
+            capabilities = capabilities,
         )
     }
 
