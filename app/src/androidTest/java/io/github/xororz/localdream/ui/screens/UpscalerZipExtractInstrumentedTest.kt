@@ -4,10 +4,11 @@ import android.content.Context
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.xororz.localdream.data.Model
+import io.github.xororz.localdream.data.ModelStorage
 import io.github.xororz.localdream.data.UpscalerBackend
 import io.github.xororz.localdream.data.UpscalerModel
-import io.github.xororz.localdream.data.ModelStorage
 import io.github.xororz.localdream.service.ModelDownloadService
+import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -16,7 +17,6 @@ import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 /**
  * Runtime verification of the ZIP-packaged QNN upscaler download + extraction

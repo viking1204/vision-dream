@@ -65,11 +65,7 @@ curl -H "Authorization: Bearer $VISION_DREAM_KEY" \
   http://PHONE_IP:8809/v1/models/anythingv5
 ```
 
-The list endpoint strictly follows the OpenAI schema so that strict
-deserializers (e.g. Flutter `json_serializable(disallowUnrecognizedKeys:
-true)`) render **every** installed model instead of choking on unknown
-top-level keys. Each list entry contains only the four standard OpenAI
-fields:
+Each list entry contains the four standard OpenAI fields plus `type`:
 
 | Field | Type | Meaning |
 |-------|------|---------|
@@ -77,26 +73,39 @@ fields:
 | `object` | string | Always `"model"`. |
 | `created` | integer | Install time (Unix seconds). |
 | `owned_by` | string | Always `"vision-dream"`. |
+| `type` | string | Modality: `"image"` for generation models, `"upscaler"` for upscalers. |
+
+`type` is not part of the official OpenAI schema, but image-capable clients
+rely on it to decide which entries belong in an image-model picker — they
+filter on `type == "image"`. Without it (or with a vendor-specific value such
+as `"generation"`) every model fails that filter and the client silently falls
+back to a single built-in default, which looks like the catalog returned one
+model. Upscalers deliberately report `"upscaler"`: they cannot serve
+text-to-image and must not appear in a generation picker.
+
+All other vendor metadata is kept out of the list so the payload stays lean for
+strict deserializers (e.g. Flutter
+`json_serializable(disallowUnrecognizedKeys: true)`).
 
 ```json
 {
   "object": "list",
   "data": [
-    { "id": "anythingv5", "object": "model", "created": 1754000000, "owned_by": "vision-dream" },
-    { "id": "upscaler_realistic", "object": "model", "created": 1754000100, "owned_by": "vision-dream" }
+    { "id": "anythingv5", "object": "model", "created": 1754000000, "owned_by": "vision-dream", "type": "image" },
+    { "id": "upscaler_realistic", "object": "model", "created": 1754000100, "owned_by": "vision-dream", "type": "upscaler" }
   ]
 }
 ```
 
-The single-model endpoint `GET /v1/models/{id}` returns the same four fields
-plus a `x-vision-dream` extension object carrying the non-standard metadata.
-The `x-` prefix marks it as a vendor extension, so it is ignored by
-OpenAI-only clients and does not break strict deserializers.
+The single-model endpoint `GET /v1/models/{id}` returns the same fields plus a
+`x-vision-dream` extension object carrying the remaining metadata. The `x-`
+prefix marks it as a vendor extension, so it is ignored by OpenAI-only clients
+and does not break strict deserializers.
 
 | Field (under `x-vision-dream`) | Type | Meaning |
 |--------------------------------|------|---------|
 | `name` | string | Human-readable label. |
-| `type` | string | `"generation"` or `"upscaler"`. |
+| `type` | string | Same modality value as the top-level `type`. |
 | `backend_type` | string | Backend identifier, e.g. `sdxl`, `sd15npu`, `anima`, `upscaler`. |
 | `capabilities` | object | Capability advertisement (see below). |
 
@@ -115,9 +124,10 @@ client having to guess from the id:
   "object": "model",
   "created": 1754000000,
   "owned_by": "vision-dream",
+  "type": "image",
   "x-vision-dream": {
     "name": "Anything V5",
-    "type": "generation",
+    "type": "image",
     "backend_type": "sd15npu",
     "capabilities": {
       "image_generation": true,

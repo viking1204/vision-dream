@@ -148,17 +148,28 @@ class OpenAiApiController(
                 imageEdit = entry.supportsImageInput,
                 imageUpscale = false,
             )
+
             InstalledModelCatalog.Kind.UPSCALER -> OpenAiModel.ModelCapabilities(
                 imageGeneration = false,
                 imageEdit = false,
                 imageUpscale = true,
             )
         }
+        // Image-oriented OpenAI-compatible clients commonly gate their model
+        // picker on the modality (`type == "image"`) rather than on a vendor's
+        // internal family name. Reporting "generation" made every model fail
+        // that filter, so such clients silently fell back to a single built-in
+        // default. Upscalers keep a distinct type because they cannot serve
+        // text-to-image and must not surface in an image-generation picker.
+        val type = when (entry.kind) {
+            InstalledModelCatalog.Kind.GENERATION -> "image"
+            InstalledModelCatalog.Kind.UPSCALER -> "upscaler"
+        }
         return OpenAiModel(
             id = entry.id,
             created = (path.lastModified() / 1000L).coerceAtLeast(0L),
             name = entry.name,
-            type = entry.kind.name.lowercase(),
+            type = type,
             backendType = entry.backendType,
             capabilities = capabilities,
         )

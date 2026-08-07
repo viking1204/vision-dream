@@ -89,16 +89,19 @@ object OpenAiJson {
     }
 
     /**
-     * Strict OpenAI model object when [withExtensions] is false: exactly the
-     * four standard fields (`id`, `object`, `created`, `owned_by`). This is
-     * what OpenAI-compatible clients parse from `GET /v1/models`; any extra
-     * top-level key risks breaking strict deserializers (e.g. Flutter
-     * `json_serializable(disallowUnrecognizedKeys: true)`), which then fall
-     * back to rendering a single default model.
+     * OpenAI model object: the four standard fields (`id`, `object`, `created`,
+     * `owned_by`) plus `type`.
+     *
+     * `type` is not part of the official schema, but image-capable clients rely
+     * on it to tell which entries belong in an image-model picker (they filter
+     * on `type == "image"`). Omitting it makes every model fail that filter and
+     * the client falls back to a single built-in default, so it is emitted in
+     * the list as well. All remaining vendor metadata stays inside the
+     * `x-vision-dream` extension object to keep the top level lean for strict
+     * deserializers.
      *
      * When [withExtensions] is true (single-model `GET /v1/models/{id}`), the
-     * non-standard metadata is wrapped under the `x-vision-dream` extension
-     * key so it stays discoverable yet parser-safe for strict clients.
+     * full non-standard metadata is wrapped under `x-vision-dream`.
      */
     private fun modelObject(model: OpenAiModel, withExtensions: Boolean): String = buildString {
         append('{')
@@ -107,6 +110,10 @@ object OpenAiJson {
         append(model.created)
         append(',')
         appendNameAndString("owned_by", model.ownedBy)
+        model.type?.let {
+            append(',')
+            appendNameAndString("type", it)
+        }
         if (withExtensions) {
             val ext = buildString {
                 model.name?.let {

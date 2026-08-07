@@ -21,14 +21,14 @@ class OpenAiJsonTest {
     }
 
     @Test
-    fun modelListUsesStrictOpenAiShapeWithoutExtensions() {
+    fun modelListCarriesTypeAlongsideTheStandardFieldsAndNoOtherExtension() {
         val json = OpenAiJson.models(
             listOf(
                 OpenAiModel(
                     id = "模型-a",
                     created = 10L,
                     name = "A",
-                    type = "generation",
+                    type = "image",
                     backendType = "sdxl",
                     capabilities = OpenAiModel.ModelCapabilities(true, true, false),
                 ),
@@ -36,10 +36,12 @@ class OpenAiJsonTest {
             ),
         )
 
-        // The list MUST contain only the four standard OpenAI fields, never the
-        // extension keys, so strict deserializers render all entries.
+        // Image clients filter the picker on `type == "image"`, so the list has
+        // to carry `type`. Every other vendor field stays out of the list to
+        // keep the payload lean for strict deserializers.
         assertEquals(
-            """{"object":"list","data":[{"id":"模型-a","object":"model","created":10,"owned_by":"vision-dream"},{"id":"model-b","object":"model","created":20,"owned_by":"owner"}]}""",
+            """{"object":"list","data":[{"id":"模型-a","object":"model","created":10,"owned_by":"vision-dream","type":"image"},""" +
+                """{"id":"model-b","object":"model","created":20,"owned_by":"owner"}]}""",
             json,
         )
     }
@@ -61,7 +63,7 @@ class OpenAiJsonTest {
                 id = "anythingv5",
                 created = 1754000000L,
                 name = "Anything V5",
-                type = "generation",
+                type = "image",
                 backendType = "sd15npu",
                 capabilities = OpenAiModel.ModelCapabilities(
                     imageGeneration = true,
@@ -72,7 +74,9 @@ class OpenAiJsonTest {
         )
 
         assertEquals(
-            """{"id":"anythingv5","object":"model","created":1754000000,"owned_by":"vision-dream","x-vision-dream":{"name":"Anything V5","type":"generation","backend_type":"sd15npu","capabilities":{"image_generation":true,"image_edit":true,"image_upscale":false}}}""",
+            """{"id":"anythingv5","object":"model","created":1754000000,"owned_by":"vision-dream","type":"image",""" +
+                """"x-vision-dream":{"name":"Anything V5","type":"image","backend_type":"sd15npu",""" +
+                """"capabilities":{"image_generation":true,"image_edit":true,"image_upscale":false}}}""",
             json,
         )
     }
