@@ -339,7 +339,7 @@ class OpenAiApiController(
                     parameter = "model",
                     code = "model_not_found",
                 )
-            runBlocking { coordinator.ensureReady(entry, null, null) }
+            runBlocking { coordinator.ensureReady(entry, null, null, lenient = true) }
             val startedAt = System.currentTimeMillis()
             val image = backendClient.upscale(form.image.bytes, path)
             val dimensions = decodeImageDimensions(image.bytes)
@@ -408,7 +408,7 @@ class OpenAiApiController(
         presetEngineConfig: PerformancePresetEngineConfig?,
     ): HttpResponse {
         val dimensions = runBlocking {
-            coordinator.ensureReady(entry, parameters.width, parameters.height, presetEngineConfig)
+            coordinator.ensureReady(entry, parameters.width, parameters.height, presetEngineConfig, lenient = true)
         }
         val startedAt = System.currentTimeMillis()
         val image = backendClient.generate(parameters, dimensions.first, dimensions.second)

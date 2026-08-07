@@ -2,6 +2,7 @@ package io.github.xororz.localdream.openai
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import io.github.xororz.localdream.data.PatchScanner
 import io.github.xororz.localdream.data.PerformancePresetEngineConfig
 import io.github.xororz.localdream.service.BackendService
@@ -33,8 +34,9 @@ class BackendRuntimeCoordinator(private val context: Context) {
         requestedWidth: Int?,
         requestedHeight: Int?,
         presetEngineConfig: PerformancePresetEngineConfig? = null,
+        lenient: Boolean = false,
     ): Pair<Int, Int> {
-        val dimensions = resolveDimensions(entry, requestedWidth, requestedHeight)
+        val dimensions = resolveDimensions(entry, requestedWidth, requestedHeight, lenient)
         val runtimeConfigSignature = runtimeConfigSignature(presetEngineConfig)
         val intent = Intent(context, BackendService::class.java).apply {
             putExtra("modelId", entry.id)
@@ -77,48 +79,97 @@ class BackendRuntimeCoordinator(private val context: Context) {
         entry: InstalledModelCatalog.Entry,
         requestedWidth: Int?,
         requestedHeight: Int?,
+        lenient: Boolean = false,
     ): Pair<Int, Int> {
         if (entry.kind == InstalledModelCatalog.Kind.UPSCALER) return 512 to 512
 
-        val width = requestedWidth ?: entry.generationSize
-        val height = requestedHeight ?: entry.generationSize
-        if (width !in MIN_DIMENSION..MAX_DIMENSION ||
+        var width = requestedWidth ?: entry.generationSize
+        var height = requestedHeight ?: entry.generationSize
+
+        // Hard dimension rules: out of range, misaligned, or too many pixels.
+        // When the caller opts into tolerance (the OpenAI gateway normalizing a
+        // client request), clamp to the nearest valid canvas instead of 400.
+        val dimensionInvalid = width !in MIN_DIMENSION..MAX_DIMENSION ||
             height !in MIN_DIMENSION..MAX_DIMENSION ||
             width % DIMENSION_MULTIPLE != 0 ||
             height % DIMENSION_MULTIPLE != 0 ||
             width.toLong() * height > MAX_GENERATION_PIXELS
-        ) {
-            throw OpenAiRequestException(
-                statusCode = 400,
-                message = "Unsupported image size ${width}x$height",
-                parameter = "size",
-                code = "unsupported_size",
-            )
-        }
-
-        val model = entry.model
-            ?: throw OpenAiRequestException(404, "Model '${entry.id}' is not installed")
-        if (model.usesFixedCanvas && (width != model.generationSize || height != model.generationSize)) {
-            throw OpenAiRequestException(
-                statusCode = 400,
-                message = "Model '${entry.id}' requires ${model.generationSize}x${model.generationSize}",
-                parameter = "size",
-                code = "unsupported_size",
-            )
-        }
-        if (!model.runOnCpu && !model.usesFixedCanvas && (width != 512 || height != 512)) {
-            val supported = PatchScanner.scanAvailableResolutions(context, entry.id)
-                .any { it.width == width && it.height == height }
-            if (!supported) {
+        if (dimensionInvalid) {
+            if (!lenient) {
                 throw OpenAiRequestException(
                     statusCode = 400,
-                    message = "Model '${entry.id}' has no ${width}x$height resolution patch",
+                    message = "Unsupported image size ${width}x$height",
                     parameter = "size",
                     code = "unsupported_size",
                 )
             }
+            Log.w(TAG, "Size ${width}x$height is invalid; clamping to a supported canvas")
+            width = clampDimension(width)
+            height = clampDimension(height)
+            while (width.toLong() * height > MAX_GENERATION_PIXELS &&
+                width > MIN_DIMENSION && height > MIN_DIMENSION
+            ) {
+                width -= DIMENSION_MULTIPLE
+                height -= DIMENSION_MULTIPLE
+            }
+        }
+
+        val model = entry.model
+            ?: throw OpenAiRequestException(404, "Model '${entry.id}' is not installed")
+
+        // Fixed-canvas models accept exactly one resolution.
+        if (model.usesFixedCanvas && (width != model.generationSize || height != model.generationSize)) {
+            if (!lenient) {
+                throw OpenAiRequestException(
+                    statusCode = 400,
+                    message = "Model '${entry.id}' requires ${model.generationSize}x${model.generationSize}",
+                    parameter = "size",
+                    code = "unsupported_size",
+                )
+            }
+            Log.w(
+                TAG,
+                "Size ${width}x$height incompatible with fixed-canvas model " +
+                    "'${entry.id}'; using ${model.generationSize}x${model.generationSize}",
+            )
+            width = model.generationSize
+            height = model.generationSize
+        }
+
+        // NPU models without a fixed canvas need a scanned resolution patch.
+        if (!model.runOnCpu && !model.usesFixedCanvas && (width != 512 || height != 512)) {
+            val patches = PatchScanner.scanAvailableResolutions(context, entry.id)
+            if (!patches.any { it.width == width && it.height == height }) {
+                if (!lenient) {
+                    throw OpenAiRequestException(
+                        statusCode = 400,
+                        message = "Model '${entry.id}' has no ${width}x$height resolution patch",
+                        parameter = "size",
+                        code = "unsupported_size",
+                    )
+                }
+                val best = patches.minByOrNull { Math.abs(it.width * it.height - width * height) }
+                if (best != null) {
+                    Log.w(
+                        TAG,
+                        "Size ${width}x$height unavailable for '${entry.id}'; " +
+                            "using ${best.width}x${best.height}",
+                    )
+                    width = best.width
+                    height = best.height
+                } else {
+                    Log.w(TAG, "No resolution patches for '${entry.id}'; falling back to 512x512")
+                    width = 512
+                    height = 512
+                }
+            }
         }
         return width to height
+    }
+
+    private fun clampDimension(value: Int): Int {
+        val aligned = (value / DIMENSION_MULTIPLE) * DIMENSION_MULTIPLE
+        return aligned.coerceIn(MIN_DIMENSION, MAX_DIMENSION)
     }
 
     private suspend fun awaitReady(
@@ -195,6 +246,7 @@ class BackendRuntimeCoordinator(private val context: Context) {
     }
 
     companion object {
+        private const val TAG = "BackendRuntimeCoordinator"
         private const val MIN_DIMENSION = 128
         private const val MAX_DIMENSION = 2048
         private const val DIMENSION_MULTIPLE = 64
