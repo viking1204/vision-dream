@@ -79,41 +79,63 @@ object OpenAiJson {
         append("""{"object":"list","data":[""")
         models.forEachIndexed { index, model ->
             if (index > 0) append(',')
-            append(modelObject(model))
+            append(modelObject(model, withExtensions = false))
         }
         append("]}")
     }
 
     fun model(model: OpenAiModel): String = buildString {
-        append(modelObject(model))
+        append(modelObject(model, withExtensions = true))
     }
 
-    private fun modelObject(model: OpenAiModel): String = buildString {
+    /**
+     * Strict OpenAI model object when [withExtensions] is false: exactly the
+     * four standard fields (`id`, `object`, `created`, `owned_by`). This is
+     * what OpenAI-compatible clients parse from `GET /v1/models`; any extra
+     * top-level key risks breaking strict deserializers (e.g. Flutter
+     * `json_serializable(disallowUnrecognizedKeys: true)`), which then fall
+     * back to rendering a single default model.
+     *
+     * When [withExtensions] is true (single-model `GET /v1/models/{id}`), the
+     * non-standard metadata is wrapped under the `x-vision-dream` extension
+     * key so it stays discoverable yet parser-safe for strict clients.
+     */
+    private fun modelObject(model: OpenAiModel, withExtensions: Boolean): String = buildString {
         append('{')
         appendNameAndString("id", model.id)
         append(""","object":"model","created":""")
         append(model.created)
         append(',')
         appendNameAndString("owned_by", model.ownedBy)
-        model.name?.let {
-            append(',')
-            appendNameAndString("name", it)
-        }
-        model.type?.let {
-            append(',')
-            appendNameAndString("type", it)
-        }
-        model.backendType?.let {
-            append(',')
-            appendNameAndString("backend_type", it)
-        }
-        model.capabilities?.let { caps ->
-            append(',')
-            append("\"capabilities\":{")
-            append("\"image_generation\":").append(if (caps.imageGeneration) "true" else "false")
-            append(",\"image_edit\":").append(if (caps.imageEdit) "true" else "false")
-            append(",\"image_upscale\":").append(if (caps.imageUpscale) "true" else "false")
-            append('}')
+        if (withExtensions) {
+            val ext = buildString {
+                model.name?.let {
+                    appendNameAndString("name", it)
+                    append(',')
+                }
+                model.type?.let {
+                    appendNameAndString("type", it)
+                    append(',')
+                }
+                model.backendType?.let {
+                    appendNameAndString("backend_type", it)
+                    append(',')
+                }
+                model.capabilities?.let { caps ->
+                    append("\"capabilities\":{")
+                    append("\"image_generation\":").append(if (caps.imageGeneration) "true" else "false")
+                    append(",\"image_edit\":").append(if (caps.imageEdit) "true" else "false")
+                    append(",\"image_upscale\":").append(if (caps.imageUpscale) "true" else "false")
+                    append('}')
+                    append(',')
+                }
+            }.let { if (it.endsWith(',')) it.substring(0, it.length - 1) else it }
+            if (ext.isNotEmpty()) {
+                append(',')
+                append("\"x-vision-dream\":{")
+                append(ext)
+                append('}')
+            }
         }
         append('}')
     }

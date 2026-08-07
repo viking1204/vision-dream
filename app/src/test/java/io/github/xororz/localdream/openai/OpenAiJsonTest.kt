@@ -21,14 +21,23 @@ class OpenAiJsonTest {
     }
 
     @Test
-    fun modelListUsesOpenAiFieldNamesAndStableOrdering() {
+    fun modelListUsesStrictOpenAiShapeWithoutExtensions() {
         val json = OpenAiJson.models(
             listOf(
-                OpenAiModel(id = "模型-a", created = 10L),
+                OpenAiModel(
+                    id = "模型-a",
+                    created = 10L,
+                    name = "A",
+                    type = "generation",
+                    backendType = "sdxl",
+                    capabilities = OpenAiModel.ModelCapabilities(true, true, false),
+                ),
                 OpenAiModel(id = "model-b", created = 20L, ownedBy = "owner"),
             ),
         )
 
+        // The list MUST contain only the four standard OpenAI fields, never the
+        // extension keys, so strict deserializers render all entries.
         assertEquals(
             """{"object":"list","data":[{"id":"模型-a","object":"model","created":10,"owned_by":"vision-dream"},{"id":"model-b","object":"model","created":20,"owned_by":"owner"}]}""",
             json,
@@ -46,7 +55,7 @@ class OpenAiJsonTest {
     }
 
     @Test
-    fun modelObjectEmitsOptionalMetadataAfterOwnedByInStableOrder() {
+    fun singleModelWrapsMetadataUnderNamespacedExtensionKey() {
         val json = OpenAiJson.model(
             OpenAiModel(
                 id = "anythingv5",
@@ -63,13 +72,13 @@ class OpenAiJsonTest {
         )
 
         assertEquals(
-            """{"id":"anythingv5","object":"model","created":1754000000,"owned_by":"vision-dream","name":"Anything V5","type":"generation","backend_type":"sd15npu","capabilities":{"image_generation":true,"image_edit":true,"image_upscale":false}}""",
+            """{"id":"anythingv5","object":"model","created":1754000000,"owned_by":"vision-dream","x-vision-dream":{"name":"Anything V5","type":"generation","backend_type":"sd15npu","capabilities":{"image_generation":true,"image_edit":true,"image_upscale":false}}}""",
             json,
         )
     }
 
     @Test
-    fun modelObjectEmitsCapabilitiesBlockWithFalseFlags() {
+    fun singleModelEmitsCapabilitiesBlockWithFalseFlags() {
         val json = OpenAiJson.model(
             OpenAiModel(
                 id = "up",
@@ -86,7 +95,7 @@ class OpenAiJsonTest {
 
         assertTrue(
             json.contains(
-                """"capabilities":{"image_generation":false,"image_edit":false,"image_upscale":true}""",
+                """"x-vision-dream":{"type":"upscaler","backend_type":"upscaler","capabilities":{"image_generation":false,"image_edit":false,"image_upscale":true}}""",
             ),
         )
     }

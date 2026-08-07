@@ -65,9 +65,11 @@ curl -H "Authorization: Bearer $VISION_DREAM_KEY" \
   http://PHONE_IP:8809/v1/models/anythingv5
 ```
 
-Each entry is an OpenAI-compatible `model` object. The OpenAI fields
-(`id`, `object`, `created`, `owned_by`) are always present; the extra fields
-below are a strict superset and are ignored by OpenAI-only clients:
+The list endpoint strictly follows the OpenAI schema so that strict
+deserializers (e.g. Flutter `json_serializable(disallowUnrecognizedKeys:
+true)`) render **every** installed model instead of choking on unknown
+top-level keys. Each list entry contains only the four standard OpenAI
+fields:
 
 | Field | Type | Meaning |
 |-------|------|---------|
@@ -75,10 +77,28 @@ below are a strict superset and are ignored by OpenAI-only clients:
 | `object` | string | Always `"model"`. |
 | `created` | integer | Install time (Unix seconds). |
 | `owned_by` | string | Always `"vision-dream"`. |
+
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "anythingv5", "object": "model", "created": 1754000000, "owned_by": "vision-dream" },
+    { "id": "upscaler_realistic", "object": "model", "created": 1754000100, "owned_by": "vision-dream" }
+  ]
+}
+```
+
+The single-model endpoint `GET /v1/models/{id}` returns the same four fields
+plus a `x-vision-dream` extension object carrying the non-standard metadata.
+The `x-` prefix marks it as a vendor extension, so it is ignored by
+OpenAI-only clients and does not break strict deserializers.
+
+| Field (under `x-vision-dream`) | Type | Meaning |
+|--------------------------------|------|---------|
 | `name` | string | Human-readable label. |
 | `type` | string | `"generation"` or `"upscaler"`. |
 | `backend_type` | string | Backend identifier, e.g. `sdxl`, `sd15npu`, `anima`, `upscaler`. |
-| `capabilities` | object | OpenAI-compatible capability advertisement (see below). |
+| `capabilities` | object | Capability advertisement (see below). |
 
 The `capabilities` object advertises what each model can do without the
 client having to guess from the id:
@@ -91,37 +111,20 @@ client having to guess from the id:
 
 ```json
 {
-  "object": "list",
-  "data": [
-    {
-      "id": "anythingv5",
-      "object": "model",
-      "created": 1754000000,
-      "owned_by": "vision-dream",
-      "name": "Anything V5",
-      "type": "generation",
-      "backend_type": "sd15npu",
-      "capabilities": {
-        "image_generation": true,
-        "image_edit": true,
-        "image_upscale": false
-      }
-    },
-    {
-      "id": "upscaler_realistic",
-      "object": "model",
-      "created": 1754000100,
-      "owned_by": "vision-dream",
-      "name": "Realistic Upscaler",
-      "type": "upscaler",
-      "backend_type": "upscaler",
-      "capabilities": {
-        "image_generation": false,
-        "image_edit": false,
-        "image_upscale": true
-      }
+  "id": "anythingv5",
+  "object": "model",
+  "created": 1754000000,
+  "owned_by": "vision-dream",
+  "x-vision-dream": {
+    "name": "Anything V5",
+    "type": "generation",
+    "backend_type": "sd15npu",
+    "capabilities": {
+      "image_generation": true,
+      "image_edit": true,
+      "image_upscale": false
     }
-  ]
+  }
 }
 ```
 
