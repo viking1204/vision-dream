@@ -36,6 +36,48 @@ class OpenAiJsonTest {
     }
 
     @Test
+    fun singleModelSerializesCoreFieldsOnlyWhenOptionalAbsent() {
+        val json = OpenAiJson.model(OpenAiModel(id = "model-x", created = 5L))
+
+        assertEquals(
+            """{"id":"model-x","object":"model","created":5,"owned_by":"vision-dream"}""",
+            json,
+        )
+    }
+
+    @Test
+    fun modelObjectEmitsOptionalMetadataAfterOwnedByInStableOrder() {
+        val json = OpenAiJson.model(
+            OpenAiModel(
+                id = "anythingv5",
+                created = 1754000000L,
+                name = "Anything V5",
+                type = "generation",
+                backendType = "sd15npu",
+                supportsImageInput = true,
+            ),
+        )
+
+        assertEquals(
+            """{"id":"anythingv5","object":"model","created":1754000000,"owned_by":"vision-dream","name":"Anything V5","type":"generation","backend_type":"sd15npu","supports_image_input":true}""",
+            json,
+        )
+    }
+
+    @Test
+    fun modelObjectOmitsFalseImageInputFlagRatherThanDroppingField() {
+        val json = OpenAiJson.model(
+            OpenAiModel(
+                id = "bare",
+                created = 1L,
+                supportsImageInput = false,
+            ),
+        )
+
+        assertTrue(json.contains(""""supports_image_input":false"""))
+    }
+
+    @Test
     fun imageEnvelopeIncludesOnlyPresentOptionalFields() {
         val json = OpenAiJson.images(
             created = 123L,

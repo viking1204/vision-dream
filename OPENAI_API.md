@@ -33,9 +33,60 @@ HTTP for this address.
 `GET /v1/models` (or `GET /models`) returns every complete installed generation
 model and upscaler. It is not limited to the model currently loaded in memory.
 
+A single model is retrievable with `GET /v1/models/{id}`, which mirrors the
+OpenAI `GET /v1/models/{model}` route and returns `404` when the id is not an
+installed model.
+
 ```bash
 curl -H "Authorization: Bearer $VISION_DREAM_KEY" \
   http://PHONE_IP:8809/v1/models
+
+# Single installed model
+curl -H "Authorization: Bearer $VISION_DREAM_KEY" \
+  http://PHONE_IP:8809/v1/models/anythingv5
+```
+
+Each entry is an OpenAI-compatible `model` object. The OpenAI fields
+(`id`, `object`, `created`, `owned_by`) are always present; the extra fields
+below are a strict superset and are ignored by OpenAI-only clients:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `id` | string | Stable model identifier, also used as the `model` parameter for image routes. |
+| `object` | string | Always `"model"`. |
+| `created` | integer | Install time (Unix seconds). |
+| `owned_by` | string | Always `"vision-dream"`. |
+| `name` | string | Human-readable label. |
+| `type` | string | `"generation"` or `"upscaler"`. |
+| `backend_type` | string | Backend identifier, e.g. `sdxl`, `sd15npu`, `anima`, `upscaler`. |
+| `supports_image_input` | boolean | Whether the model exposes an image encoder for img2img/inpaint. |
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "anythingv5",
+      "object": "model",
+      "created": 1754000000,
+      "owned_by": "vision-dream",
+      "name": "Anything V5",
+      "type": "generation",
+      "backend_type": "sd15npu",
+      "supports_image_input": true
+    },
+    {
+      "id": "upscaler_realistic",
+      "object": "model",
+      "created": 1754000100,
+      "owned_by": "vision-dream",
+      "name": "Realistic Upscaler",
+      "type": "upscaler",
+      "backend_type": "upscaler",
+      "supports_image_input": true
+    }
+  ]
+}
 ```
 
 ## Generate and Edit

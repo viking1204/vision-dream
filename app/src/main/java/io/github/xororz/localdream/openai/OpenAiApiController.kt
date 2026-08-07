@@ -2,6 +2,7 @@ package io.github.xororz.localdream.openai
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.util.Log
 import io.github.xororz.localdream.data.AssetOrigin
 import io.github.xororz.localdream.data.GenerationMode
@@ -64,6 +65,15 @@ class OpenAiApiController(
         }
         return try {
             when {
+                request.method == "GET" && request.path.startsWith("/v1/models/") -> {
+                    val id = request.path.removePrefix("/v1/models/")
+                    if (id.isEmpty()) {
+                        error(404, "Model identifier missing", code = "not_found")
+                    } else {
+                        model(id)
+                    }
+                }
+
                 request.method == "GET" &&
                     (request.path == "/v1/models" || request.path == "/models") -> models()
 
@@ -111,14 +121,32 @@ class OpenAiApiController(
 
     private fun models(): HttpResponse {
         val entries = runBlocking { catalog.all() }
-        val models = entries.map { entry ->
-            val path = File(Model.getModelsDir(context), entry.id)
-            OpenAiModel(
-                id = entry.id,
-                created = (path.lastModified() / 1000L).coerceAtLeast(0L),
-            )
-        }
+        val models = entries.map(::toOpenAiModel)
         return HttpResponse.json(200, OpenAiJson.models(models))
+    }
+
+    private fun model(id: String): HttpResponse {
+        val decoded = Uri.decode(id)
+        val entry = runBlocking { catalog.find(decoded) }
+            ?: return error(
+                status = 404,
+                message = "Model '$decoded' is not installed",
+                type = "not_found_error",
+                code = "model_not_found",
+            )
+        return HttpResponse.json(200, OpenAiJson.model(toOpenAiModel(entry)))
+    }
+
+    private fun toOpenAiModel(entry: InstalledModelCatalog.Entry): OpenAiModel {
+        val path = File(Model.getModelsDir(context), entry.id)
+        return OpenAiModel(
+            id = entry.id,
+            created = (path.lastModified() / 1000L).coerceAtLeast(0L),
+            name = entry.name,
+            type = entry.kind.name.lowercase(),
+            backendType = entry.backendType,
+            supportsImageInput = entry.supportsImageInput,
+        )
     }
 
     private fun health(): HttpResponse {

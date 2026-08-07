@@ -16,6 +16,17 @@ data class OpenAiModel(
     val id: String,
     val created: Long,
     val ownedBy: String = "vision-dream",
+    /**
+     * Human-readable label. Optional so the envelope stays a strict superset of
+     * the OpenAI schema; OpenAI-only clients ignore it.
+     */
+    val name: String? = null,
+    /** "generation" or "upscaler" — distinguishes the two model families exposed by this gateway. */
+    val type: String? = null,
+    /** Backend identifier, e.g. "sdxl", "sd15npu", "anima", "upscaler". */
+    val backendType: String? = null,
+    /** Whether the model advertises an image encoder for img2img/inpaint. */
+    val supportsImageInput: Boolean? = null,
 ) {
     init {
         require(id.isNotBlank()) { "id must not be blank" }
@@ -58,15 +69,40 @@ object OpenAiJson {
         append("""{"object":"list","data":[""")
         models.forEachIndexed { index, model ->
             if (index > 0) append(',')
-            append('{')
-            appendNameAndString("id", model.id)
-            append(""","object":"model","created":""")
-            append(model.created)
-            append(',')
-            appendNameAndString("owned_by", model.ownedBy)
-            append('}')
+            append(modelObject(model))
         }
         append("]}")
+    }
+
+    fun model(model: OpenAiModel): String = buildString {
+        append(modelObject(model))
+    }
+
+    private fun modelObject(model: OpenAiModel): String = buildString {
+        append('{')
+        appendNameAndString("id", model.id)
+        append(""","object":"model","created":""")
+        append(model.created)
+        append(',')
+        appendNameAndString("owned_by", model.ownedBy)
+        model.name?.let {
+            append(',')
+            appendNameAndString("name", it)
+        }
+        model.type?.let {
+            append(',')
+            appendNameAndString("type", it)
+        }
+        model.backendType?.let {
+            append(',')
+            appendNameAndString("backend_type", it)
+        }
+        model.supportsImageInput?.let {
+            append(',')
+            append("\"supports_image_input\":")
+            append(if (it) "true" else "false")
+        }
+        append('}')
     }
 
     fun images(
