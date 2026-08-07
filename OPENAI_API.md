@@ -228,6 +228,31 @@ in-app UI and the MCP listener keep strict validation and will still reject a
 size the model cannot render. Malformed `size` strings (anything that is not
 `"WIDTHxHEIGHT"` or `"auto"`) remain a `400 invalid_size` error in all paths.
 
+### Aspect ratio
+
+`aspect_ratio` is an optional string `"W:H"` (e.g. `"9:16"`, `"16:9"`,
+`"1:1"`) accepted by `/v1/images/generations` and `/v1/images/edits` (the
+upscale route ignores it). It lets a client request a non-square output
+without knowing the model's native resolution:
+
+```bash
+curl http://PHONE_IP:8809/v1/images/generations \
+  -H "Authorization: Bearer $VISION_DREAM_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"aMixIllustrious_aMix","prompt":"a tall portrait","aspect_ratio":"9:16","response_format":"b64_json"}'
+```
+
+For **fixed-canvas models** (SDXL / Anima) the backend renders at the model's
+square canvas (e.g. `1024x1024`) and then crops/pads the output to the
+requested ratio — so `aspect_ratio:"9:16"` returns a `576x1024` PNG. This is
+exactly the mechanism the in-app UI uses for non-1:1 ratios. `size` and
+`aspect_ratio` may be combined; for fixed-canvas models `size` is overridden to
+the model canvas and `aspect_ratio` controls the final crop, so the resulting
+dimensions come from the ratio rather than from `size`. Other backends forward
+the ratio to the native pipeline, which may render at the requested `size` and
+ignore the ratio. Malformed values (anything that is not two positive integers
+joined by `:`) return HTTP `400` with code `invalid_aspect_ratio`.
+
 ## Upscale Extension
 
 OpenAI does not define an upscale route. Vision Dream provides the multipart

@@ -155,6 +155,35 @@ internal fun parseSize(value: String?): Pair<Int?, Int?> {
     return match.groupValues[1].toInt() to match.groupValues[2].toInt()
 }
 
+/**
+ * Parses an optional `aspect_ratio` request field ("W:H", e.g. "9:16").
+ * Returns null when absent/blank, the normalized "W:H" string when valid, or
+ * throws 400 when the value is present but malformed (not two positive
+ * integers joined by ':'). The backend crops/pads the fixed-canvas output to
+ * this ratio; this helper only validates the shape.
+ */
+internal fun parseAspectRatio(value: String?): String? {
+    if (value.isNullOrBlank()) return null
+    val match = ASPECT_RATIO_PATTERN.matchEntire(value.trim())
+        ?: throw OpenAiRequestException(
+            400,
+            "aspect_ratio must be WIDTH:HEIGHT, e.g. \"9:16\"",
+            parameter = "aspect_ratio",
+            code = "invalid_aspect_ratio",
+        )
+    val w = match.groupValues[1].toInt()
+    val h = match.groupValues[2].toInt()
+    if (w <= 0 || h <= 0) {
+        throw OpenAiRequestException(
+            400,
+            "aspect_ratio must use positive integers, e.g. \"9:16\"",
+            parameter = "aspect_ratio",
+            code = "invalid_aspect_ratio",
+        )
+    }
+    return "$w:$h"
+}
+
 internal fun requireJsonContentType(request: HttpRequest) {
     val mediaType = request.header("Content-Type")?.substringBefore(';')?.trim()
     if (!mediaType.equals("application/json", ignoreCase = true)) {
@@ -313,6 +342,7 @@ private const val MAX_PROMPT_CHARACTERS = 32_000
 // OpenAI spelling is "1024x1024". Treat ASCII and typographic multiplication
 // signs as equivalent transport separators before runtime-specific validation.
 private val SIZE_PATTERN = Regex("""^(\d{2,4})[xX*×](\d{2,4})$""")
+private val ASPECT_RATIO_PATTERN = Regex("""^(\d+):(\d+)$""")
 private val SUPPORTED_SCHEDULERS = setOf(
     "dpm",
     "dpm_karras",

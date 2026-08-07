@@ -235,6 +235,7 @@ class OpenAiApiController(
             background = body.stringValue("background"),
         )
         val (width, height) = parseSize(body.stringValue("size"))
+        val aspectRatio = parseAspectRatio(body.stringValue("aspect_ratio"))
         val parameters = ImageRequestParameters(
             modelId = body.stringValue("model"),
             prompt = body.requiredString("prompt"),
@@ -247,6 +248,7 @@ class OpenAiApiController(
             scheduler = body.stringValue("scheduler") ?: DEFAULT_SCHEDULER,
             denoiseStrength = body.floatValue("denoise_strength", DEFAULT_DENOISE),
             responseFormat = responseFormat,
+            aspectRatio = aspectRatio,
         )
         validateParameters(parameters, requiresImage = false)
         val entry = resolveGenerationEntry(parameters.modelId)
@@ -273,6 +275,7 @@ class OpenAiApiController(
             background = form.fields["background"],
         )
         val (width, height) = parseSize(form.fields["size"])
+        val aspectRatio = parseAspectRatio(form.fields["aspect_ratio"])
         val parameters = ImageRequestParameters(
             modelId = form.fields["model"],
             prompt = form.fields.required("prompt"),
@@ -287,6 +290,7 @@ class OpenAiApiController(
             sourceImage = form.image.bytes,
             maskImage = form.mask?.bytes,
             responseFormat = responseFormat,
+            aspectRatio = aspectRatio,
         )
         validateParameters(parameters, requiresImage = true)
         val entry = resolveGenerationEntry(parameters.modelId)
@@ -431,8 +435,8 @@ class OpenAiApiController(
                 prompt = parameters.prompt,
                 negativePrompt = parameters.negativePrompt,
                 generationTime = "${System.currentTimeMillis() - startedAt}ms",
-                width = dimensions.first,
-                height = dimensions.second,
+                width = image.width ?: dimensions.first,
+                height = image.height ?: dimensions.second,
                 runOnCpu = entry.model?.runOnCpu == true,
                 denoiseStrength = parameters.denoiseStrength,
                 useOpenCL = false,

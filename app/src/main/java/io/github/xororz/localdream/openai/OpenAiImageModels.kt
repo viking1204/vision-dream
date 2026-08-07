@@ -14,6 +14,7 @@ data class ImageRequestParameters(
     val sourceImage: ByteArray? = null,
     val maskImage: ByteArray? = null,
     val responseFormat: ImageResponseFormat = ImageResponseFormat.URL,
+    val aspectRatio: String? = null,
 )
 
 data class UpscaleRequestParameters(
@@ -31,6 +32,8 @@ data class GeneratedImage(
     val bytes: ByteArray,
     val mimeType: String,
     val seed: Long?,
+    val width: Int? = null,
+    val height: Int? = null,
     val diagnostics: NativeGenerationDiagnostics? = null,
 )
 
