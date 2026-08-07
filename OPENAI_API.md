@@ -200,6 +200,34 @@ The temporary URL contains an unguessable bearer token, requires no additional
 Authorization header, and expires after 10 minutes or when the API service
 restarts. Every successful API result is also saved in the app's Asset manager.
 
+### Size tolerance
+
+The `size` parameter is optional and accepts the OpenAI form `"WIDTHxHEIGHT"`
+(e.g. `"512x512"`) or `"auto"`. Because OpenAI-compatible clients often hard-code
+a size that does not match the locally installed model, the gateway treats an
+**incompatible** size as a recoverable condition instead of failing the request:
+
+- **Out of range / not aligned to 64 px / above 4 MP** → clamped to a multiple of
+  64 within `128–2048` px per edge and ≤ 4,194,304 total pixels.
+- **Fixed-canvas models** (e.g. `aMixIllustrious_aMix` always renders
+  `1024x1024`) → the request is silently re-targeted to the model's required
+  canvas.
+- **NPU models without a matching resolution patch** → the nearest available
+  patch is chosen; if the model ships no patches at all, it falls back to
+  `512x512`.
+
+In every clamped case the gateway still returns **HTTP 200** and a valid image at
+the normalized dimensions — it never returns `400 unsupported_size` for a size
+mismatch coming through the OpenAI routes. For example, requesting
+`size=512x512` against `aMixIllustrious_aMix` (which requires `1024x1024`) yields
+a `1024x1024` PNG rather than an error.
+
+This tolerance applies **only** to the OpenAI-compatible gateway
+(`/v1/images/generations`, `/v1/images/edits`, `/v1/images/upscales`). The
+in-app UI and the MCP listener keep strict validation and will still reject a
+size the model cannot render. Malformed `size` strings (anything that is not
+`"WIDTHxHEIGHT"` or `"auto"`) remain a `400 invalid_size` error in all paths.
+
 ## Upscale Extension
 
 OpenAI does not define an upscale route. Vision Dream provides the multipart
