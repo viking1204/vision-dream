@@ -12,6 +12,7 @@ import io.github.xororz.localdream.data.HistoryManager
 import io.github.xororz.localdream.data.InferenceHistoryAssociation
 import io.github.xororz.localdream.data.InferenceJobStatus
 import io.github.xororz.localdream.data.Model
+import io.github.xororz.localdream.data.ModelTagDerivation
 import io.github.xororz.localdream.data.PerformancePresetConfig
 import io.github.xororz.localdream.data.PerformancePresetEngineConfig
 import io.github.xororz.localdream.data.RoomInferenceJobRepository
@@ -165,6 +166,13 @@ class OpenAiApiController(
             InstalledModelCatalog.Kind.GENERATION -> "image"
             InstalledModelCatalog.Kind.UPSCALER -> "upscaler"
         }
+        // Same derivation the in-app filter bar uses, so a network client and
+        // the local model list can never disagree about a model's style.
+        // Upscalers have no [Model] backing them; their style lives in the
+        // localized display name ("动漫放大" / "写实放大").
+        val tags = entry.model
+            ?.let(ModelTagDerivation::deriveTags)
+            ?: ModelTagDerivation.deriveTags(entry.name)
         return OpenAiModel(
             id = entry.id,
             created = (path.lastModified() / 1000L).coerceAtLeast(0L),
@@ -172,6 +180,7 @@ class OpenAiApiController(
             type = type,
             backendType = entry.backendType,
             capabilities = capabilities,
+            tags = tags,
         )
     }
 

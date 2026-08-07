@@ -65,7 +65,8 @@ curl -H "Authorization: Bearer $VISION_DREAM_KEY" \
   http://PHONE_IP:8809/v1/models/anythingv5
 ```
 
-Each list entry contains the four standard OpenAI fields plus `type`:
+Each list entry contains the four standard OpenAI fields plus `type` and, when
+any keyword matched, `tags`:
 
 | Field | Type | Meaning |
 |-------|------|---------|
@@ -74,6 +75,7 @@ Each list entry contains the four standard OpenAI fields plus `type`:
 | `created` | integer | Install time (Unix seconds). |
 | `owned_by` | string | Always `"vision-dream"`. |
 | `type` | string | Modality: `"image"` for generation models, `"upscaler"` for upscalers. |
+| `tags` | string[] | Style / theme labels. Omitted entirely when no keyword matched. |
 
 `type` is not part of the official OpenAI schema, but image-capable clients
 rely on it to decide which entries belong in an image-model picker — they
@@ -83,6 +85,20 @@ back to a single built-in default, which looks like the catalog returned one
 model. Upscalers deliberately report `"upscaler"`: they cannot serve
 text-to-image and must not appear in a generation picker.
 
+`tags` carries the style / theme labels (`动漫`, `写实`, `人像`, `赛博朋克`,
+`国风`, `3D`, …) that the in-app model list uses for its filter bar. They are
+derived from the model name and description by the shared
+`ModelTagDerivation` keyword table, so a network client and the local UI can
+never disagree about a model's style. Upscalers have no backing model record;
+their style is derived from the localized display name instead
+(`动漫放大` → `动漫`). The labels are Chinese display tokens, not a stable
+machine enum — treat them as presentation text. The key is omitted rather than
+emitted as `[]` when nothing matched.
+
+Tags are repeated in the list (not just on the single-model endpoint) because
+filtering a 60+ model catalog by style would otherwise cost one request per
+model.
+
 All other vendor metadata is kept out of the list so the payload stays lean for
 strict deserializers (e.g. Flutter
 `json_serializable(disallowUnrecognizedKeys: true)`).
@@ -91,8 +107,8 @@ strict deserializers (e.g. Flutter
 {
   "object": "list",
   "data": [
-    { "id": "anythingv5", "object": "model", "created": 1754000000, "owned_by": "vision-dream", "type": "image" },
-    { "id": "upscaler_realistic", "object": "model", "created": 1754000100, "owned_by": "vision-dream", "type": "upscaler" }
+    { "id": "anythingv5", "object": "model", "created": 1754000000, "owned_by": "vision-dream", "type": "image", "tags": ["动漫", "可爱"] },
+    { "id": "upscaler_realistic", "object": "model", "created": 1754000100, "owned_by": "vision-dream", "type": "upscaler", "tags": ["写实"] }
   ]
 }
 ```
@@ -107,6 +123,7 @@ and does not break strict deserializers.
 | `name` | string | Human-readable label. |
 | `type` | string | Same modality value as the top-level `type`. |
 | `backend_type` | string | Backend identifier, e.g. `sdxl`, `sd15npu`, `anima`, `upscaler`. |
+| `tags` | string[] | Same style labels as the top-level `tags`. |
 | `capabilities` | object | Capability advertisement (see below). |
 
 The `capabilities` object advertises what each model can do without the
@@ -125,10 +142,12 @@ client having to guess from the id:
   "created": 1754000000,
   "owned_by": "vision-dream",
   "type": "image",
+  "tags": ["动漫", "可爱"],
   "x-vision-dream": {
     "name": "Anything V5",
     "type": "image",
     "backend_type": "sd15npu",
+    "tags": ["动漫", "可爱"],
     "capabilities": {
       "image_generation": true,
       "image_edit": true,

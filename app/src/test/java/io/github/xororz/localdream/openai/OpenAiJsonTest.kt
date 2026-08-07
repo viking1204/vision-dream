@@ -31,17 +31,35 @@ class OpenAiJsonTest {
                     type = "image",
                     backendType = "sdxl",
                     capabilities = OpenAiModel.ModelCapabilities(true, true, false),
+                    tags = listOf("动漫", "可爱"),
                 ),
                 OpenAiModel(id = "model-b", created = 20L, ownedBy = "owner"),
             ),
         )
 
         // Image clients filter the picker on `type == "image"`, so the list has
-        // to carry `type`. Every other vendor field stays out of the list to
-        // keep the payload lean for strict deserializers.
+        // to carry `type`. `tags` rides along too because per-model round trips
+        // are not viable for style filtering over a 60+ model catalog. Every
+        // other vendor field stays out of the list to keep the payload lean for
+        // strict deserializers.
         assertEquals(
-            """{"object":"list","data":[{"id":"模型-a","object":"model","created":10,"owned_by":"vision-dream","type":"image"},""" +
+            """{"object":"list","data":[{"id":"模型-a","object":"model","created":10,"owned_by":"vision-dream",""" +
+                """"type":"image","tags":["动漫","可爱"]},""" +
                 """{"id":"model-b","object":"model","created":20,"owned_by":"owner"}]}""",
+            json,
+        )
+    }
+
+    @Test
+    fun modelListOmitsTagsWhenNoKeywordMatched() {
+        val json = OpenAiJson.models(
+            listOf(OpenAiModel(id = "plain", created = 1L, type = "image")),
+        )
+
+        // An empty array would force clients to distinguish "no tags" from
+        // "untagged"; omitting the key keeps the payload honest and smaller.
+        assertEquals(
+            """{"object":"list","data":[{"id":"plain","object":"model","created":1,"owned_by":"vision-dream","type":"image"}]}""",
             json,
         )
     }
@@ -70,12 +88,15 @@ class OpenAiJsonTest {
                     imageEdit = true,
                     imageUpscale = false,
                 ),
+                tags = listOf("动漫", "写实"),
             ),
         )
 
         assertEquals(
             """{"id":"anythingv5","object":"model","created":1754000000,"owned_by":"vision-dream","type":"image",""" +
+                """"tags":["动漫","写实"],""" +
                 """"x-vision-dream":{"name":"Anything V5","type":"image","backend_type":"sd15npu",""" +
+                """"tags":["动漫","写实"],""" +
                 """"capabilities":{"image_generation":true,"image_edit":true,"image_upscale":false}}}""",
             json,
         )

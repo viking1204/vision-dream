@@ -54,16 +54,23 @@ object ModelTagDerivation {
     )
 
     /** Stable ordered tag list for a single model (de-duplicated). */
-    fun deriveTags(model: Model): List<String> {
+    fun deriveTags(model: Model): List<String> = deriveTags("${model.name} ${model.description}")
+
+    /**
+     * Same derivation for sources that are not a [Model] — upscalers, for
+     * instance, carry their style only in a localized display name
+     * ("动漫放大" / "写实放大"). Keeping one keyword table means the network
+     * API and the in-app filter bar can never drift apart.
+     */
+    fun deriveTags(text: String): List<String> {
         val tags = LinkedHashSet<String>()
 
         // Keyword-derived style / theme tags from name + description.
         // Base-model families (SDXL / SD1.5) and the NSFW content marker are
         // intentionally NOT emitted here — they surface as a backend chip and a
         // content badge on the card, and would only add noise to style filters.
-        val haystack = "${model.name} ${model.description}"
         for ((regex, tag) in KEYWORD_RULES) {
-            if (regex.containsMatchIn(haystack)) tags += tag
+            if (regex.containsMatchIn(text)) tags += tag
         }
 
         return tags.toList()

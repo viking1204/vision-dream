@@ -31,6 +31,13 @@ data class OpenAiModel(
      * and upscale models without guessing from the id.
      */
     val capabilities: ModelCapabilities? = null,
+    /**
+     * Style / theme labels ("动漫", "写实", "赛博朋克", …) derived from the
+     * model name and description. Lets a client group or filter a large local
+     * catalog without parsing free-form descriptions itself. Empty when no
+     * keyword matched.
+     */
+    val tags: List<String> = emptyList(),
 ) {
     data class ModelCapabilities(
         val imageGeneration: Boolean,
@@ -90,7 +97,7 @@ object OpenAiJson {
 
     /**
      * OpenAI model object: the four standard fields (`id`, `object`, `created`,
-     * `owned_by`) plus `type`.
+     * `owned_by`) plus `type` and, when non-empty, `tags`.
      *
      * `type` is not part of the official schema, but image-capable clients rely
      * on it to tell which entries belong in an image-model picker (they filter
@@ -114,6 +121,13 @@ object OpenAiJson {
             append(',')
             appendNameAndString("type", it)
         }
+        // Tags ride along in the list as well: a client filtering a 60+ model
+        // catalog by style cannot afford one round trip per model, which is all
+        // the single-model endpoint could offer.
+        if (model.tags.isNotEmpty()) {
+            append(',')
+            appendNameAndStringArray("tags", model.tags)
+        }
         if (withExtensions) {
             val ext = buildString {
                 model.name?.let {
@@ -126,6 +140,10 @@ object OpenAiJson {
                 }
                 model.backendType?.let {
                     appendNameAndString("backend_type", it)
+                    append(',')
+                }
+                if (model.tags.isNotEmpty()) {
+                    appendNameAndStringArray("tags", model.tags)
                     append(',')
                 }
                 model.capabilities?.let { caps ->
@@ -186,6 +204,19 @@ object OpenAiJson {
         appendJsonString(name)
         append(':')
         appendJsonString(value)
+    }
+
+    private fun StringBuilder.appendNameAndStringArray(
+        name: String,
+        values: List<String>,
+    ) {
+        appendJsonString(name)
+        append(":[")
+        values.forEachIndexed { index, value ->
+            if (index > 0) append(',')
+            appendJsonString(value)
+        }
+        append(']')
     }
 
     private fun StringBuilder.appendNameAndNullableString(

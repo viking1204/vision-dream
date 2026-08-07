@@ -76,6 +76,20 @@ class ModelTagDerivationTest {
     }
 
     @Test
+    fun plainTextSourcesShareTheSameKeywordTable() {
+        // Upscalers carry no Model; their style only exists in the localized
+        // display name. The text overload must agree with the Model overload so
+        // the network API and the in-app filter bar cannot drift apart.
+        assertTrue("动漫" in ModelTagDerivation.deriveTags("动漫放大"))
+        assertTrue("写实" in ModelTagDerivation.deriveTags("写实放大"))
+        assertEquals(
+            ModelTagDerivation.deriveTags(model(name = "anime", description = "cute")),
+            ModelTagDerivation.deriveTags("anime cute"),
+        )
+        assertTrue(ModelTagDerivation.deriveTags("").isEmpty())
+    }
+
+    @Test
     fun tagsAreDeduplicated() {
         // isAnima no longer yields "动漫" (base-model tags are gone); a keyword
         // match must still not duplicate the same style token.
