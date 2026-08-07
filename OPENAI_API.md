@@ -28,6 +28,25 @@ Another app on the same Android device should use
 addresses shown in Vision Dream. Android clients must also permit cleartext
 HTTP for this address.
 
+## CORS
+
+Browser and WebView clients send a CORS preflight `OPTIONS` request before the
+real `GET`/`POST`. The gateway answers every `OPTIONS` request with `204 No
+Content` and the headers below **without** requiring authentication, because a
+preflight never carries the bearer token:
+
+```http
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, POST, OPTIONS
+Access-Control-Allow-Headers: Content-Type, Authorization
+Access-Control-Max-Age: 86400
+```
+
+Every successful response (including `GET /v1/models`, `POST /v1/images/*`,
+and error responses) also carries `Access-Control-Allow-Origin: *` and the
+matching `Access-Control-Allow-Methods` / `Access-Control-Allow-Headers`
+headers, so a browser can read the response after a successful preflight.
+
 ## Models
 
 `GET /v1/models` (or `GET /models`) returns every complete installed generation

@@ -291,6 +291,8 @@ class OpenAiHttpServer(
                             code = parsed.code,
                             headers = parsed.headers,
                         )
+
+                        is ParseResult.Preflight -> parsed.response
                     }
                     when (parsed) {
                         is ParseResult.Success -> Log.i(
@@ -302,6 +304,11 @@ class OpenAiHttpServer(
                         is ParseResult.Failure -> Log.w(
                             TAG,
                             "Rejected HTTP request -> ${response.statusCode} (${parsed.code})",
+                        )
+
+                        is ParseResult.Preflight -> Log.i(
+                            TAG,
+                            "OPTIONS ${parsed.path} -> ${response.statusCode} (cors preflight)",
                         )
                     }
                     writeResponse(socket, response)
@@ -360,6 +367,15 @@ class OpenAiHttpServer(
                 return ParseResult.Failure(400, "Duplicate $name header", "invalid_http")
             }
             headers[name] = headers[name]?.let { "$it,$value" } ?: value
+        }
+
+        // CORS preflight requests carry no credentials. Authenticating them
+        // here (before routing) is what broke browser/WebView clients: the
+        // browser aborts the real request when its preflight is rejected, so
+        // it never sends the actual Authorization header. Answer preflight
+        // with 204 and the CORS headers, without touching the auth budget.
+        if (method == "OPTIONS") {
+            return ParseResult.Preflight(preflightResponse(), path)
         }
 
         // Authenticate bearer requests or temporary image capability paths
@@ -696,7 +712,18 @@ class OpenAiHttpServer(
             val type: String = "invalid_request_error",
             val headers: Map<String, String> = emptyMap(),
         ) : ParseResult()
+
+        data class Preflight(
+            val response: HttpResponse,
+            val path: String,
+        ) : ParseResult()
     }
+
+    private fun preflightResponse(): HttpResponse = HttpResponse(
+        statusCode = 204,
+        headers = CORS_PREFLIGHT_HEADERS,
+        body = byteArrayOf(),
+    )
 
     private sealed class BodyReadResult {
         data class Success(
@@ -745,6 +772,12 @@ class OpenAiHttpServer(
             "content-length",
             "transfer-encoding",
         )
+        private val CORS_PREFLIGHT_HEADERS = mapOf(
+            "Access-Control-Allow-Origin" to "*",
+            "Access-Control-Allow-Methods" to "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers" to "Content-Type, Authorization",
+            "Access-Control-Max-Age" to "86400",
+        )
     }
 }
 
@@ -772,10 +805,11 @@ private fun rejectBusyClient(client: Socket) {
 }
 
 private fun writeResponse(socket: Socket, response: HttpResponse) {
-    val reason = when (response.statusCode) {
-        200 -> "OK"
-        400 -> "Bad Request"
-        401 -> "Unauthorized"
+        val reason = when (response.statusCode) {
+            200 -> "OK"
+            204 -> "No Content"
+            400 -> "Bad Request"
+            401 -> "Unauthorized"
         404 -> "Not Found"
         408 -> "Request Timeout"
         411 -> "Length Required"

@@ -48,66 +48,69 @@ class OpenAiApiController(
     private val generationPreferences = GenerationPreferences(context)
 
     fun route(request: HttpRequest): HttpResponse {
-        if (request.method == "GET" &&
+        val response = if (request.method == "GET" &&
             TemporaryImageStore.assetIdFromPath(request.path) != null &&
             TemporaryImageStore.tokenFromQuery(request.query) != null
         ) {
-            return downloadImage(request.path, request.query)
-        }
-        if (!isAuthorized(request.header("Authorization"))) {
-            return error(
+            downloadImage(request.path, request.query)
+        } else if (!isAuthorized(request.header("Authorization"))) {
+            error(
                 status = 401,
                 message = "Invalid or missing bearer token",
                 type = "authentication_error",
                 code = "invalid_api_key",
                 extraHeaders = mapOf("WWW-Authenticate" to "Bearer"),
             )
-        }
-        return try {
-            when {
-                request.method == "GET" && request.path.startsWith("/v1/models/") -> {
-                    val id = request.path.removePrefix("/v1/models/")
-                    if (id.isEmpty()) {
-                        error(404, "Model identifier missing", code = "not_found")
-                    } else {
-                        model(id)
+        } else {
+            try {
+                when {
+                    request.method == "GET" && request.path.startsWith("/v1/models/") -> {
+                        val id = request.path.removePrefix("/v1/models/")
+                        if (id.isEmpty()) {
+                            error(404, "Model identifier missing", code = "not_found")
+                        } else {
+                            model(id)
+                        }
                     }
+
+                    request.method == "GET" &&
+                        (request.path == "/v1/models" || request.path == "/models") -> models()
+
+                    request.method == "GET" && request.path == "/health" -> health()
+
+                    request.method == "POST" &&
+                        request.path == "/v1/images/generations" -> generation(request)
+
+                    request.method == "POST" &&
+                        request.path == "/v1/images/edits" -> edit(request)
+
+                    request.method == "POST" &&
+                        request.path == "/v1/images/upscales" -> upscale(request)
+
+                    else -> error(404, "Route not found", code = "not_found")
                 }
-
-                request.method == "GET" &&
-                    (request.path == "/v1/models" || request.path == "/models") -> models()
-
-                request.method == "GET" && request.path == "/health" -> health()
-
-                request.method == "POST" &&
-                    request.path == "/v1/images/generations" -> generation(request)
-
-                request.method == "POST" &&
-                    request.path == "/v1/images/edits" -> edit(request)
-
-                request.method == "POST" &&
-                    request.path == "/v1/images/upscales" -> upscale(request)
-
-                else -> error(404, "Route not found", code = "not_found")
+            } catch (e: OpenAiRequestException) {
+                error(
+                    status = e.statusCode,
+                    message = e.message,
+                    type = e.type,
+                    parameter = e.parameter,
+                    code = e.code,
+                )
+            } catch (e: MultipartParseException) {
+                error(
+                    status = 400,
+                    message = e.message ?: "Invalid multipart request",
+                    parameter = "image",
+                    code = e.reason.name.lowercase(),
+                )
+            } catch (_: JSONException) {
+                error(400, "Request body is not valid JSON", code = "invalid_json")
             }
-        } catch (e: OpenAiRequestException) {
-            error(
-                status = e.statusCode,
-                message = e.message,
-                type = e.type,
-                parameter = e.parameter,
-                code = e.code,
-            )
-        } catch (e: MultipartParseException) {
-            error(
-                status = 400,
-                message = e.message ?: "Invalid multipart request",
-                parameter = "image",
-                code = e.reason.name.lowercase(),
-            )
-        } catch (_: JSONException) {
-            error(400, "Request body is not valid JSON", code = "invalid_json")
         }
+        // Browser/WebView clients require CORS headers on every response so the
+        // actual request is not blocked after a successful preflight.
+        return response.withCors()
     }
 
     fun cancelActiveCalls() {
@@ -682,6 +685,17 @@ class OpenAiApiController(
         status,
         OpenAiJson.error(OpenAiError(message, type, parameter, code)),
         extraHeaders,
+    )
+
+    private val CORS_HEADERS = mapOf(
+        "Access-Control-Allow-Origin" to "*",
+        "Access-Control-Allow-Methods" to "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers" to "Content-Type, Authorization",
+        "Access-Control-Max-Age" to "86400",
+    )
+
+    private fun HttpResponse.withCors(): HttpResponse = copy(
+        headers = headers + CORS_HEADERS,
     )
 
     companion object {
